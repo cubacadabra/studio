@@ -181,8 +181,16 @@ impl StudioApp {
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
 
-        let mut forward = axis(&self.pressed_keys, KeyCode::KeyW, KeyCode::KeyS);
-        let mut strafe = axis(&self.pressed_keys, KeyCode::KeyD, KeyCode::KeyA);
+        let mut forward = axis(
+            &self.pressed_keys,
+            &[KeyCode::KeyW, KeyCode::ArrowUp],
+            &[KeyCode::KeyS, KeyCode::ArrowDown],
+        );
+        let mut strafe = axis(
+            &self.pressed_keys,
+            &[KeyCode::KeyD, KeyCode::ArrowRight],
+            &[KeyCode::KeyA, KeyCode::ArrowLeft],
+        );
         forward -= self.joystick_input.1;
         strafe += self.joystick_input.0;
         let length = (forward * forward + strafe * strafe).sqrt();
@@ -598,8 +606,9 @@ impl ApplicationHandler for StudioApp {
     }
 }
 
-fn axis(keys: &HashSet<KeyCode>, positive: KeyCode, negative: KeyCode) -> f32 {
-    f32::from(keys.contains(&positive)) - f32::from(keys.contains(&negative))
+fn axis(keys: &HashSet<KeyCode>, positive: &[KeyCode], negative: &[KeyCode]) -> f32 {
+    f32::from(positive.iter().any(|key| keys.contains(key)))
+        - f32::from(negative.iter().any(|key| keys.contains(key)))
 }
 
 fn game_name(root: &Path) -> String {
