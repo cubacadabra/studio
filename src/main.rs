@@ -121,13 +121,12 @@ impl StudioApp {
                 "the shared engine could not compile game.luau".to_owned(),
             )));
         }
-        let initial_world_id = engine
-            .active_world_id()
-            .ok_or_else(|| {
-                StudioError("the game manifest did not define a start world".to_owned())
-            })?
-            .to_owned();
-        let network = BackendClient::new(&game_id, &initial_world_id).map_err(StudioError)?;
+        if engine.active_world_id().is_none() {
+            return Err(Box::new(StudioError(
+                "the game manifest did not define a start world".to_owned(),
+            )));
+        }
+        let network = BackendClient::new(&game_id).map_err(StudioError)?;
 
         Ok(Self {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,

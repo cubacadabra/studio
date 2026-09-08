@@ -49,27 +49,18 @@ pub struct BackendClient {
 }
 
 impl BackendClient {
-    pub fn new(game_id: &str, initial_world_id: &str) -> Result<Self, String> {
+    pub fn new(game_id: &str) -> Result<Self, String> {
         let raw_url = std::env::var(BACKEND_URL_ENV)
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_BACKEND_URL.to_owned());
         let backend_url = parse_backend_url(&raw_url)?;
         let game_id = game_id.to_owned();
-        let initial_world_id = initial_world_id.to_owned();
         let (command_sender, command_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("studio-backend".to_owned())
-            .spawn(move || {
-                run_worker(
-                    backend_url,
-                    game_id,
-                    initial_world_id,
-                    command_receiver,
-                    event_sender,
-                )
-            })
+            .spawn(move || run_worker(backend_url, game_id, command_receiver, event_sender))
             .map_err(|error| format!("could not start backend worker: {error}"))?;
 
         Ok(Self {
@@ -179,11 +170,12 @@ fn encode_path_segment(value: &str) -> String {
 fn run_worker(
     backend_url: Url,
     game_id: String,
-    initial_world_id: String,
     commands: Receiver<Command>,
     events: Sender<BackendEvent>,
 ) {
-    let mut desired_world_id = Some(initial_world_id);
+    // Studio owns world selection. Waiting for SetWorld avoids connecting to
+    // an initial world and then resetting that same session on the first frame.
+    let mut desired_world_id = None;
     let mut connected_world_id = None;
     let mut socket = None;
     let mut next_connect_at = Instant::now();
