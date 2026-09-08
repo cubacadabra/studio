@@ -9,7 +9,7 @@ name = "studio"
 path = "src/main.rs"
 
 [dependencies]
-cubacadabra-engine = { package = "cubacadabra-engine", path = "../rust" }
+cubacadabra-engine = { package = "cubacadabra-engine", path = "../rust", features = ["desktop-backends"] }
 image = "0.25"
 serde_json = "1"
 winit = "0.30"
