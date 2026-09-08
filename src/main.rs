@@ -52,6 +52,9 @@ struct StudioApp {
     renderer: Option<Renderer>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
+    mobile_sprint: bool,
+    climb: bool,
+    joystick_input: (f32, f32),
     pointer_position: Option<(f32, f32)>,
     pointer_active: bool,
     ui_pointer_active: bool,
@@ -94,6 +97,9 @@ impl StudioApp {
             renderer: None,
             pressed_keys: HashSet::new(),
             jump_queued: false,
+            mobile_sprint: false,
+            climb: false,
+            joystick_input: (0.0, 0.0),
             pointer_position: None,
             pointer_active: false,
             ui_pointer_active: false,
@@ -176,22 +182,25 @@ impl StudioApp {
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
 
-        let forward = axis(&self.pressed_keys, KeyCode::KeyW, KeyCode::KeyS);
-        let strafe = axis(&self.pressed_keys, KeyCode::KeyD, KeyCode::KeyA);
+        let mut forward = axis(&self.pressed_keys, KeyCode::KeyW, KeyCode::KeyS);
+        let mut strafe = axis(&self.pressed_keys, KeyCode::KeyD, KeyCode::KeyA);
+        forward -= self.joystick_input.1;
+        strafe += self.joystick_input.0;
         let length = (forward * forward + strafe * strafe).sqrt();
         let (forward, strafe) = if length > 1.0 {
             (forward / length, strafe / length)
         } else {
             (forward, strafe)
         };
-        let sprint = self.pressed_keys.contains(&KeyCode::ShiftLeft)
+        let sprint = self.mobile_sprint
+            || self.pressed_keys.contains(&KeyCode::ShiftLeft)
             || self.pressed_keys.contains(&KeyCode::ShiftRight);
         self.engine.set_input_values(
             forward,
             strafe,
             sprint,
             self.jump_queued,
-            false,
+            self.climb,
             self.look_delta.0,
             self.look_delta.1,
             self.zoom_delta,
@@ -200,6 +209,7 @@ impl StudioApp {
         self.look_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
         self.engine.step(delta);
+        self.drain_ui_events();
 
         if let Some(renderer) = &mut self.renderer {
             renderer.sync(&self.engine);
@@ -215,6 +225,33 @@ impl StudioApp {
 
     fn pointer_event(&mut self, phase: u8, x: f32, y: f32) -> bool {
         self.engine.ui_pointer_event(1, phase, x, y)
+    }
+
+    fn drain_ui_events(&mut self) {
+        while let Some(source) = self.engine.poll_ui_event_json() {
+            let Ok(event) = serde_json::from_slice::<Value>(&source) else {
+                continue;
+            };
+            let action = event
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let phase = event
+                .get("phase")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match action {
+                "player.move" => {
+                    let x = event.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                    let y = event.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                    self.joystick_input = (x, y);
+                }
+                "player.jump" if phase == "activate" => self.jump_queued = true,
+                "player.run" if phase == "activate" => self.mobile_sprint = !self.mobile_sprint,
+                "player.climb" if phase == "activate" => self.climb = !self.climb,
+                _ => {}
+            }
+        }
     }
 
     fn handle_key(&mut self, event: &KeyEvent, event_loop: &ActiveEventLoop) {
