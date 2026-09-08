@@ -265,6 +265,7 @@ impl StudioApp {
         self.jump_queued = false;
         self.look_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
+        self.sync_backend_world();
         self.sync_remote_players();
         self.engine.step(delta);
         self.drain_ui_events();
