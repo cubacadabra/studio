@@ -1,0 +1,21 @@
+[package]
+name = "cubacadabra-studio"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "studio"
+path = "src/main.rs"
+
+[dependencies]
+cubacadabra-engine = { package = "cubacadabra-engine", path = "../rust" }
+image = "0.25"
+serde_json = "1"
+winit = "0.30"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
