@@ -10,6 +10,8 @@ package image assets.
 
 ## Run a game
 
+cargo run --release -vv -- --path /Users/aa/cubacadabra/examples/survival-101
+
 Studio accepts either a built package or a raw game project.
 
 A built package contains:
@@ -67,3 +69,15 @@ sibling `../tools` repository at build time for embedded SDK source, matching
 the layout used by the other Cubacadabra clients. The desktop host is a single
 binary crate for now; platform packaging and future editor services can grow
 under `crates/` without making the first window more complex.
+
+Studio connects the running game to the multiplayer Worker over WebSockets.
+The backend defaults to the local Worker at `http://127.0.0.1:8787`; set
+`CUBACADABRA_BACKEND_URL` to use another backend, for example:
+
+```sh
+CUBACADABRA_BACKEND_URL=https://api.cubacadabra.com \
+  cargo run --release -- --path /Users/aa/cubacadabra/examples/survival-101
+```
+
+The configured HTTP or HTTPS URL is converted to `ws://` or `wss://` for the
+game session. Studio reconnects in the background if the Worker is unavailable.
