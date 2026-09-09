@@ -4,7 +4,7 @@ use super::*;
 fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
     for scale in [1.0, 2.0] {
         let context = egui::Context::default();
-        configure_style(&context);
+        configure_context(&context);
         let mut input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -20,7 +20,7 @@ fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
         let output = context.run_ui(input, |ui| {
             egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
                 for label in ["File", "Edit", "Window"] {
-                    ui.menu_button(label, |_| {});
+                    ui.menu_button(RichText::new(label).size(TYPE.primary), |_| {});
                 }
                 ui.add_space(12.0);
                 for workspace in Workspace::ALL {
@@ -74,7 +74,7 @@ fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
 fn editor_headers_keep_their_height_with_actions_at_different_widths() {
     for width in [224.0, 768.0, 1280.0, 1440.0] {
         let context = egui::Context::default();
-        configure_style(&context);
+        configure_context(&context);
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
                 egui::Pos2::ZERO,

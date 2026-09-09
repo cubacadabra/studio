@@ -1,11 +1,11 @@
 use cubacadabra_engine::native::Renderer as GameRenderer;
 use egui::{
-    Align, Align2, Color32, FontId, Frame, Layout, Margin, Rect, RichText, Sense, Stroke,
-    StrokeKind, TextStyle, Vec2,
+    Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout, Margin,
+    Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
 };
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor, wgpu};
 use egui_winit::State as EguiState;
-use std::time::Duration;
+use std::{fs, sync::Arc, time::Duration};
 use winit::{event::WindowEvent, window::Window};
 
 #[cfg(test)]
@@ -22,16 +22,64 @@ struct UiMetrics {
     radius: f32,
 }
 
+struct TypographyMetrics {
+    primary: f32,
+    secondary: f32,
+    meta: f32,
+}
+
 const UI: UiMetrics = UiMetrics {
-    top_bar: 28.0,
-    status_bar: 18.0,
-    editor_header: 22.0,
-    control: 18.0,
+    top_bar: 30.0,
+    status_bar: 20.0,
+    editor_header: 24.0,
+    control: 20.0,
     inset: 6.0,
-    icon: 12.0,
-    row: 18.0,
+    icon: 13.0,
+    row: 22.0,
     radius: 1.0,
 };
+const TYPE: TypographyMetrics = TypographyMetrics {
+    primary: 13.0,
+    secondary: 12.0,
+    meta: 11.0,
+};
+const MEDIUM_FONT_FAMILY: &str = "studio-system-ui-medium";
+const SYSTEM_UI_REGULAR: &str = "studio-system-ui-regular";
+const SYSTEM_UI_MEDIUM: &str = "studio-system-ui-medium-face";
+
+#[cfg(target_os = "macos")]
+const REGULAR_FONT_PATHS: &[&str] = &[
+    "/System/Library/Fonts/SFNS.ttf",
+    "/Library/Fonts/SF-Pro-Text-Regular.otf",
+];
+#[cfg(target_os = "macos")]
+const MEDIUM_FONT_PATHS: &[&str] = &["/Library/Fonts/SF-Pro-Text-Medium.otf"];
+
+#[cfg(target_os = "windows")]
+const REGULAR_FONT_PATHS: &[&str] = &["C:/Windows/Fonts/segoeui.ttf"];
+#[cfg(target_os = "windows")]
+const MEDIUM_FONT_PATHS: &[&str] = &[
+    "C:/Windows/Fonts/seguisb.ttf",
+    "C:/Windows/Fonts/segoeuisl.ttf",
+];
+
+#[cfg(target_os = "linux")]
+const REGULAR_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+];
+#[cfg(target_os = "linux")]
+const MEDIUM_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/noto/NotoSans-Medium.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+];
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+const REGULAR_FONT_PATHS: &[&str] = &[];
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+const MEDIUM_FONT_PATHS: &[&str] = &[];
 const TOP_BAR_HEIGHT: f32 = UI.top_bar;
 const STATUS_BAR_HEIGHT: f32 = UI.status_bar;
 const EDITOR_HEADER_HEIGHT: f32 = UI.editor_header;
@@ -168,7 +216,7 @@ pub(crate) struct StudioShell {
 impl StudioShell {
     pub(crate) fn new(window: &Window, game_renderer: &GameRenderer) -> Self {
         let context = egui::Context::default();
-        configure_style(&context);
+        configure_context(&context);
         let state = EguiState::new(
             context.clone(),
             egui::ViewportId::ROOT,
@@ -342,7 +390,7 @@ impl StudioShell {
 
                     #[cfg(not(target_os = "macos"))]
                     {
-                        ui.menu_button("File", |ui| {
+                        ui.menu_button(RichText::new("File").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
                             if menu_entry(ui, Icon::Open, "Open Project…", "Ctrl+O", true).clicked()
                             {
@@ -359,7 +407,7 @@ impl StudioShell {
                                 ui.close();
                             }
                         });
-                        ui.menu_button("Edit", |ui| {
+                        ui.menu_button(RichText::new("Edit").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
                             menu_entry(ui, Icon::Undo, "Undo", "Ctrl+Z", false);
                             menu_entry(ui, Icon::Redo, "Redo", "Ctrl+Shift+Z", false);
@@ -371,7 +419,7 @@ impl StudioShell {
                                 ui.close();
                             }
                         });
-                        ui.menu_button("Window", |ui| {
+                        ui.menu_button(RichText::new("Window").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
                             if menu_entry(ui, Icon::Grid, "Maximize Viewport", "Space", true)
                                 .clicked()
@@ -412,7 +460,11 @@ impl StudioShell {
                         }
                         if ui.available_width() > 180.0 {
                             vertical_separator(ui, 14.0);
-                            ui.label(RichText::new(project_name).size(10.0).color(MUTED));
+                            ui.label(
+                                RichText::new(project_name)
+                                    .size(TYPE.secondary)
+                                    .color(SECONDARY_TEXT),
+                            );
                         }
                     });
                 });
@@ -428,11 +480,11 @@ impl StudioShell {
                     ui.set_height(STATUS_BAR_HEIGHT);
                     ui.spacing_mut().interact_size.y = 16.0;
                     inline_icon(ui, Icon::Check, MUTED);
-                    ui.label(RichText::new(&self.notice).size(10.0).color(MUTED));
+                    ui.label(RichText::new(&self.notice).size(TYPE.meta).color(MUTED));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new("Layout preview").size(9.5).color(FAINT));
+                        ui.label(RichText::new("Layout preview").size(TYPE.meta).color(FAINT));
                         vertical_separator(ui, 12.0);
-                        ui.label(RichText::new("Metal").size(9.5).color(FAINT));
+                        ui.label(RichText::new("Metal").size(TYPE.meta).color(FAINT));
                     });
                 });
             });
@@ -571,7 +623,11 @@ impl StudioShell {
                         property_row(ui, "Image", self.selected_asset);
                     });
                     property_section(ui, "Surface", |ui| {
-                        ui.label(RichText::new("Roughness").size(11.0).color(SECONDARY_TEXT));
+                        ui.label(
+                            RichText::new("Roughness")
+                                .size(TYPE.secondary)
+                                .color(SECONDARY_TEXT),
+                        );
                         if ui
                             .add(egui::Slider::new(&mut self.roughness, 0.0..=1.0))
                             .changed()
@@ -611,7 +667,7 @@ impl StudioShell {
                         inline_icon(ui, tool_icon(self.test_tool), FAINT);
                         ui.label(
                             RichText::new(format!("{} tools will appear here.", self.test_tool))
-                                .size(11.5)
+                                .size(TYPE.secondary)
                                 .color(MUTED),
                         );
                     });
@@ -654,7 +710,7 @@ impl StudioShell {
                             rect.center(),
                             Align2::CENTER_CENTER,
                             "Session preview",
-                            FontId::proportional(11.0),
+                            FontId::proportional(TYPE.secondary),
                             MUTED,
                         );
                     }
@@ -668,7 +724,7 @@ impl StudioShell {
                         header.left_center() + egui::vec2(27.0, 0.0),
                         Align2::LEFT_CENTER,
                         format!("Player {}", index + 1),
-                        FontId::proportional(10.5),
+                        medium_font(TYPE.secondary),
                         TEXT,
                     );
                     let status_center = header.right_center() - egui::vec2(13.0, 0.0);
@@ -700,9 +756,17 @@ impl StudioShell {
                 let available = ui.available_rect_before_wrap();
                 let header = editor_header(ui, |ui| {
                     inline_icon(ui, Icon::Camera, MUTED);
-                    ui.label(RichText::new(title).size(11.0).color(TEXT));
+                    ui.label(
+                        RichText::new(title)
+                            .font(medium_font(TYPE.primary))
+                            .color(TEXT),
+                    );
                     vertical_separator(ui, 12.0);
-                    ui.label(RichText::new(mode).size(11.0).color(TEXT));
+                    ui.label(
+                        RichText::new(mode)
+                            .size(TYPE.secondary)
+                            .color(SECONDARY_TEXT),
+                    );
                     paint_down_chevron(ui);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         icon_button(ui, Icon::More, "Viewport options", false);
@@ -826,7 +890,11 @@ impl StudioShell {
     fn asset_shelf(&mut self, ui: &mut egui::Ui) {
         editor_header(ui, |ui| {
             inline_icon(ui, Icon::Assets, MUTED);
-            ui.label(RichText::new("Assets").size(11.0).color(TEXT));
+            ui.label(
+                RichText::new("Assets")
+                    .font(medium_font(TYPE.primary))
+                    .color(TEXT),
+            );
             vertical_separator(ui, 12.0);
             ui.spacing_mut().item_spacing.x = 0.0;
             for filter in ["All", "Images", "Materials", "Characters"] {
@@ -855,6 +923,50 @@ impl StudioShell {
                 });
             });
     }
+}
+
+fn configure_context(context: &egui::Context) {
+    configure_fonts(context);
+    configure_style(context);
+}
+
+fn configure_fonts(context: &egui::Context) {
+    // egui rasterizes fonts itself, so use each desktop OS's installed UI face
+    // and retain its bundled fonts as fallbacks for missing glyphs or files.
+    let mut fonts = FontDefinitions::default();
+    let proportional = fonts
+        .families
+        .get_mut(&FontFamily::Proportional)
+        .expect("egui should define its proportional fallback family");
+    if let Some(regular) = read_first_font(REGULAR_FONT_PATHS) {
+        fonts.font_data.insert(
+            SYSTEM_UI_REGULAR.to_owned(),
+            Arc::new(FontData::from_owned(regular)),
+        );
+        proportional.insert(0, SYSTEM_UI_REGULAR.to_owned());
+    }
+
+    let mut medium_family = Vec::new();
+    if let Some(medium) = read_first_font(MEDIUM_FONT_PATHS) {
+        fonts.font_data.insert(
+            SYSTEM_UI_MEDIUM.to_owned(),
+            Arc::new(FontData::from_owned(medium)),
+        );
+        medium_family.push(SYSTEM_UI_MEDIUM.to_owned());
+    }
+    medium_family.extend(proportional.iter().cloned());
+    fonts
+        .families
+        .insert(FontFamily::Name(MEDIUM_FONT_FAMILY.into()), medium_family);
+    context.set_fonts(fonts);
+}
+
+fn read_first_font(paths: &[&str]) -> Option<Vec<u8>> {
+    paths.iter().find_map(|path| fs::read(path).ok())
+}
+
+fn medium_font(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(MEDIUM_FONT_FAMILY.into()))
 }
 
 fn configure_style(context: &egui::Context) {
@@ -904,16 +1016,16 @@ fn configure_style(context: &egui::Context) {
     style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::proportional(11.0));
+        .insert(TextStyle::Body, FontId::proportional(TYPE.secondary));
     style
         .text_styles
-        .insert(TextStyle::Button, FontId::proportional(10.5));
+        .insert(TextStyle::Button, FontId::proportional(TYPE.secondary));
     style
         .text_styles
-        .insert(TextStyle::Small, FontId::proportional(10.0));
+        .insert(TextStyle::Small, FontId::proportional(TYPE.meta));
     style
         .text_styles
-        .insert(TextStyle::Monospace, FontId::monospace(11.0));
+        .insert(TextStyle::Monospace, FontId::monospace(TYPE.secondary));
     context.set_style_of(egui::Theme::Dark, style);
     context.set_theme(egui::ThemePreference::Dark);
 }
@@ -952,7 +1064,7 @@ fn content_frame() -> Frame {
 fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::proportional(11.5),
+        FontId::proportional(TYPE.primary),
         if selected { TEXT } else { SECONDARY_TEXT },
     );
     let width = galley.size().x.ceil() + LABEL_PADDING * 2.0;
@@ -1007,7 +1119,11 @@ fn editor_header(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> Rect
 fn panel_header(ui: &mut egui::Ui, icon: Icon, title: &str, actions: impl FnOnce(&mut egui::Ui)) {
     editor_header(ui, |ui| {
         inline_icon(ui, icon, MUTED);
-        ui.label(RichText::new(title).size(11.0).color(TEXT));
+        ui.label(
+            RichText::new(title)
+                .font(medium_font(TYPE.primary))
+                .color(TEXT),
+        );
         ui.with_layout(Layout::right_to_left(Align::Center), actions);
     });
 }
@@ -1018,20 +1134,31 @@ fn selected_object_header(ui: &mut egui::Ui, name: &str, kind: &str) {
         Layout::left_to_right(Align::Center),
         |ui| {
             inline_icon(ui, Icon::Object, MUTED);
-            ui.add(egui::Label::new(RichText::new(name).size(11.5).color(TEXT)).truncate())
-                .on_hover_text(kind);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(name)
+                        .font(medium_font(TYPE.primary))
+                        .color(TEXT),
+                )
+                .truncate(),
+            )
+            .on_hover_text(kind);
         },
     );
 }
 
 fn property_section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(RichText::new(title).size(11.5).color(TEXT))
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            content(ui);
-            ui.add_space(1.0);
-        });
+    egui::CollapsingHeader::new(
+        RichText::new(title)
+            .font(medium_font(TYPE.secondary))
+            .color(TEXT),
+    )
+    .default_open(true)
+    .show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
+        content(ui);
+        ui.add_space(1.0);
+    });
 }
 
 fn property_row(ui: &mut egui::Ui, label: &str, value: &str) {
@@ -1039,7 +1166,7 @@ fn property_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.painter().rect_filled(field, UI.radius, SURFACE);
     ui.put(
         field.shrink2(egui::vec2(6.0, 0.0)),
-        egui::Label::new(RichText::new(value).size(11.0).color(TEXT)).truncate(),
+        egui::Label::new(RichText::new(value).size(TYPE.secondary).color(TEXT)).truncate(),
     );
 }
 
@@ -1053,7 +1180,7 @@ fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
         egui::pos2(row.min.x + label_width - 8.0, row.center().y),
         Align2::RIGHT_CENTER,
         label,
-        FontId::proportional(10.5),
+        FontId::proportional(TYPE.secondary),
         SECONDARY_TEXT,
     );
     Rect::from_min_max(row.min + egui::vec2(label_width, 0.0), row.max)
@@ -1076,7 +1203,7 @@ fn drag_property_row(
             field.left_center() + egui::vec2(10.0, 0.0),
             Align2::CENTER_CENTER,
             axis,
-            FontId::proportional(10.0),
+            FontId::proportional(TYPE.meta),
             axis_color(axis),
         );
     }
@@ -1146,7 +1273,7 @@ fn scene_row(
         egui::pos2(x + 30.0, rect.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(10.5),
+        FontId::proportional(TYPE.primary),
         if is_selected { TEXT } else { SECONDARY_TEXT },
     );
     paint_icon(
@@ -1206,7 +1333,7 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
         egui::pos2(rect.center().x, rect.max.y - 8.0),
         Align2::CENTER_CENTER,
         name,
-        FontId::proportional(9.5),
+        FontId::proportional(TYPE.meta),
         if selected { TEXT } else { MUTED },
     );
     ui.painter().rect_stroke(
@@ -1225,7 +1352,7 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
 fn compact_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::proportional(11.0),
+        FontId::proportional(TYPE.secondary),
         if selected { TEXT } else { MUTED },
     );
     let width = galley.size().x.ceil() + 12.0;
@@ -1279,7 +1406,7 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
         rect.left_center() + egui::vec2(24.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(10.5),
+        FontId::proportional(TYPE.primary),
         if selected { TEXT } else { MUTED },
     );
     paint_focus(ui, &response);
@@ -1309,7 +1436,7 @@ fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
         text_rect,
         egui::TextEdit::singleline(query)
             .hint_text("Search assets…")
-            .font(FontId::proportional(11.0))
+            .font(FontId::proportional(TYPE.secondary))
             .margin(Margin::ZERO)
             .frame(Frame::NONE),
     );
@@ -1343,7 +1470,7 @@ fn drop_target(ui: &mut egui::Ui, label: &str) {
         rect.center() + egui::vec2(0.0, 10.0),
         Align2::CENTER_CENTER,
         label,
-        FontId::proportional(10.5),
+        FontId::proportional(TYPE.secondary),
         MUTED,
     );
 }
@@ -1361,7 +1488,7 @@ fn menu_entry(
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(220.0, 22.0), sense);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(220.0, 24.0), sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     if enabled && (response.hovered() || response.has_focus()) {
         ui.painter().rect_filled(rect, UI.radius, ACCENT_DARK);
@@ -1380,7 +1507,7 @@ fn menu_entry(
         rect.left_center() + egui::vec2(28.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(10.5),
+        FontId::proportional(TYPE.primary),
         color,
     );
     if !shortcut.is_empty() {
@@ -1388,7 +1515,7 @@ fn menu_entry(
             rect.right_center() - egui::vec2(8.0, 0.0),
             Align2::RIGHT_CENTER,
             shortcut,
-            FontId::proportional(10.0),
+            FontId::proportional(TYPE.meta),
             FAINT,
         );
     }
@@ -1396,7 +1523,7 @@ fn menu_entry(
 }
 
 fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(52.0, CONTROL_HEIGHT), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(54.0, CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     if active || response.hovered() {
         ui.painter().rect_filled(
@@ -1418,7 +1545,7 @@ fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> e
         rect.left_center() + egui::vec2(22.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(11.0),
+        medium_font(TYPE.secondary),
         TEXT,
     );
     paint_focus(ui, &response);
@@ -1465,7 +1592,7 @@ fn paint_status_label(ui: &egui::Ui, rect: Rect, color: Color32, label: &str) {
         rect.left_center() + egui::vec2(18.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(10.5),
+        FontId::proportional(TYPE.meta),
         color,
     );
 }
