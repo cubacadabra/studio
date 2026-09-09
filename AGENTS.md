@@ -13,3 +13,11 @@ the web/WASM client. When changing `../rust` to support a Studio issue:
 - Verify the normal engine build, Studio desktop build, Android feature set,
   web/WASM feature set, and relevant engine tests. If a target cannot be built
   locally, report the toolchain limitation explicitly.
+
+# Studio shell logo
+
+Preserve the Studio logo in the top bar. It is embedded from
+`assets/logo.png`, loaded into an egui texture during `StudioShell` setup, and
+rendered as the 20×20 image in `src/shell.rs`. Do not replace it with a generic
+painted icon or remove its texture initialization when changing shell layout
+or styling.
