@@ -11,26 +11,46 @@ use winit::{event::WindowEvent, window::Window};
 #[cfg(test)]
 mod tests;
 
-const TOP_BAR_HEIGHT: f32 = 30.0;
-const STATUS_BAR_HEIGHT: f32 = 20.0;
-const EDITOR_HEADER_HEIGHT: f32 = 24.0;
-const CONTROL_HEIGHT: f32 = 20.0;
-const LABEL_PADDING: f32 = 10.0;
+struct UiMetrics {
+    top_bar: f32,
+    status_bar: f32,
+    editor_header: f32,
+    control: f32,
+    inset: f32,
+    icon: f32,
+    row: f32,
+    radius: f32,
+}
+
+const UI: UiMetrics = UiMetrics {
+    top_bar: 28.0,
+    status_bar: 18.0,
+    editor_header: 22.0,
+    control: 18.0,
+    inset: 6.0,
+    icon: 12.0,
+    row: 18.0,
+    radius: 1.0,
+};
+const TOP_BAR_HEIGHT: f32 = UI.top_bar;
+const STATUS_BAR_HEIGHT: f32 = UI.status_bar;
+const EDITOR_HEADER_HEIGHT: f32 = UI.editor_header;
+const CONTROL_HEIGHT: f32 = UI.control;
+const LABEL_PADDING: f32 = UI.inset;
 const PANEL: Color32 = Color32::from_rgb(49, 49, 49);
-const PANEL_RAISED: Color32 = Color32::from_rgb(58, 58, 58);
-const PANEL_HEADER: Color32 = Color32::from_rgb(55, 55, 55);
-const SURFACE: Color32 = Color32::from_rgb(40, 40, 40);
-const SURFACE_DEEP: Color32 = Color32::from_rgb(29, 29, 29);
-const FIELD: Color32 = Color32::from_rgb(70, 70, 70);
-const BORDER: Color32 = Color32::from_rgb(29, 29, 29);
-const BORDER_STRONG: Color32 = Color32::from_rgb(87, 87, 87);
-const TEXT: Color32 = Color32::from_rgb(224, 224, 224);
-const MUTED: Color32 = Color32::from_rgb(185, 185, 185);
-const FAINT: Color32 = Color32::from_rgb(143, 143, 143);
-const ACCENT: Color32 = Color32::from_rgb(137, 177, 218);
-const ACCENT_DARK: Color32 = Color32::from_rgb(65, 88, 115);
-const LIVE: Color32 = Color32::from_rgb(133, 186, 153);
-const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
+const PANEL_RAISED: Color32 = Color32::from_rgb(55, 55, 55);
+const PANEL_HEADER: Color32 = Color32::from_rgb(52, 52, 52);
+const SURFACE: Color32 = Color32::from_rgb(43, 43, 43);
+const SURFACE_DEEP: Color32 = Color32::from_rgb(35, 35, 35);
+const FIELD: Color32 = Color32::from_rgb(61, 61, 61);
+const BORDER: Color32 = Color32::from_rgb(43, 43, 43);
+const BORDER_STRONG: Color32 = Color32::from_rgb(73, 73, 73);
+const TEXT: Color32 = Color32::from_rgb(210, 210, 210);
+const MUTED: Color32 = Color32::from_rgb(164, 164, 164);
+const FAINT: Color32 = Color32::from_rgb(116, 116, 116);
+const ACCENT: Color32 = Color32::from_rgb(122, 157, 193);
+const ACCENT_DARK: Color32 = Color32::from_rgb(68, 82, 99);
+const LIVE: Color32 = Color32::from_rgb(120, 166, 137);
 
 #[derive(Clone, Copy, Debug)]
 enum Icon {
@@ -106,7 +126,6 @@ pub(crate) struct StudioShell {
     playing: bool,
     notice: String,
     search_query: String,
-    logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
     scale: f32,
@@ -131,7 +150,6 @@ impl StudioShell {
             game_renderer.studio_overlay_format(),
             RendererOptions::default(),
         );
-        let logo_texture = load_logo_texture(&context);
         Self {
             context,
             state,
@@ -145,7 +163,6 @@ impl StudioShell {
             playing: false,
             notice: "Ready".to_owned(),
             search_query: String::new(),
-            logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
             scale: 1.0,
@@ -251,11 +268,8 @@ impl StudioShell {
             .frame(editor_frame(SURFACE).inner_margin(Margin::symmetric(6, 0)))
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
-                    ui.add(
-                        egui::Image::from_texture(&self.logo_texture)
-                            .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                            .sense(Sense::hover()),
-                    );
+                    let logo = ui.allocate_response(Vec2::splat(16.0), Sense::hover());
+                    paint_icon(ui.painter(), logo.rect, Icon::Object, FAINT);
 
                     ui.menu_button("File", |ui| {
                         ui.set_min_width(220.0);
@@ -297,7 +311,7 @@ impl StudioShell {
                         }
                     });
 
-                    ui.add_space(12.0);
+                    ui.add_space(8.0);
                     for workspace in Workspace::ALL {
                         if workspace_tab(ui, workspace.label(), self.workspace == workspace)
                             .clicked()
@@ -308,9 +322,9 @@ impl StudioShell {
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.spacing_mut().item_spacing.x = 6.0;
                         let live =
-                            ui.allocate_response(egui::vec2(43.0, CONTROL_HEIGHT), Sense::hover());
+                            ui.allocate_response(egui::vec2(40.0, CONTROL_HEIGHT), Sense::hover());
                         paint_status_label(ui, live.rect, LIVE, "Live");
                         let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
                         let play_label = if self.playing { "Stop" } else { "Play" };
@@ -324,7 +338,7 @@ impl StudioShell {
                         }
                         if ui.available_width() > 180.0 {
                             vertical_separator(ui, 14.0);
-                            ui.label(RichText::new(project_name).size(11.0).color(FAINT));
+                            ui.label(RichText::new(project_name).size(10.0).color(FAINT));
                         }
                     });
                 });
@@ -340,11 +354,11 @@ impl StudioShell {
                     ui.set_height(STATUS_BAR_HEIGHT);
                     ui.spacing_mut().interact_size.y = 16.0;
                     inline_icon(ui, Icon::Check, MUTED);
-                    ui.label(RichText::new(&self.notice).size(10.5).color(MUTED));
+                    ui.label(RichText::new(&self.notice).size(10.0).color(MUTED));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new("Layout preview").size(10.0).color(FAINT));
+                        ui.label(RichText::new("Layout preview").size(9.5).color(FAINT));
                         vertical_separator(ui, 12.0);
-                        ui.label(RichText::new("Metal").size(10.0).color(FAINT));
+                        ui.label(RichText::new("Metal").size(9.5).color(FAINT));
                     });
                 });
             });
@@ -353,8 +367,8 @@ impl StudioShell {
     fn show_world(&mut self, root: &mut egui::Ui) {
         egui::Panel::bottom("world_assets")
             .resizable(true)
-            .default_size(136.0)
-            .size_range(120.0..=300.0)
+            .default_size(112.0)
+            .size_range(100.0..=280.0)
             .frame(editor_frame(PANEL))
             .show(root, |ui| self.asset_shelf(ui));
 
@@ -566,21 +580,21 @@ impl StudioShell {
                             rect.center(),
                             Align2::CENTER_CENTER,
                             "Session preview",
-                            FontId::proportional(12.0),
+                            FontId::proportional(11.0),
                             MUTED,
                         );
                     }
                     ui.painter().rect_filled(header, 0.0, PANEL_HEADER);
                     let icon_rect = Rect::from_center_size(
                         header.left_center() + egui::vec2(14.0, 0.0),
-                        Vec2::splat(14.0),
+                        Vec2::splat(UI.icon),
                     );
                     paint_icon(ui.painter(), icon_rect, Icon::Camera, FAINT);
                     ui.painter().text(
                         header.left_center() + egui::vec2(27.0, 0.0),
                         Align2::LEFT_CENTER,
                         format!("Player {}", index + 1),
-                        FontId::proportional(11.5),
+                        FontId::proportional(10.5),
                         TEXT,
                     );
                     let status_center = header.right_center() - egui::vec2(13.0, 0.0);
@@ -771,8 +785,8 @@ impl StudioShell {
 
 fn configure_style(context: &egui::Context) {
     let mut style = (*context.style_of(egui::Theme::Dark)).clone();
-    style.spacing.item_spacing = egui::vec2(6.0, 2.0);
-    style.spacing.button_padding = egui::vec2(8.0, 2.0);
+    style.spacing.item_spacing = egui::vec2(4.0, 1.0);
+    style.spacing.button_padding = egui::vec2(6.0, 1.0);
     style.spacing.interact_size.y = CONTROL_HEIGHT;
     style.spacing.indent = 12.0;
     style.spacing.menu_margin = Margin::same(4);
@@ -780,8 +794,8 @@ fn configure_style(context: &egui::Context) {
     style.visuals.dark_mode = true;
     style.visuals.panel_fill = PANEL;
     style.visuals.window_fill = PANEL_RAISED;
-    style.visuals.window_stroke = Stroke::new(1.0, BORDER_STRONG);
-    style.visuals.window_corner_radius = egui::CornerRadius::same(4);
+    style.visuals.window_stroke = Stroke::new(1.0, BORDER);
+    style.visuals.window_corner_radius = egui::CornerRadius::same(2);
     style.visuals.menu_corner_radius = egui::CornerRadius::same(3);
     style.visuals.extreme_bg_color = SURFACE_DEEP;
     style.visuals.text_edit_bg_color = Some(FIELD);
@@ -789,23 +803,23 @@ fn configure_style(context: &egui::Context) {
     style.visuals.indent_has_left_vline = false;
     style.visuals.selection.bg_fill = ACCENT_DARK;
     style.visuals.selection.stroke = Stroke::new(1.0, ACCENT);
-    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
-    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(2);
-    style.visuals.widgets.inactive.bg_fill = FIELD;
-    style.visuals.widgets.inactive.weak_bg_fill = FIELD;
-    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
+    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, MUTED);
+    style.visuals.widgets.noninteractive.bg_stroke = Stroke::NONE;
+    style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(1);
+    style.visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
+    style.visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    style.visuals.widgets.inactive.bg_stroke = Stroke::NONE;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
-    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(2);
-    style.visuals.widgets.hovered.bg_fill = BORDER_STRONG;
-    style.visuals.widgets.hovered.weak_bg_fill = BORDER_STRONG;
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, BORDER_STRONG);
+    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(1);
+    style.visuals.widgets.hovered.bg_fill = PANEL_RAISED;
+    style.visuals.widgets.hovered.weak_bg_fill = PANEL_RAISED;
+    style.visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT);
-    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(2);
+    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(1);
     style.visuals.widgets.active.bg_fill = ACCENT_DARK;
     style.visuals.widgets.active.weak_bg_fill = ACCENT_DARK;
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
-    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(2);
+    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(1);
     style.visuals.widgets.open.bg_fill = FIELD;
     style.visuals.widgets.open.weak_bg_fill = FIELD;
     style.visuals.widgets.open.corner_radius = egui::CornerRadius::same(2);
@@ -816,10 +830,10 @@ fn configure_style(context: &egui::Context) {
     style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::proportional(12.0));
+        .insert(TextStyle::Body, FontId::proportional(11.0));
     style
         .text_styles
-        .insert(TextStyle::Button, FontId::proportional(11.5));
+        .insert(TextStyle::Button, FontId::proportional(10.5));
     style
         .text_styles
         .insert(TextStyle::Small, FontId::proportional(10.0));
@@ -834,19 +848,6 @@ fn editor_frame(fill: Color32) -> Frame {
     Frame::NONE.fill(fill).inner_margin(Margin::same(0))
 }
 
-fn load_logo_texture(context: &egui::Context) -> egui::TextureHandle {
-    let image = image::load_from_memory(LOGO_BYTES)
-        .expect("Cubacadabra Studio logo should be a valid image")
-        .to_rgba8();
-    let size = [image.width() as usize, image.height() as usize];
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-    context.load_texture(
-        "cubacadabra-studio-logo",
-        color_image,
-        egui::TextureOptions::LINEAR,
-    )
-}
-
 fn menu_bar_style(style: &mut egui::Style) {
     style.spacing.item_spacing.x = 0.0;
     style.spacing.button_padding = egui::vec2(LABEL_PADDING, 4.0);
@@ -858,7 +859,7 @@ fn menu_bar_style(style: &mut egui::Style) {
 }
 
 fn content_frame() -> Frame {
-    Frame::NONE.inner_margin(Margin::symmetric(8, 6))
+    Frame::NONE.inner_margin(Margin::symmetric(6, 4))
 }
 
 fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
@@ -870,20 +871,18 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
     let width = galley.size().x.ceil() + LABEL_PADDING * 2.0;
     let (slot, response) =
         ui.allocate_exact_size(egui::vec2(width, TOP_BAR_HEIGHT), Sense::click());
-    let rect = Rect::from_min_max(slot.min + egui::vec2(0.0, 5.0), slot.max);
+    let rect = Rect::from_min_max(slot.min, slot.max);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
     });
-    if response.hovered() || response.has_focus() || selected {
-        ui.painter().rect_filled(
-            rect,
-            egui::CornerRadius {
-                nw: 3,
-                ne: 3,
-                sw: 0,
-                se: 0,
-            },
-            if selected { PANEL_HEADER } else { PANEL_RAISED },
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, UI.radius, PANEL_RAISED);
+    }
+    if selected {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.max.y - 1.0,
+            Stroke::new(1.0, ACCENT_DARK),
         );
     }
     ui.painter().galley(
@@ -892,7 +891,7 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
             slot.center().y - galley.size().y * 0.5,
         ),
         galley,
-        TEXT,
+        if selected { TEXT } else { MUTED },
     );
     paint_focus(ui, &response);
     response
@@ -909,11 +908,11 @@ fn editor_header(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> Rect
         .hline(rect.x_range(), rect.max.y - 0.5, Stroke::new(1.0, BORDER));
     let mut header = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(6.0, 0.0)))
+            .max_rect(rect.shrink2(egui::vec2(UI.inset, 0.0)))
             .layout(Layout::left_to_right(Align::Center)),
     );
     header.set_clip_rect(ui.clip_rect().intersect(rect));
-    header.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+    header.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
     content(&mut header);
     rect
 }
@@ -927,26 +926,30 @@ fn panel_header(ui: &mut egui::Ui, icon: Icon, title: &str, actions: impl FnOnce
 }
 
 fn selected_object_header(ui: &mut egui::Ui, name: &str, kind: &str) {
-    ui.horizontal(|ui| {
-        inline_icon(ui, Icon::Object, MUTED);
-        ui.add(egui::Label::new(RichText::new(name).size(11.5).color(TEXT)).truncate())
-            .on_hover_text(kind);
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), UI.row),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            inline_icon(ui, Icon::Object, MUTED);
+            ui.add(egui::Label::new(RichText::new(name).size(11.5).color(TEXT)).truncate())
+                .on_hover_text(kind);
+        },
+    );
 }
 
 fn property_section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
     egui::CollapsingHeader::new(RichText::new(title).size(11.5).color(TEXT))
         .default_open(true)
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.spacing_mut().item_spacing.y = 1.0;
             content(ui);
-            ui.add_space(6.0);
+            ui.add_space(2.0);
         });
 }
 
 fn property_row(ui: &mut egui::Ui, label: &str, value: &str) {
     let field = property_field(ui, label);
-    ui.painter().rect_filled(field, 2.0, SURFACE);
+    ui.painter().rect_filled(field, UI.radius, SURFACE);
     ui.put(
         field.shrink2(egui::vec2(6.0, 0.0)),
         egui::Label::new(RichText::new(value).size(11.0).color(TEXT)).truncate(),
@@ -963,7 +966,7 @@ fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
         egui::pos2(row.min.x + label_width - 8.0, row.center().y),
         Align2::RIGHT_CENTER,
         label,
-        FontId::proportional(11.0),
+        FontId::proportional(10.5),
         MUTED,
     );
     Rect::from_min_max(row.min + egui::vec2(label_width, 0.0), row.max)
@@ -978,7 +981,7 @@ fn drag_property_row(
     suffix: &str,
 ) {
     let field = property_field(ui, label);
-    ui.painter().rect_filled(field, 2.0, FIELD);
+    ui.painter().rect_filled(field, UI.radius, FIELD);
     let mut value_rect = field;
     if !axis.is_empty() {
         value_rect.min.x += 20.0;
@@ -986,7 +989,7 @@ fn drag_property_row(
             field.left_center() + egui::vec2(10.0, 0.0),
             Align2::CENTER_CENTER,
             axis,
-            FontId::proportional(10.5),
+            FontId::proportional(10.0),
             axis_color(axis),
         );
     }
@@ -1015,10 +1018,8 @@ fn scene_row(
     name: &'static str,
     selected: &mut &'static str,
 ) {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
-        Sense::click(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
     let is_selected = *selected == name;
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, is_selected, name)
@@ -1035,7 +1036,7 @@ fn scene_row(
         );
     }
     paint_focus(ui, &response);
-    let x = rect.min.x + 6.0 + depth as f32 * 12.0;
+    let x = rect.min.x + UI.inset + depth as f32 * 12.0;
     if matches!(icon, Icon::Folder | Icon::World) {
         paint_icon(
             ui.painter(),
@@ -1050,25 +1051,29 @@ fn scene_row(
     }
     paint_icon(
         ui.painter(),
-        Rect::from_center_size(egui::pos2(x + 19.0, rect.center().y), Vec2::splat(13.0)),
+        Rect::from_center_size(egui::pos2(x + 19.0, rect.center().y), Vec2::splat(UI.icon)),
         icon,
-        if is_selected { TEXT } else { MUTED },
+        if is_selected { TEXT } else { FAINT },
     );
     ui.painter().text(
         egui::pos2(x + 30.0, rect.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(11.5),
-        TEXT,
+        FontId::proportional(10.5),
+        if is_selected { TEXT } else { MUTED },
     );
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
-            rect.right_center() - egui::vec2(9.0, 0.0),
-            Vec2::splat(12.0),
+            rect.right_center() - egui::vec2(8.0, 0.0),
+            Vec2::splat(UI.icon),
         ),
         Icon::Eye,
-        FAINT,
+        if response.hovered() || is_selected {
+            MUTED
+        } else {
+            SURFACE
+        },
     );
     if response.clicked() {
         *selected = name;
@@ -1076,7 +1081,7 @@ fn scene_row(
 }
 
 fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: &mut &'static str) {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(104.0, 88.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(76.0, 62.0), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name)
     });
@@ -1087,29 +1092,38 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
     } else {
         Color32::TRANSPARENT
     };
-    ui.painter()
-        .rect_filled(rect, 2.0, if selected { ACCENT_DARK } else { PANEL });
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            UI.radius,
+            if selected { ACCENT_DARK } else { PANEL_RAISED },
+        );
+    }
     let preview = Rect::from_min_max(
-        rect.min + egui::vec2(3.0, 3.0),
-        egui::pos2(rect.max.x - 3.0, rect.max.y - 23.0),
+        rect.min + egui::vec2(6.0, 4.0),
+        egui::pos2(rect.max.x - 6.0, rect.max.y - 17.0),
     );
-    ui.painter().rect_filled(preview, 2.0, SURFACE);
+    ui.painter().rect_filled(preview, UI.radius, SURFACE);
     let (asset_icon, kind) = asset_kind(name);
     paint_icon(
         ui.painter(),
-        Rect::from_center_size(preview.center(), Vec2::splat(26.0)),
+        Rect::from_center_size(preview.center(), Vec2::splat(22.0)),
         asset_icon,
         MUTED,
     );
     ui.painter().text(
-        egui::pos2(rect.center().x, rect.max.y - 11.0),
+        egui::pos2(rect.center().x, rect.max.y - 8.0),
         Align2::CENTER_CENTER,
         name,
-        FontId::proportional(10.5),
-        TEXT,
+        FontId::proportional(9.5),
+        if selected { TEXT } else { MUTED },
     );
-    ui.painter()
-        .rect_stroke(rect, 2.0, Stroke::new(1.0, border), StrokeKind::Inside);
+    ui.painter().rect_stroke(
+        rect,
+        UI.radius,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
     paint_focus(ui, &response);
     if response.clicked() {
         *selection = name;
@@ -1123,37 +1137,49 @@ fn compact_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response
         FontId::proportional(11.0),
         if selected { TEXT } else { MUTED },
     );
-    let width = galley.size().x.ceil() + 16.0;
+    let width = galley.size().x.ceil() + 12.0;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
     });
-    if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 2.0, if selected { FIELD } else { PANEL_RAISED });
+    if response.hovered() {
+        ui.painter().rect_filled(rect, UI.radius, PANEL_RAISED);
     }
-    ui.painter()
-        .galley(rect.center() - galley.size() * 0.5, galley, TEXT);
+    if selected {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.max.y - 1.0,
+            Stroke::new(1.0, ACCENT_DARK),
+        );
+    }
+    ui.painter().galley(
+        rect.center() - galley.size() * 0.5,
+        galley,
+        if selected { TEXT } else { MUTED },
+    );
     paint_focus(ui, &response);
     response
 }
 
 fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
     });
     if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 2.0, if selected { ACCENT_DARK } else { PANEL_RAISED });
+        ui.painter().rect_filled(
+            rect,
+            UI.radius,
+            if selected { ACCENT_DARK } else { PANEL_RAISED },
+        );
     }
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
             rect.left_center() + egui::vec2(11.0, 0.0),
-            Vec2::splat(14.0),
+            Vec2::splat(UI.icon),
         ),
         icon,
         if selected { ACCENT } else { MUTED },
@@ -1162,7 +1188,7 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
         rect.left_center() + egui::vec2(24.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(11.5),
+        FontId::proportional(10.5),
         if selected { TEXT } else { MUTED },
     );
     paint_focus(ui, &response);
@@ -1174,12 +1200,12 @@ fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
         egui::vec2(width.min(ui.available_width()).max(80.0), CONTROL_HEIGHT),
         Sense::hover(),
     );
-    ui.painter().rect_filled(rect, 3.0, SURFACE_DEEP);
+    ui.painter().rect_filled(rect, UI.radius, SURFACE_DEEP);
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
             rect.left_center() + egui::vec2(11.0, 0.0),
-            Vec2::splat(12.0),
+            Vec2::splat(UI.icon),
         ),
         Icon::Search,
         FAINT,
@@ -1203,10 +1229,10 @@ fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
 
 fn drop_target(ui: &mut egui::Ui, label: &str) {
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 62.0), Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), Sense::click());
     ui.painter().rect_filled(
         rect,
-        3.0,
+        UI.radius,
         if response.hovered() {
             PANEL_RAISED
         } else {
@@ -1215,14 +1241,15 @@ fn drop_target(ui: &mut egui::Ui, label: &str) {
     );
     ui.painter().rect_stroke(
         rect,
-        3.0,
+        UI.radius,
         Stroke::new(1.0, if response.hovered() { ACCENT } else { BORDER }),
         StrokeKind::Inside,
     );
-    let icon_rect = Rect::from_center_size(rect.center() - egui::vec2(0.0, 9.0), Vec2::splat(16.0));
+    let icon_rect =
+        Rect::from_center_size(rect.center() - egui::vec2(0.0, 7.0), Vec2::splat(UI.icon));
     paint_icon(ui.painter(), icon_rect, Icon::Open, MUTED);
     ui.painter().text(
-        rect.center() + egui::vec2(0.0, 12.0),
+        rect.center() + egui::vec2(0.0, 10.0),
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(10.5),
@@ -1242,17 +1269,17 @@ fn menu_entry(
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(220.0, 24.0), sense);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(220.0, 22.0), sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     if enabled && (response.hovered() || response.has_focus()) {
-        ui.painter().rect_filled(rect, 2.0, ACCENT_DARK);
+        ui.painter().rect_filled(rect, UI.radius, ACCENT_DARK);
     }
     let color = if enabled { TEXT } else { FAINT };
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
             rect.left_center() + egui::vec2(13.0, 0.0),
-            Vec2::splat(14.0),
+            Vec2::splat(UI.icon),
         ),
         icon,
         if enabled { MUTED } else { FAINT },
@@ -1261,7 +1288,7 @@ fn menu_entry(
         rect.left_center() + egui::vec2(28.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(11.5),
+        FontId::proportional(10.5),
         color,
     );
     if !shortcut.is_empty() {
@@ -1277,36 +1304,26 @@ fn menu_entry(
 }
 
 fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(58.0, CONTROL_HEIGHT), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(52.0, CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    ui.painter().rect_filled(
-        rect,
-        2.0,
-        if active {
-            ACCENT_DARK
-        } else if response.hovered() {
-            PANEL_HEADER
-        } else {
-            PANEL_RAISED
-        },
-    );
-    ui.painter().rect_stroke(
-        rect,
-        2.0,
-        Stroke::new(1.0, if active { ACCENT } else { BORDER_STRONG }),
-        StrokeKind::Inside,
-    );
+    if active || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            UI.radius,
+            if active { ACCENT_DARK } else { PANEL_RAISED },
+        );
+    }
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
-            rect.left_center() + egui::vec2(14.0, 0.0),
-            Vec2::splat(13.0),
+            rect.left_center() + egui::vec2(12.0, 0.0),
+            Vec2::splat(UI.icon),
         ),
         icon,
         if active { ACCENT } else { TEXT },
     );
     ui.painter().text(
-        rect.left_center() + egui::vec2(25.0, 0.0),
+        rect.left_center() + egui::vec2(22.0, 0.0),
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(11.0),
@@ -1321,7 +1338,7 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str, active: bool) -> eg
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
     if active || response.hovered() {
         ui.painter()
-            .rect_filled(rect, 2.0, if active { FIELD } else { BORDER_STRONG });
+            .rect_filled(rect, UI.radius, if active { FIELD } else { PANEL_RAISED });
     }
     paint_icon(
         ui.painter(),
@@ -1337,7 +1354,7 @@ fn paint_focus(ui: &egui::Ui, response: &egui::Response) {
     if response.has_focus() {
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
-            2.0,
+            UI.radius,
             Stroke::new(1.0, ACCENT),
             StrokeKind::Inside,
         );
@@ -1345,7 +1362,7 @@ fn paint_focus(ui: &egui::Ui, response: &egui::Response) {
 }
 
 fn inline_icon(ui: &mut egui::Ui, icon: Icon, color: Color32) {
-    let response = ui.allocate_response(Vec2::splat(14.0), Sense::hover());
+    let response = ui.allocate_response(Vec2::splat(UI.icon), Sense::hover());
     paint_icon(ui.painter(), response.rect, icon, color);
 }
 
@@ -1370,7 +1387,7 @@ fn vertical_separator(ui: &mut egui::Ui, height: f32) {
 }
 
 fn paint_down_chevron(ui: &mut egui::Ui) {
-    let response = ui.allocate_response(Vec2::splat(12.0), Sense::hover());
+    let response = ui.allocate_response(Vec2::splat(UI.icon), Sense::hover());
     paint_icon(ui.painter(), response.rect, Icon::ChevronDown, FAINT);
 }
 
