@@ -1,8 +1,8 @@
-use cubacadabra_engine::{Engine, native::Renderer};
+use cubacadabra_client::{ClientAction, ClientSession, native::Renderer};
 use image::{GenericImage, RgbaImage, imageops::FilterType};
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     env,
     error::Error,
     fmt, fs,
@@ -58,28 +58,10 @@ struct GameSources {
     script_source: String,
 }
 
-#[derive(Clone, Debug)]
-struct RemotePlayer {
-    username: String,
-    generation: u32,
-    position: [f32; 3],
-    yaw: f32,
-    moving: bool,
-    sprinting: bool,
-    appearance: Option<Value>,
-}
-
 struct StudioApp {
     game_root: PathBuf,
     network: BackendClient,
-    engine: Engine,
-    remote_players: BTreeMap<String, RemotePlayer>,
-    remote_roster_dirty: bool,
-    remote_sequence: u64,
-    player_id: Option<String>,
-    connected_world_id: Option<String>,
-    pending_session_world_id: Option<String>,
-    launch_world_id: Option<String>,
+    client: ClientSession,
     image_atlas: Option<ImageAtlas>,
     window: Option<Window>,
     renderer: Option<Renderer>,
@@ -103,50 +85,14 @@ impl StudioApp {
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
-        let manifest = serde_json::from_str::<Value>(&manifest_source)
-            .map_err(|error| StudioError(format!("manifest is not valid JSON: {error}")))?;
-        let game_id = manifest
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| StudioError("manifest.json is missing a string id".to_owned()))?;
-        let launch_world_id = manifest
-            .get("launch")
-            .and_then(Value::as_object)
-            .and_then(|launch| launch.get("destinationWorld"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-
-        let mut engine = Engine::new();
-        if !engine.load_package_source(&manifest_source) {
-            return Err(Box::new(StudioError(
-                "the shared engine rejected manifest.json".to_owned(),
-            )));
-        }
-        if !engine.load_script_source(&script_source) {
-            return Err(Box::new(StudioError(
-                "the shared engine could not compile game.luau".to_owned(),
-            )));
-        }
-        if engine.active_world_id().is_none() {
-            return Err(Box::new(StudioError(
-                "the game manifest did not define a start world".to_owned(),
-            )));
-        }
-        let network = BackendClient::new(&game_id).map_err(StudioError)?;
+        let client = ClientSession::load(&manifest_source, &script_source)?;
+        let network = BackendClient::new(client.game_id()).map_err(StudioError)?;
 
         Ok(Self {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             game_root,
             network,
-            engine,
-            remote_players: BTreeMap::new(),
-            remote_roster_dirty: true,
-            remote_sequence: 0,
-            player_id: None,
-            connected_world_id: None,
-            pending_session_world_id: None,
-            launch_world_id,
+            client,
             window: None,
             renderer: None,
             shell: None,
@@ -223,7 +169,7 @@ impl StudioApp {
             .map(StudioShell::runtime_viewport)
             .filter(|rect| rect.is_positive())
             .unwrap_or(fallback);
-        self.engine.set_ui_viewport_values(
+        self.client.set_ui_viewport_values(
             viewport.width(),
             viewport.height(),
             scale,
@@ -303,7 +249,7 @@ impl StudioApp {
         let sprint = self.mobile_sprint
             || self.pressed_keys.contains(&KeyCode::ShiftLeft)
             || self.pressed_keys.contains(&KeyCode::ShiftRight);
-        self.engine.set_input_values(
+        self.client.set_input_values(
             forward,
             strafe,
             playing && sprint,
@@ -316,27 +262,24 @@ impl StudioApp {
         self.jump_queued = false;
         self.look_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
-        self.sync_backend_world();
-        self.sync_remote_players();
-        self.engine.step(delta);
+        self.dispatch_client_actions();
+        self.client.step(delta);
         self.drain_ui_events();
-        self.sync_backend_world();
-        self.flush_network_messages();
-        if self.engine.active_world_id() != Some("settings") {
-            let snapshot = self.engine.snapshot();
+        self.dispatch_client_actions();
+        if let Some(movement) = self.client.local_movement(length > 0.01, playing && sprint) {
             self.network.send_move(
-                snapshot[0],
-                snapshot[1],
-                snapshot[2],
-                self.engine.player_facing_yaw(),
-                length > 0.01,
-                playing && sprint,
-                self.engine.studio_player_respawn_event_id(),
+                movement.position[0],
+                movement.position[1],
+                movement.position[2],
+                movement.yaw,
+                movement.moving,
+                movement.sprinting,
+                movement.respawn_event_id,
             );
         }
 
         if let Some(renderer) = &mut self.renderer {
-            renderer.sync(&self.engine);
+            renderer.sync(self.client.engine());
             match (&mut self.shell, prepared_shell) {
                 (Some(shell), Some(prepared)) => {
                     renderer.draw_with_overlay(|device, queue, encoder, destination| {
@@ -355,11 +298,11 @@ impl StudioApp {
     }
 
     fn pointer_event(&mut self, phase: u8, x: f32, y: f32) -> bool {
-        self.engine.ui_pointer_event(1, phase, x, y)
+        self.client.ui_pointer_event(1, phase, x, y)
     }
 
     fn drain_ui_events(&mut self) {
-        while let Some(source) = self.engine.poll_ui_event_json() {
+        while let Some(source) = self.client.poll_ui_event_json() {
             let Ok(event) = serde_json::from_slice::<Value>(&source) else {
                 continue;
             };
@@ -461,263 +404,21 @@ impl StudioApp {
     fn drain_backend_events(&mut self) {
         while let Some(event) = self.network.try_recv() {
             match event {
-                BackendEvent::Connected => self.reset_remote_session(),
-                BackendEvent::Disconnected => self.reset_remote_session(),
-                BackendEvent::Message(source) => self.handle_backend_message(&source),
+                BackendEvent::Connected => self.client.transport_connected(),
+                BackendEvent::Disconnected => self.client.transport_disconnected(),
+                BackendEvent::Message(source) => {
+                    let _ = self.client.receive_text(&source);
+                }
             }
         }
     }
 
-    fn handle_backend_message(&mut self, source: &str) {
-        let Ok(event) = serde_json::from_str::<Value>(source) else {
-            return;
-        };
-        let event_type = event
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        match event_type {
-            "session_identity" => {
-                self.player_id = event.get("id").and_then(Value::as_str).map(str::to_owned);
+    fn dispatch_client_actions(&mut self) {
+        for action in self.client.poll_actions() {
+            match action {
+                ClientAction::SetWorld(world_id) => self.network.set_world(world_id),
+                ClientAction::SendText(source) => self.network.send(source),
             }
-            "player_join" => {
-                let Some(id) = event.get("id").and_then(Value::as_str) else {
-                    return;
-                };
-                if self.player_id.as_deref() == Some(id) {
-                    return;
-                }
-                self.remote_players.insert(
-                    id.to_owned(),
-                    RemotePlayer {
-                        username: event
-                            .get("username")
-                            .and_then(Value::as_str)
-                            .unwrap_or(id)
-                            .to_owned(),
-                        generation: event.get("generation").and_then(Value::as_u64).unwrap_or(0)
-                            as u32,
-                        position: [0.0; 3],
-                        yaw: 0.0,
-                        moving: false,
-                        sprinting: false,
-                        appearance: event.get("appearance").cloned(),
-                    },
-                );
-                self.remote_roster_dirty = true;
-            }
-            "player_leave" => {
-                if let Some(id) = event.get("id").and_then(Value::as_str) {
-                    self.remote_players.remove(id);
-                    self.remote_roster_dirty = true;
-                }
-            }
-            "appearance" => {
-                if let Some(id) = event.get("id").and_then(Value::as_str) {
-                    if let Some(player) = self.remote_players.get_mut(id) {
-                        player.appearance = event.get("appearance").cloned();
-                        self.remote_roster_dirty = true;
-                    }
-                }
-            }
-            "player_name" => {
-                if let (Some(id), Some(username)) = (
-                    event.get("id").and_then(Value::as_str),
-                    event.get("username").and_then(Value::as_str),
-                ) {
-                    if let Some(player) = self.remote_players.get_mut(id) {
-                        player.username = username.to_owned();
-                        self.remote_roster_dirty = true;
-                    }
-                }
-            }
-            "move" => self.handle_remote_move(&event),
-            "experience_launch" => {
-                let Some(player_id) = self.player_id.as_deref() else {
-                    return;
-                };
-                let in_launch_group = event
-                    .get("playerIds")
-                    .and_then(Value::as_array)
-                    .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(player_id)));
-                if in_launch_group {
-                    self.pending_session_world_id = event
-                        .get("sessionWorldId")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
-                    let Some(launch_world_id) = self.launch_world_id.as_deref() else {
-                        eprintln!(
-                            "Cubacadabra Studio: backend requested a launch without launch.destinationWorld"
-                        );
-                        return;
-                    };
-                    if !self.engine.start_world_by_id(launch_world_id) {
-                        eprintln!(
-                            "Cubacadabra Studio: backend requested unavailable world {launch_world_id}"
-                        );
-                    }
-                }
-            }
-            "game_state" | "game_message" | "player_state" => {
-                let _ = self.engine.studio_receive_network_message_json(source);
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_remote_move(&mut self, event: &Value) {
-        let Some(id) = event.get("id").and_then(Value::as_str) else {
-            return;
-        };
-        let coordinates = ["x", "y", "z"].map(|key| {
-            event
-                .get(key)
-                .and_then(Value::as_f64)
-                .map(|value| value as f32)
-        });
-        let Some([Some(x), Some(y), Some(z)]) = Some(coordinates) else {
-            return;
-        };
-        let Some(yaw) = event
-            .get("yaw")
-            .and_then(Value::as_f64)
-            .map(|value| value as f32)
-        else {
-            return;
-        };
-        if ![x, y, z, yaw].iter().all(|value| value.is_finite()) {
-            return;
-        }
-        if self.player_id.as_deref() == Some(id) {
-            if event.get("corrected").and_then(Value::as_bool) == Some(true) {
-                self.engine.reconcile_player([x, y, z], yaw);
-            }
-            return;
-        }
-        let player = self
-            .remote_players
-            .entry(id.to_owned())
-            .or_insert(RemotePlayer {
-                username: id.to_owned(),
-                generation: 0,
-                position: [0.0; 3],
-                yaw: 0.0,
-                moving: false,
-                sprinting: false,
-                appearance: None,
-            });
-        player.position = [x, y, z];
-        player.yaw = yaw as f32;
-        player.moving = event
-            .get("moving")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        player.sprinting = event
-            .get("sprinting")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        if let Some(generation) = event.get("generation").and_then(Value::as_u64) {
-            player.generation = generation as u32;
-        }
-        self.remote_roster_dirty = true;
-    }
-
-    fn reset_remote_session(&mut self) {
-        self.remote_players.clear();
-        self.remote_roster_dirty = true;
-        self.remote_sequence = 0;
-        self.player_id = None;
-        self.engine.studio_reset_remote_session();
-    }
-
-    fn sync_remote_players(&mut self) {
-        if !self.remote_roster_dirty {
-            return;
-        }
-        let Some(world_id) = self.engine.active_world_id() else {
-            return;
-        };
-        self.remote_sequence = self.remote_sequence.saturating_add(1);
-        self.remote_roster_dirty = false;
-        let players = self
-            .remote_players
-            .iter()
-            .map(|(id, player)| {
-                let mut value = serde_json::json!({
-                    "id": id,
-                    "username": player.username,
-                    "generation": player.generation,
-                    "position": player.position,
-                    "yaw": player.yaw,
-                    "moving": player.moving,
-                    "sprinting": player.sprinting,
-                });
-                if let Some(appearance) = &player.appearance {
-                    value["appearance"] = appearance.clone();
-                }
-                value
-            })
-            .collect::<Vec<_>>();
-        let message = serde_json::json!({
-            "version": 1,
-            "sequence": self.remote_sequence,
-            "worldId": world_id,
-            "players": players,
-        });
-        let _ = self
-            .engine
-            .studio_apply_remote_update_json(&message.to_string());
-    }
-
-    fn sync_backend_world(&mut self) {
-        let Some(world_id) = self.engine.active_world_id() else {
-            return;
-        };
-        let network_world_id = if world_id == "settings" {
-            "lobby".to_owned()
-        } else if self.launch_world_id.as_deref() == Some(world_id)
-            && self.pending_session_world_id.is_some()
-        {
-            self.pending_session_world_id.clone().unwrap_or_default()
-        } else {
-            world_id.to_owned()
-        };
-        if self.connected_world_id.as_deref() == Some(network_world_id.as_str()) {
-            return;
-        }
-        self.connected_world_id = Some(network_world_id.clone());
-        self.reset_remote_session();
-        self.network.set_world(network_world_id);
-    }
-
-    fn flush_network_messages(&mut self) {
-        while let Some(source) = self.engine.studio_poll_network_message() {
-            let Ok(message) = serde_json::from_str::<Value>(&source) else {
-                continue;
-            };
-            let Some(channel) = message.get("channel").and_then(Value::as_str) else {
-                continue;
-            };
-            let expected_sequence = message
-                .get("expectedSequence")
-                .and_then(Value::as_u64)
-                .filter(|sequence| *sequence <= u32::MAX as u64);
-            let event_type = if expected_sequence.is_some() {
-                "game_state_compare_set"
-            } else if message.get("retained").and_then(Value::as_bool) == Some(true) {
-                "game_state_set"
-            } else {
-                "game_message"
-            };
-            let mut event = serde_json::json!({
-                "type": event_type,
-                "channel": channel,
-                "payload": message.get("payload").cloned().unwrap_or(Value::Null),
-            });
-            if let Some(sequence) = expected_sequence {
-                event["expectedSequence"] = sequence.into();
-            }
-            self.network.send(event.to_string());
         }
     }
 }

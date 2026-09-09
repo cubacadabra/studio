@@ -9,7 +9,7 @@ name = "studio"
 path = "src/main.rs"
 
 [dependencies]
-cubacadabra-engine = { package = "cubacadabra-engine", path = "../rust", features = ["desktop-backends", "studio-network", "studio-ui"] }
+cubacadabra-client = { path = "../rust/crates/client", features = ["desktop-backends", "studio-ui"] }
 egui = "0.35"
 egui-wgpu = { version = "0.35", default-features = false }
 egui-winit = "0.35"

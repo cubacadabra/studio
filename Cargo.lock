@@ -470,6 +470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cubacadabra-client"
+version = "0.1.0"
+dependencies = [
+ "cubacadabra-engine",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "cubacadabra-engine"
 version = "0.3.0"
 dependencies = [
@@ -495,7 +505,7 @@ dependencies = [
 name = "cubacadabra-studio"
 version = "0.1.0"
 dependencies = [
- "cubacadabra-engine",
+ "cubacadabra-client",
  "egui",
  "egui-wgpu",
  "egui-winit",

@@ -1,4 +1,4 @@
-use cubacadabra_engine::native::Renderer as GameRenderer;
+use cubacadabra_client::native::Renderer as GameRenderer;
 #[cfg(target_os = "macos")]
 use egui::FontTweak;
 use egui::{
