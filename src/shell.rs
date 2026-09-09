@@ -44,7 +44,6 @@ impl Workspace {
 
 pub(crate) struct PreparedShell {
     paint_jobs: Vec<egui::ClippedPrimitive>,
-    textures_delta: egui::TexturesDelta,
     screen: ScreenDescriptor,
 }
 
@@ -65,6 +64,7 @@ pub(crate) struct StudioShell {
     rotation: f32,
     scale: f32,
     roughness: f32,
+    pending_textures_delta: egui::TexturesDelta,
 }
 
 impl StudioShell {
@@ -81,7 +81,7 @@ impl StudioShell {
         );
         let renderer = EguiRenderer::new(
             game_renderer.device(),
-            game_renderer.surface_format(),
+            game_renderer.studio_overlay_format(),
             RendererOptions::default(),
         );
         Self {
@@ -101,6 +101,7 @@ impl StudioShell {
             rotation: 18.0,
             scale: 1.0,
             roughness: 0.72,
+            pending_textures_delta: egui::TexturesDelta::default(),
         }
     }
 
@@ -125,9 +126,9 @@ impl StudioShell {
         let pixels_per_point = context.pixels_per_point();
         let paint_jobs = context.tessellate(output.shapes, pixels_per_point);
         let size = window.inner_size();
+        self.pending_textures_delta.append(output.textures_delta);
         PreparedShell {
             paint_jobs,
-            textures_delta: output.textures_delta,
             screen: ScreenDescriptor {
                 size_in_pixels: [size.width, size.height],
                 pixels_per_point,
@@ -143,7 +144,8 @@ impl StudioShell {
         destination: &wgpu::TextureView,
         prepared: PreparedShell,
     ) {
-        for (id, image_delta) in &prepared.textures_delta.set {
+        let textures_delta = std::mem::take(&mut self.pending_textures_delta);
+        for (id, image_delta) in &textures_delta.set {
             self.renderer
                 .update_texture(device, queue, *id, image_delta);
         }
@@ -176,7 +178,7 @@ impl StudioShell {
             &prepared.paint_jobs,
             &prepared.screen,
         );
-        for id in &prepared.textures_delta.free {
+        for id in &textures_delta.free {
             self.renderer.free_texture(id);
         }
     }
@@ -441,7 +443,7 @@ impl StudioShell {
             });
 
         egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(SURFACE_DEEP))
+            .frame(Frame::NONE.fill(Color32::TRANSPARENT))
             .show(root, |ui| {
                 let available = ui.available_rect_before_wrap();
                 let gap = 1.0;
