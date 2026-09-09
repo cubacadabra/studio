@@ -1,4 +1,6 @@
 use cubacadabra_engine::native::Renderer as GameRenderer;
+#[cfg(target_os = "macos")]
+use egui::FontTweak;
 use egui::{
     Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout, Margin,
     Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
@@ -44,8 +46,15 @@ const TYPE: TypographyMetrics = TypographyMetrics {
     meta: 11.0,
 };
 const MEDIUM_FONT_FAMILY: &str = "studio-system-ui-medium";
+const SEMIBOLD_FONT_FAMILY: &str = "studio-system-ui-semibold";
 const SYSTEM_UI_REGULAR: &str = "studio-system-ui-regular";
 const SYSTEM_UI_MEDIUM: &str = "studio-system-ui-medium-face";
+const SYSTEM_UI_SEMIBOLD: &str = "studio-system-ui-semibold-face";
+const REGULAR_FONT_WEIGHT: f32 = 400.0;
+const MEDIUM_FONT_WEIGHT: f32 = 510.0;
+const SEMIBOLD_FONT_WEIGHT: f32 = 590.0;
+#[cfg(target_os = "macos")]
+const UI_OPTICAL_SIZE: f32 = 13.0;
 
 #[cfg(target_os = "macos")]
 const REGULAR_FONT_PATHS: &[&str] = &[
@@ -53,7 +62,15 @@ const REGULAR_FONT_PATHS: &[&str] = &[
     "/Library/Fonts/SF-Pro-Text-Regular.otf",
 ];
 #[cfg(target_os = "macos")]
-const MEDIUM_FONT_PATHS: &[&str] = &["/Library/Fonts/SF-Pro-Text-Medium.otf"];
+const MEDIUM_FONT_PATHS: &[&str] = &[
+    "/System/Library/Fonts/SFNS.ttf",
+    "/Library/Fonts/SF-Pro-Text-Medium.otf",
+];
+#[cfg(target_os = "macos")]
+const SEMIBOLD_FONT_PATHS: &[&str] = &[
+    "/System/Library/Fonts/SFNS.ttf",
+    "/Library/Fonts/SF-Pro-Text-Semibold.otf",
+];
 
 #[cfg(target_os = "windows")]
 const REGULAR_FONT_PATHS: &[&str] = &["C:/Windows/Fonts/segoeui.ttf"];
@@ -62,6 +79,8 @@ const MEDIUM_FONT_PATHS: &[&str] = &[
     "C:/Windows/Fonts/seguisb.ttf",
     "C:/Windows/Fonts/segoeuisl.ttf",
 ];
+#[cfg(target_os = "windows")]
+const SEMIBOLD_FONT_PATHS: &[&str] = &["C:/Windows/Fonts/seguisb.ttf"];
 
 #[cfg(target_os = "linux")]
 const REGULAR_FONT_PATHS: &[&str] = &[
@@ -75,11 +94,19 @@ const MEDIUM_FONT_PATHS: &[&str] = &[
     "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ];
+#[cfg(target_os = "linux")]
+const SEMIBOLD_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+];
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 const REGULAR_FONT_PATHS: &[&str] = &[];
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 const MEDIUM_FONT_PATHS: &[&str] = &[];
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+const SEMIBOLD_FONT_PATHS: &[&str] = &[];
 const TOP_BAR_HEIGHT: f32 = UI.top_bar;
 const STATUS_BAR_HEIGHT: f32 = UI.status_bar;
 const EDITOR_HEADER_HEIGHT: f32 = UI.editor_header;
@@ -93,10 +120,10 @@ const SURFACE_DEEP: Color32 = Color32::from_rgb(35, 35, 35);
 const FIELD: Color32 = Color32::from_rgb(63, 63, 63);
 const BORDER: Color32 = Color32::from_rgb(43, 43, 43);
 const BORDER_STRONG: Color32 = Color32::from_rgb(73, 73, 73);
-const TEXT: Color32 = Color32::from_rgb(210, 210, 210);
-const MUTED: Color32 = Color32::from_rgb(164, 164, 164);
-const SECONDARY_TEXT: Color32 = Color32::from_rgb(180, 180, 180);
-const FAINT: Color32 = Color32::from_rgb(116, 116, 116);
+const TEXT: Color32 = Color32::from_rgb(226, 226, 226);
+const MUTED: Color32 = Color32::from_rgb(170, 170, 170);
+const SECONDARY_TEXT: Color32 = Color32::from_rgb(200, 200, 200);
+const FAINT: Color32 = Color32::from_rgb(124, 124, 124);
 const ACCENT: Color32 = Color32::from_rgb(122, 157, 193);
 const ACCENT_DARK: Color32 = Color32::from_rgb(72, 87, 103);
 const ASSET_SELECTION: Color32 = Color32::from_rgb(57, 63, 69);
@@ -758,7 +785,7 @@ impl StudioShell {
                     inline_icon(ui, Icon::Camera, MUTED);
                     ui.label(
                         RichText::new(title)
-                            .font(medium_font(TYPE.primary))
+                            .font(semibold_font(TYPE.primary))
                             .color(TEXT),
                     );
                     vertical_separator(ui, 12.0);
@@ -892,7 +919,7 @@ impl StudioShell {
             inline_icon(ui, Icon::Assets, MUTED);
             ui.label(
                 RichText::new("Assets")
-                    .font(medium_font(TYPE.primary))
+                    .font(semibold_font(TYPE.primary))
                     .color(TEXT),
             );
             vertical_separator(ui, 12.0);
@@ -934,31 +961,83 @@ fn configure_fonts(context: &egui::Context) {
     // egui rasterizes fonts itself, so use each desktop OS's installed UI face
     // and retain its bundled fonts as fallbacks for missing glyphs or files.
     let mut fonts = FontDefinitions::default();
+    if install_font_face(
+        &mut fonts,
+        SYSTEM_UI_REGULAR,
+        REGULAR_FONT_PATHS,
+        REGULAR_FONT_WEIGHT,
+    ) {
+        fonts
+            .families
+            .get_mut(&FontFamily::Proportional)
+            .expect("egui should define its proportional fallback family")
+            .insert(0, SYSTEM_UI_REGULAR.to_owned());
+    }
     let proportional = fonts
         .families
-        .get_mut(&FontFamily::Proportional)
-        .expect("egui should define its proportional fallback family");
-    if let Some(regular) = read_first_font(REGULAR_FONT_PATHS) {
-        fonts.font_data.insert(
-            SYSTEM_UI_REGULAR.to_owned(),
-            Arc::new(FontData::from_owned(regular)),
-        );
-        proportional.insert(0, SYSTEM_UI_REGULAR.to_owned());
-    }
+        .get(&FontFamily::Proportional)
+        .expect("egui should define its proportional fallback family")
+        .clone();
 
     let mut medium_family = Vec::new();
-    if let Some(medium) = read_first_font(MEDIUM_FONT_PATHS) {
-        fonts.font_data.insert(
-            SYSTEM_UI_MEDIUM.to_owned(),
-            Arc::new(FontData::from_owned(medium)),
-        );
+    if install_font_face(
+        &mut fonts,
+        SYSTEM_UI_MEDIUM,
+        MEDIUM_FONT_PATHS,
+        MEDIUM_FONT_WEIGHT,
+    ) {
         medium_family.push(SYSTEM_UI_MEDIUM.to_owned());
     }
     medium_family.extend(proportional.iter().cloned());
     fonts
         .families
         .insert(FontFamily::Name(MEDIUM_FONT_FAMILY.into()), medium_family);
+
+    let mut semibold_family = Vec::new();
+    if install_font_face(
+        &mut fonts,
+        SYSTEM_UI_SEMIBOLD,
+        SEMIBOLD_FONT_PATHS,
+        SEMIBOLD_FONT_WEIGHT,
+    ) {
+        semibold_family.push(SYSTEM_UI_SEMIBOLD.to_owned());
+    }
+    semibold_family.extend(proportional);
+    fonts.families.insert(
+        FontFamily::Name(SEMIBOLD_FONT_FAMILY.into()),
+        semibold_family,
+    );
     context.set_fonts(fonts);
+}
+
+fn install_font_face(fonts: &mut FontDefinitions, name: &str, paths: &[&str], weight: f32) -> bool {
+    let Some(bytes) = read_first_font(paths) else {
+        return false;
+    };
+    fonts
+        .font_data
+        .insert(name.to_owned(), Arc::new(platform_font_data(bytes, weight)));
+    true
+}
+
+fn platform_font_data(bytes: Vec<u8>, weight: f32) -> FontData {
+    let data = FontData::from_owned(bytes);
+    #[cfg(target_os = "macos")]
+    {
+        // SFNS defaults to its narrower display cut outside AppKit. Select the
+        // text optical size explicitly so small editor labels match native UI.
+        let mut tweak = FontTweak::default();
+        tweak.coords.push(b"opsz", UI_OPTICAL_SIZE);
+        tweak.coords.push(b"wght", weight);
+        tweak.hinting = Some(true);
+        tweak.subpixel_binning = Some(false);
+        data.tweak(tweak)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = weight;
+        data
+    }
 }
 
 fn read_first_font(paths: &[&str]) -> Option<Vec<u8>> {
@@ -967,6 +1046,10 @@ fn read_first_font(paths: &[&str]) -> Option<Vec<u8>> {
 
 fn medium_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(MEDIUM_FONT_FAMILY.into()))
+}
+
+fn semibold_font(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(SEMIBOLD_FONT_FAMILY.into()))
 }
 
 fn configure_style(context: &egui::Context) {
@@ -978,6 +1061,8 @@ fn configure_style(context: &egui::Context) {
     style.spacing.menu_margin = Margin::same(4);
     style.animation_time = 0.15;
     style.visuals.dark_mode = true;
+    style.visuals.text_options.font_hinting = true;
+    style.visuals.text_options.subpixel_binning = false;
     style.visuals.panel_fill = PANEL;
     style.visuals.window_fill = PANEL_RAISED;
     style.visuals.window_stroke = Stroke::new(1.0, BORDER);
@@ -1062,9 +1147,14 @@ fn content_frame() -> Frame {
 }
 
 fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let font = if selected {
+        medium_font(TYPE.primary)
+    } else {
+        FontId::proportional(TYPE.primary)
+    };
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::proportional(TYPE.primary),
+        font,
         if selected { TEXT } else { SECONDARY_TEXT },
     );
     let width = galley.size().x.ceil() + LABEL_PADDING * 2.0;
@@ -1121,7 +1211,7 @@ fn panel_header(ui: &mut egui::Ui, icon: Icon, title: &str, actions: impl FnOnce
         inline_icon(ui, icon, MUTED);
         ui.label(
             RichText::new(title)
-                .font(medium_font(TYPE.primary))
+                .font(semibold_font(TYPE.primary))
                 .color(TEXT),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), actions);
@@ -1137,7 +1227,7 @@ fn selected_object_header(ui: &mut egui::Ui, name: &str, kind: &str) {
             ui.add(
                 egui::Label::new(
                     RichText::new(name)
-                        .font(medium_font(TYPE.primary))
+                        .font(semibold_font(TYPE.primary))
                         .color(TEXT),
                 )
                 .truncate(),
@@ -1150,7 +1240,7 @@ fn selected_object_header(ui: &mut egui::Ui, name: &str, kind: &str) {
 fn property_section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
     egui::CollapsingHeader::new(
         RichText::new(title)
-            .font(medium_font(TYPE.secondary))
+            .font(semibold_font(TYPE.secondary))
             .color(TEXT),
     )
     .default_open(true)
@@ -1269,11 +1359,16 @@ fn scene_row(
         icon,
         if is_selected { TEXT } else { FAINT },
     );
+    let label_font = if is_selected || matches!(icon, Icon::Folder | Icon::World) {
+        medium_font(TYPE.primary)
+    } else {
+        FontId::proportional(TYPE.primary)
+    };
     ui.painter().text(
         egui::pos2(x + 30.0, rect.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(TYPE.primary),
+        label_font,
         if is_selected { TEXT } else { SECONDARY_TEXT },
     );
     paint_icon(
@@ -1402,11 +1497,16 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
         icon,
         if selected { ACCENT } else { MUTED },
     );
+    let label_font = if selected {
+        medium_font(TYPE.primary)
+    } else {
+        FontId::proportional(TYPE.primary)
+    };
     ui.painter().text(
         rect.left_center() + egui::vec2(24.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(TYPE.primary),
+        label_font,
         if selected { TEXT } else { MUTED },
     );
     paint_focus(ui, &response);

@@ -1,5 +1,43 @@
 use super::*;
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_system_font_uses_the_wider_text_optical_cut() {
+    let bytes = fs::read(REGULAR_FONT_PATHS[0]).expect("macOS should provide its system UI font");
+    let display_width = rendered_label_width(FontData::from_owned(bytes.clone()));
+    let text_width = rendered_label_width(platform_font_data(bytes, REGULAR_FONT_WEIGHT));
+
+    assert!(
+        text_width > display_width * 1.08,
+        "SF Text should be materially wider than SF Display: {text_width} <= {display_width}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn rendered_label_width(font: FontData) -> f32 {
+    let context = egui::Context::default();
+    let mut fonts = FontDefinitions::default();
+    let name = "optical-size-test".to_owned();
+    fonts.font_data.insert(name.clone(), Arc::new(font));
+    fonts
+        .families
+        .get_mut(&FontFamily::Proportional)
+        .unwrap()
+        .insert(0, name);
+    context.set_fonts(fonts);
+    let output = context.run_ui(egui::RawInput::default(), |ui| {
+        ui.label(RichText::new("Environment").size(TYPE.primary));
+    });
+    output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.size().x),
+            _ => None,
+        })
+        .expect("the label should produce a text shape")
+}
+
 #[test]
 fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
     for scale in [1.0, 2.0] {
