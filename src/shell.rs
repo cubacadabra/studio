@@ -30,10 +30,10 @@ const FAINT: Color32 = Color32::from_rgb(143, 143, 143);
 const ACCENT: Color32 = Color32::from_rgb(137, 177, 218);
 const ACCENT_DARK: Color32 = Color32::from_rgb(65, 88, 115);
 const LIVE: Color32 = Color32::from_rgb(133, 186, 153);
+const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 
 #[derive(Clone, Copy, Debug)]
 enum Icon {
-    Project,
     World,
     Assets,
     Material,
@@ -248,12 +248,10 @@ impl StudioShell {
             .frame(editor_frame(SURFACE).inner_margin(Margin::symmetric(6, 0)))
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
-                    let logo = ui.allocate_response(egui::vec2(22.0, 24.0), Sense::hover());
-                    paint_icon(
-                        ui.painter(),
-                        logo.rect.shrink2(egui::vec2(4.0, 5.0)),
-                        Icon::Project,
-                        TEXT,
+                    ui.add(
+                        egui::Image::from_bytes("bytes://cubacadabra/logo.png", LOGO_BYTES)
+                            .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                            .sense(Sense::hover()),
                     );
 
                     ui.menu_button("File", |ui| {
@@ -1400,7 +1398,7 @@ fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
     let top = c.y - r;
     let bottom = c.y + r;
     match icon {
-        Icon::Project | Icon::Object => {
+        Icon::Object => {
             let top_point = egui::pos2(c.x, top);
             let left_point = egui::pos2(left, c.y - r * 0.5);
             let right_point = egui::pos2(right, c.y - r * 0.5);
