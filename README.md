@@ -4,9 +4,11 @@ Cubacadabra Studio is the native desktop host for a local Cubacadabra game
 package. It opens the same Rust engine used by the iOS, Android, and web
 clients, then forwards desktop input to it.
 
-The first version intentionally keeps the host small: one game window, local
-package loading, keyboard movement, mouse camera control, wheel zoom, and
-package image assets.
+The first visual-workbench shell places the live game renderer inside a native
+desktop workspace. Its World, Assets, Materials, and Test layouts are an early
+interaction preview; project editing and multi-session testing are not wired up
+yet. Local package loading, keyboard movement, mouse camera control, wheel zoom,
+and package image assets continue to use the shared engine.
 
 ## Run a game
 
@@ -57,6 +59,8 @@ The resulting binary can be invoked as:
 
 Controls:
 
+- `World`, `Assets`, `Materials`, and `Test`: switch workspace previews
+- `Play`: enable or pause game input
 - `WASD` or arrow keys: move
 - `Shift`: sprint
 - `Space`: jump

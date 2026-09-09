@@ -10,7 +10,11 @@ use std::{
     time::Instant,
 };
 mod network;
+mod shell;
 use network::{BackendClient, BackendEvent};
+use shell::{PreparedShell, StudioShell};
+#[cfg(target_os = "macos")]
+use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalSize},
@@ -77,6 +81,7 @@ struct StudioApp {
     image_atlas: Option<ImageAtlas>,
     window: Option<Window>,
     renderer: Option<Renderer>,
+    shell: Option<StudioShell>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
     mobile_sprint: bool,
@@ -142,6 +147,7 @@ impl StudioApp {
             launch_world_id,
             window: None,
             renderer: None,
+            shell: None,
             pressed_keys: HashSet::new(),
             jump_queued: false,
             mobile_sprint: false,
@@ -192,8 +198,10 @@ impl StudioApp {
             }
         }
 
+        let shell = StudioShell::new(&window, &renderer);
         self.window = Some(window);
         self.renderer = Some(renderer);
+        self.shell = Some(shell);
         self.update_viewport();
         self.request_redraw();
         Ok(())
@@ -203,15 +211,33 @@ impl StudioApp {
         let Some(window) = &self.window else { return };
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
+        let fallback = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(size.width as f32 / scale, size.height as f32 / scale),
+        );
+        let viewport = self
+            .shell
+            .as_ref()
+            .map(StudioShell::runtime_viewport)
+            .filter(|rect| rect.is_positive())
+            .unwrap_or(fallback);
         self.engine.set_ui_viewport_values(
-            size.width as f32 / scale,
-            size.height as f32 / scale,
+            viewport.width(),
+            viewport.height(),
             scale,
             0.0,
             0.0,
             0.0,
             0.0,
         );
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_studio_viewport(Some([
+                viewport.min.x * scale,
+                viewport.min.y * scale,
+                viewport.width() * scale,
+                viewport.height() * scale,
+            ]));
+        }
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -230,18 +256,36 @@ impl StudioApp {
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
 
-        let mut forward = axis(
-            &self.pressed_keys,
-            &[KeyCode::KeyW, KeyCode::ArrowUp],
-            &[KeyCode::KeyS, KeyCode::ArrowDown],
-        );
-        let mut strafe = axis(
-            &self.pressed_keys,
-            &[KeyCode::KeyD, KeyCode::ArrowRight],
-            &[KeyCode::KeyA, KeyCode::ArrowLeft],
-        );
-        forward -= self.joystick_input.1;
-        strafe += self.joystick_input.0;
+        let project_name = game_name(&self.game_root);
+        let prepared_shell: Option<PreparedShell> = match (&mut self.shell, &self.window) {
+            (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
+            _ => None,
+        };
+        self.update_viewport();
+        let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
+
+        let mut forward = if playing {
+            axis(
+                &self.pressed_keys,
+                &[KeyCode::KeyW, KeyCode::ArrowUp],
+                &[KeyCode::KeyS, KeyCode::ArrowDown],
+            )
+        } else {
+            0.0
+        };
+        let mut strafe = if playing {
+            axis(
+                &self.pressed_keys,
+                &[KeyCode::KeyD, KeyCode::ArrowRight],
+                &[KeyCode::KeyA, KeyCode::ArrowLeft],
+            )
+        } else {
+            0.0
+        };
+        if playing {
+            forward -= self.joystick_input.1;
+            strafe += self.joystick_input.0;
+        }
         let length = (forward * forward + strafe * strafe).sqrt();
         let (forward, strafe) = if length > 1.0 {
             (forward / length, strafe / length)
@@ -254,9 +298,9 @@ impl StudioApp {
         self.engine.set_input_values(
             forward,
             strafe,
-            sprint,
-            self.jump_queued,
-            self.climb,
+            playing && sprint,
+            playing && self.jump_queued,
+            playing && self.climb,
             self.look_delta.0,
             self.look_delta.1,
             self.zoom_delta,
@@ -278,14 +322,21 @@ impl StudioApp {
                 snapshot[2],
                 self.engine.player_facing_yaw(),
                 length > 0.01,
-                sprint,
+                playing && sprint,
                 self.engine.studio_player_respawn_event_id(),
             );
         }
 
         if let Some(renderer) = &mut self.renderer {
             renderer.sync(&self.engine);
-            renderer.draw();
+            match (&mut self.shell, prepared_shell) {
+                (Some(shell), Some(prepared)) => {
+                    renderer.draw_with_overlay(|device, queue, encoder, destination| {
+                        shell.paint(device, queue, encoder, destination, prepared);
+                    });
+                }
+                _ => renderer.draw(),
+            }
         }
     }
 
@@ -358,8 +409,18 @@ impl StudioApp {
         }
         self.pointer_position = Some(logical);
         if self.ui_pointer_active {
-            self.pointer_event(1, logical.0, logical.1);
+            if let Some((local_x, local_y)) = self.runtime_pointer(logical.0, logical.1, false) {
+                self.pointer_event(1, local_x, local_y);
+            }
         }
+    }
+
+    fn runtime_pointer(&self, x: f32, y: f32, require_inside: bool) -> Option<(f32, f32)> {
+        let viewport = self.shell.as_ref()?.runtime_viewport();
+        if !viewport.is_positive() || (require_inside && !viewport.contains(egui::pos2(x, y))) {
+            return None;
+        }
+        Some((x - viewport.min.x, y - viewport.min.y))
     }
 
     fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
@@ -371,12 +432,17 @@ impl StudioApp {
         };
         match state {
             ElementState::Pressed => {
-                self.ui_pointer_active = self.pointer_event(0, x, y);
+                let Some((local_x, local_y)) = self.runtime_pointer(x, y, true) else {
+                    return;
+                };
+                self.ui_pointer_active = self.pointer_event(0, local_x, local_y);
                 self.pointer_active = !self.ui_pointer_active;
             }
             ElementState::Released => {
                 if self.ui_pointer_active {
-                    self.pointer_event(2, x, y);
+                    if let Some((local_x, local_y)) = self.runtime_pointer(x, y, false) {
+                        self.pointer_event(2, local_x, local_y);
+                    }
                 }
                 self.ui_pointer_active = false;
                 self.pointer_active = false;
@@ -896,6 +962,13 @@ impl ApplicationHandler for StudioApp {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        let shell_consumed = match (&mut self.shell, &self.window) {
+            (Some(shell), Some(window)) => shell.on_window_event(window, &event),
+            _ => false,
+        };
+        let runtime_hovered = self
+            .pointer_position
+            .is_some_and(|(x, y)| self.runtime_pointer(x, y, true).is_some());
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
@@ -908,14 +981,18 @@ impl ApplicationHandler for StudioApp {
                 self.render();
                 self.request_redraw();
             }
-            WindowEvent::KeyboardInput { event, .. } => self.handle_key(&event, event_loop),
+            WindowEvent::KeyboardInput { event, .. } if !shell_consumed => {
+                self.handle_key(&event, event_loop)
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.handle_cursor_move(position.x, position.y)
             }
-            WindowEvent::MouseInput { state, button, .. } => {
+            WindowEvent::MouseInput { state, button, .. }
+                if runtime_hovered || !shell_consumed || state == ElementState::Released =>
+            {
                 self.handle_mouse_button(state, button)
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, .. } if runtime_hovered => {
                 self.zoom_delta += match delta {
                     MouseScrollDelta::LineDelta(_, y) => y * 0.9,
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 100.0,
@@ -1094,7 +1171,10 @@ fn parse_game_path() -> Result<PathBuf, Box<dyn Error>> {
 fn main() -> Result<(), Box<dyn Error>> {
     let game_path = parse_game_path()?;
     let mut app = StudioApp::load(game_path)?;
-    let event_loop = EventLoop::new()?;
+    let mut event_loop_builder = EventLoop::builder();
+    #[cfg(target_os = "macos")]
+    event_loop_builder.with_activation_policy(ActivationPolicy::Regular);
+    let event_loop = event_loop_builder.build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app)?;
     Ok(())
