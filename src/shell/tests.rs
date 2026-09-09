@@ -123,7 +123,7 @@ fn editor_headers_keep_their_height_with_actions_at_different_widths() {
         let _ = context.run_ui(input, |ui| {
             let available = ui.available_width();
             let rect = editor_header(ui, |ui| {
-                inline_icon(ui, Icon::World, MUTED);
+                inline_icon(ui, Icon::World, palette(ui).muted);
                 ui.label("Scene");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     icon_button(ui, Icon::Filter, "Filter scene", false);
@@ -132,6 +132,35 @@ fn editor_headers_keep_their_height_with_actions_at_different_widths() {
             });
             assert_eq!(rect.height(), EDITOR_HEADER_HEIGHT);
             assert_eq!(rect.width(), available);
+        });
+    }
+}
+
+#[test]
+fn shell_palette_follows_the_system_appearance() {
+    for (theme, expected) in [
+        (egui::Theme::Dark, DARK_PALETTE),
+        (egui::Theme::Light, LIGHT_PALETTE),
+    ] {
+        let context = egui::Context::default();
+        configure_context(&context);
+        assert_eq!(
+            context.options(|options| options.theme_preference),
+            egui::ThemePreference::System
+        );
+
+        let input = egui::RawInput {
+            system_theme: Some(theme),
+            ..Default::default()
+        };
+        let _ = context.run_ui(input, |ui| {
+            let actual = palette(ui);
+            assert_eq!(ui.visuals().dark_mode, theme == egui::Theme::Dark);
+            assert_eq!(actual.panel, expected.panel);
+            assert_eq!(actual.panel_header, expected.panel_header);
+            assert_eq!(actual.field, expected.field);
+            assert_eq!(actual.text, expected.text);
+            assert_eq!(ui.visuals().panel_fill, expected.panel);
         });
     }
 }

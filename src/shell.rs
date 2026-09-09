@@ -112,23 +112,75 @@ const STATUS_BAR_HEIGHT: f32 = UI.status_bar;
 const EDITOR_HEADER_HEIGHT: f32 = UI.editor_header;
 const CONTROL_HEIGHT: f32 = UI.control;
 const LABEL_PADDING: f32 = UI.inset;
-const PANEL: Color32 = Color32::from_rgb(49, 49, 49);
-const PANEL_RAISED: Color32 = Color32::from_rgb(51, 51, 51);
-const PANEL_HEADER: Color32 = Color32::from_rgb(55, 55, 55);
-const SURFACE: Color32 = Color32::from_rgb(43, 43, 43);
-const SURFACE_DEEP: Color32 = Color32::from_rgb(35, 35, 35);
-const FIELD: Color32 = Color32::from_rgb(63, 63, 63);
-const BORDER: Color32 = Color32::from_rgb(43, 43, 43);
-const BORDER_STRONG: Color32 = Color32::from_rgb(73, 73, 73);
-const TEXT: Color32 = Color32::from_rgb(226, 226, 226);
-const MUTED: Color32 = Color32::from_rgb(170, 170, 170);
-const SECONDARY_TEXT: Color32 = Color32::from_rgb(200, 200, 200);
-const FAINT: Color32 = Color32::from_rgb(124, 124, 124);
-const ACCENT: Color32 = Color32::from_rgb(122, 157, 193);
-const ACCENT_DARK: Color32 = Color32::from_rgb(72, 87, 103);
-const ASSET_SELECTION: Color32 = Color32::from_rgb(57, 63, 69);
-const ASSET_SELECTION_STROKE: Color32 = Color32::from_rgb(88, 108, 128);
-const LIVE: Color32 = Color32::from_rgb(120, 166, 137);
+#[derive(Clone, Copy)]
+struct Palette {
+    panel: Color32,
+    panel_raised: Color32,
+    panel_header: Color32,
+    surface: Color32,
+    surface_deep: Color32,
+    field: Color32,
+    border: Color32,
+    border_strong: Color32,
+    text: Color32,
+    muted: Color32,
+    secondary_text: Color32,
+    faint: Color32,
+    accent: Color32,
+    selection: Color32,
+    asset_selection: Color32,
+    asset_selection_stroke: Color32,
+    live: Color32,
+    axis_x: Color32,
+    axis_y: Color32,
+    axis_z: Color32,
+}
+
+const DARK_PALETTE: Palette = Palette {
+    panel: Color32::from_rgb(30, 30, 30),
+    panel_raised: Color32::from_rgb(35, 35, 35),
+    panel_header: Color32::from_rgb(39, 39, 39),
+    surface: Color32::from_rgb(27, 27, 27),
+    surface_deep: Color32::from_rgb(23, 23, 23),
+    field: Color32::from_rgb(47, 47, 47),
+    border: Color32::from_rgb(48, 48, 48),
+    border_strong: Color32::from_rgb(66, 66, 66),
+    text: Color32::from_rgb(226, 226, 226),
+    muted: Color32::from_rgb(170, 170, 170),
+    secondary_text: Color32::from_rgb(200, 200, 200),
+    faint: Color32::from_rgb(124, 124, 124),
+    accent: Color32::from_rgb(122, 157, 193),
+    selection: Color32::from_rgb(63, 78, 94),
+    asset_selection: Color32::from_rgb(43, 48, 54),
+    asset_selection_stroke: Color32::from_rgb(78, 96, 114),
+    live: Color32::from_rgb(120, 166, 137),
+    axis_x: Color32::from_rgb(218, 105, 105),
+    axis_y: Color32::from_rgb(112, 193, 126),
+    axis_z: Color32::from_rgb(103, 151, 218),
+};
+
+const LIGHT_PALETTE: Palette = Palette {
+    panel: Color32::from_rgb(242, 242, 242),
+    panel_raised: Color32::from_rgb(232, 232, 232),
+    panel_header: Color32::from_rgb(224, 224, 224),
+    surface: Color32::from_rgb(250, 250, 250),
+    surface_deep: Color32::from_rgb(255, 255, 255),
+    field: Color32::from_rgb(255, 255, 255),
+    border: Color32::from_rgb(198, 198, 198),
+    border_strong: Color32::from_rgb(166, 166, 166),
+    text: Color32::from_rgb(35, 35, 35),
+    muted: Color32::from_rgb(92, 92, 92),
+    secondary_text: Color32::from_rgb(65, 65, 65),
+    faint: Color32::from_rgb(128, 128, 128),
+    accent: Color32::from_rgb(53, 103, 150),
+    selection: Color32::from_rgb(204, 218, 232),
+    asset_selection: Color32::from_rgb(222, 231, 240),
+    asset_selection_stroke: Color32::from_rgb(118, 145, 171),
+    live: Color32::from_rgb(54, 128, 79),
+    axis_x: Color32::from_rgb(180, 55, 55),
+    axis_y: Color32::from_rgb(39, 128, 62),
+    axis_z: Color32::from_rgb(42, 98, 173),
+};
 const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 
 #[derive(Clone, Copy, Debug)]
@@ -404,9 +456,10 @@ impl StudioShell {
     }
 
     fn show_top_bar(&mut self, root: &mut egui::Ui, project_name: &str) {
+        let colors = palette(root);
         egui::Panel::top("studio_top_bar")
             .exact_size(TOP_BAR_HEIGHT)
-            .frame(editor_frame(SURFACE).inner_margin(Margin::symmetric(6, 0)))
+            .frame(editor_frame(colors.surface).inner_margin(Margin::symmetric(6, 0)))
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
                     ui.add(
@@ -474,7 +527,7 @@ impl StudioShell {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let live =
                             ui.allocate_response(egui::vec2(40.0, CONTROL_HEIGHT), Sense::hover());
-                        paint_status_label(ui, live.rect, LIVE, "Live");
+                        paint_status_label(ui, live.rect, colors.live, "Live");
                         let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
                         let play_label = if self.playing { "Stop" } else { "Play" };
                         if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
@@ -490,7 +543,7 @@ impl StudioShell {
                             ui.label(
                                 RichText::new(project_name)
                                     .size(TYPE.secondary)
-                                    .color(SECONDARY_TEXT),
+                                    .color(colors.secondary_text),
                             );
                         }
                     });
@@ -499,54 +552,65 @@ impl StudioShell {
     }
 
     fn show_status_bar(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
         egui::Panel::bottom("studio_status_bar")
             .exact_size(STATUS_BAR_HEIGHT)
-            .frame(editor_frame(PANEL_RAISED).inner_margin(Margin::symmetric(8, 0)))
+            .frame(editor_frame(colors.panel_raised).inner_margin(Margin::symmetric(8, 0)))
             .show(root, |ui| {
                 ui.horizontal(|ui| {
                     ui.set_height(STATUS_BAR_HEIGHT);
                     ui.spacing_mut().interact_size.y = 16.0;
-                    inline_icon(ui, Icon::Check, MUTED);
-                    ui.label(RichText::new(&self.notice).size(TYPE.meta).color(MUTED));
+                    inline_icon(ui, Icon::Check, colors.muted);
+                    ui.label(
+                        RichText::new(&self.notice)
+                            .size(TYPE.meta)
+                            .color(colors.muted),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new("Layout preview").size(TYPE.meta).color(FAINT));
+                        ui.label(
+                            RichText::new("Layout preview")
+                                .size(TYPE.meta)
+                                .color(colors.faint),
+                        );
                         vertical_separator(ui, 12.0);
-                        ui.label(RichText::new("Metal").size(TYPE.meta).color(FAINT));
+                        ui.label(RichText::new("Metal").size(TYPE.meta).color(colors.faint));
                     });
                 });
             });
     }
 
     fn show_world(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
         egui::Panel::bottom("world_assets")
             .resizable(true)
             .default_size(112.0)
             .size_range(100.0..=280.0)
-            .frame(editor_frame(PANEL))
+            .frame(editor_frame(colors.panel))
             .show(root, |ui| self.asset_shelf(ui));
 
         egui::Panel::left("world_scene")
             .resizable(true)
             .default_size(208.0)
             .size_range(180.0..=340.0)
-            .frame(editor_frame(PANEL))
+            .frame(editor_frame(colors.panel))
             .show(root, |ui| self.scene_tree(ui));
 
         egui::Panel::right("world_inspector")
             .resizable(true)
             .default_size(256.0)
             .size_range(224.0..=340.0)
-            .frame(editor_frame(PANEL_RAISED))
+            .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| self.inspector(ui));
 
         self.viewport_panel(root, "Perspective", "Viewport");
     }
 
     fn show_assets(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
         egui::Panel::left("asset_categories")
             .resizable(true)
             .default_size(220.0)
-            .frame(editor_frame(PANEL))
+            .frame(editor_frame(colors.panel))
             .show(root, |ui| {
                 panel_header(ui, Icon::Folder, "Library", |ui| {
                     icon_button(ui, Icon::Plus, "Add source", false);
@@ -569,7 +633,7 @@ impl StudioShell {
             .resizable(true)
             .default_size(256.0)
             .size_range(224.0..=340.0)
-            .frame(editor_frame(PANEL_RAISED))
+            .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| {
                 panel_header(ui, Icon::Sliders, "Asset details", |ui| {
                     icon_button(ui, Icon::More, "Asset options", false);
@@ -586,7 +650,7 @@ impl StudioShell {
                 });
             });
         egui::CentralPanel::default()
-            .frame(editor_frame(SURFACE))
+            .frame(editor_frame(colors.surface))
             .show(root, |ui| {
                 panel_header(ui, Icon::Assets, "Assets", |ui| {
                     icon_button(ui, Icon::Grid, "Grid view", true);
@@ -610,10 +674,11 @@ impl StudioShell {
     }
 
     fn show_materials(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
         egui::Panel::left("material_list")
             .resizable(true)
             .default_size(220.0)
-            .frame(editor_frame(PANEL))
+            .frame(editor_frame(colors.panel))
             .show(root, |ui| {
                 panel_header(ui, Icon::Material, "Materials", |ui| {
                     icon_button(ui, Icon::Plus, "New material", false);
@@ -638,7 +703,7 @@ impl StudioShell {
             .resizable(true)
             .default_size(256.0)
             .size_range(224.0..=340.0)
-            .frame(editor_frame(PANEL_RAISED))
+            .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| {
                 panel_header(ui, Icon::Sliders, "Material", |ui| {
                     icon_button(ui, Icon::More, "Material options", false);
@@ -653,7 +718,7 @@ impl StudioShell {
                         ui.label(
                             RichText::new("Roughness")
                                 .size(TYPE.secondary)
-                                .color(SECONDARY_TEXT),
+                                .color(colors.secondary_text),
                         );
                         if ui
                             .add(egui::Slider::new(&mut self.roughness, 0.0..=1.0))
@@ -670,14 +735,15 @@ impl StudioShell {
     }
 
     fn show_test(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
         egui::Panel::bottom("test_tools")
             .resizable(true)
             .default_size(112.0)
             .size_range(80.0..=260.0)
-            .frame(editor_frame(PANEL))
+            .frame(editor_frame(colors.panel))
             .show(root, |ui| {
                 editor_header(ui, |ui| {
-                    inline_icon(ui, Icon::Test, MUTED);
+                    inline_icon(ui, Icon::Test, colors.muted);
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for tool in ["Sessions", "State", "Network", "Logs", "Performance"] {
                         if compact_tab(ui, tool, self.test_tool == tool).clicked() {
@@ -691,11 +757,11 @@ impl StudioShell {
                 });
                 content_frame().show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        inline_icon(ui, tool_icon(self.test_tool), FAINT);
+                        inline_icon(ui, tool_icon(self.test_tool), colors.faint);
                         ui.label(
                             RichText::new(format!("{} tools will appear here.", self.test_tool))
                                 .size(TYPE.secondary)
-                                .color(MUTED),
+                                .color(colors.muted),
                         );
                     });
                 });
@@ -732,38 +798,42 @@ impl StudioShell {
                         Vec2::new(rect.width(), EDITOR_HEADER_HEIGHT),
                     );
                     if index > 0 {
-                        ui.painter().rect_filled(rect, 0.0, SURFACE);
+                        ui.painter().rect_filled(rect, 0.0, colors.surface);
                         ui.painter().text(
                             rect.center(),
                             Align2::CENTER_CENTER,
                             "Session preview",
                             FontId::proportional(TYPE.secondary),
-                            MUTED,
+                            colors.muted,
                         );
                     }
-                    ui.painter().rect_filled(header, 0.0, PANEL_HEADER);
+                    ui.painter().rect_filled(header, 0.0, colors.panel_header);
                     let icon_rect = Rect::from_center_size(
                         header.left_center() + egui::vec2(14.0, 0.0),
                         Vec2::splat(UI.icon),
                     );
-                    paint_icon(ui.painter(), icon_rect, Icon::Camera, FAINT);
+                    paint_icon(ui.painter(), icon_rect, Icon::Camera, colors.faint);
                     ui.painter().text(
                         header.left_center() + egui::vec2(27.0, 0.0),
                         Align2::LEFT_CENTER,
                         format!("Player {}", index + 1),
                         medium_font(TYPE.secondary),
-                        TEXT,
+                        colors.text,
                     );
                     let status_center = header.right_center() - egui::vec2(13.0, 0.0);
                     ui.painter().circle_filled(
                         status_center,
                         3.0,
-                        if index == 0 { ACCENT } else { FAINT },
+                        if index == 0 {
+                            colors.accent
+                        } else {
+                            colors.faint
+                        },
                     );
                     ui.painter().rect_stroke(
                         rect,
                         0.0,
-                        Stroke::new(1.0, BORDER),
+                        Stroke::new(1.0, colors.border),
                         StrokeKind::Inside,
                     );
                     if index == 0 {
@@ -777,22 +847,23 @@ impl StudioShell {
     }
 
     fn viewport_panel(&mut self, root: &mut egui::Ui, mode: &str, title: &str) {
+        let colors = palette(root);
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(Color32::TRANSPARENT))
             .show(root, |ui| {
                 let available = ui.available_rect_before_wrap();
                 let header = editor_header(ui, |ui| {
-                    inline_icon(ui, Icon::Camera, MUTED);
+                    inline_icon(ui, Icon::Camera, colors.muted);
                     ui.label(
                         RichText::new(title)
                             .font(semibold_font(TYPE.primary))
-                            .color(TEXT),
+                            .color(colors.text),
                     );
                     vertical_separator(ui, 12.0);
                     ui.label(
                         RichText::new(mode)
                             .size(TYPE.secondary)
-                            .color(SECONDARY_TEXT),
+                            .color(colors.secondary_text),
                     );
                     paint_down_chevron(ui);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -809,7 +880,7 @@ impl StudioShell {
                 ui.painter().rect_stroke(
                     available,
                     0.0,
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0, colors.border),
                     StrokeKind::Inside,
                 );
                 ui.allocate_rect(self.runtime_viewport, Sense::hover());
@@ -915,12 +986,13 @@ impl StudioShell {
     }
 
     fn asset_shelf(&mut self, ui: &mut egui::Ui) {
+        let colors = palette(ui);
         editor_header(ui, |ui| {
-            inline_icon(ui, Icon::Assets, MUTED);
+            inline_icon(ui, Icon::Assets, colors.muted);
             ui.label(
                 RichText::new("Assets")
                     .font(semibold_font(TYPE.primary))
-                    .color(TEXT),
+                    .color(colors.text),
             );
             vertical_separator(ui, 12.0);
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -1053,46 +1125,52 @@ fn semibold_font(size: f32) -> FontId {
 }
 
 fn configure_style(context: &egui::Context) {
-    let mut style = (*context.style_of(egui::Theme::Dark)).clone();
+    configure_theme_style(context, egui::Theme::Dark, DARK_PALETTE);
+    configure_theme_style(context, egui::Theme::Light, LIGHT_PALETTE);
+    context.set_theme(egui::ThemePreference::System);
+}
+
+fn configure_theme_style(context: &egui::Context, theme: egui::Theme, palette: Palette) {
+    let mut style = (*context.style_of(theme)).clone();
     style.spacing.item_spacing = egui::vec2(4.0, 1.0);
     style.spacing.button_padding = egui::vec2(6.0, 1.0);
     style.spacing.interact_size.y = CONTROL_HEIGHT;
     style.spacing.indent = 12.0;
     style.spacing.menu_margin = Margin::same(4);
     style.animation_time = 0.15;
-    style.visuals.dark_mode = true;
+    style.visuals.dark_mode = theme == egui::Theme::Dark;
     style.visuals.text_options.font_hinting = true;
     style.visuals.text_options.subpixel_binning = false;
-    style.visuals.panel_fill = PANEL;
-    style.visuals.window_fill = PANEL_RAISED;
-    style.visuals.window_stroke = Stroke::new(1.0, BORDER);
+    style.visuals.panel_fill = palette.panel;
+    style.visuals.window_fill = palette.panel_raised;
+    style.visuals.window_stroke = Stroke::new(1.0, palette.border);
     style.visuals.window_corner_radius = egui::CornerRadius::same(2);
     style.visuals.menu_corner_radius = egui::CornerRadius::same(3);
-    style.visuals.extreme_bg_color = SURFACE_DEEP;
-    style.visuals.text_edit_bg_color = Some(FIELD);
-    style.visuals.faint_bg_color = SURFACE;
+    style.visuals.extreme_bg_color = palette.surface_deep;
+    style.visuals.text_edit_bg_color = Some(palette.field);
+    style.visuals.faint_bg_color = palette.surface;
     style.visuals.indent_has_left_vline = false;
-    style.visuals.selection.bg_fill = ACCENT_DARK;
-    style.visuals.selection.stroke = Stroke::new(1.0, ACCENT);
-    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, MUTED);
+    style.visuals.selection.bg_fill = palette.selection;
+    style.visuals.selection.stroke = Stroke::new(1.0, palette.accent);
+    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, palette.muted);
     style.visuals.widgets.noninteractive.bg_stroke = Stroke::NONE;
     style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(1);
     style.visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
     style.visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     style.visuals.widgets.inactive.bg_stroke = Stroke::NONE;
-    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, palette.text);
     style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(1);
-    style.visuals.widgets.hovered.bg_fill = PANEL_RAISED;
-    style.visuals.widgets.hovered.weak_bg_fill = PANEL_RAISED;
+    style.visuals.widgets.hovered.bg_fill = palette.panel_raised;
+    style.visuals.widgets.hovered.weak_bg_fill = palette.panel_raised;
     style.visuals.widgets.hovered.bg_stroke = Stroke::NONE;
-    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT);
+    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, palette.text);
     style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(1);
-    style.visuals.widgets.active.bg_fill = ACCENT_DARK;
-    style.visuals.widgets.active.weak_bg_fill = ACCENT_DARK;
-    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    style.visuals.widgets.active.bg_fill = palette.selection;
+    style.visuals.widgets.active.weak_bg_fill = palette.selection;
+    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, palette.accent);
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(1);
-    style.visuals.widgets.open.bg_fill = FIELD;
-    style.visuals.widgets.open.weak_bg_fill = FIELD;
+    style.visuals.widgets.open.bg_fill = palette.field;
+    style.visuals.widgets.open.weak_bg_fill = palette.field;
     style.visuals.widgets.open.corner_radius = egui::CornerRadius::same(2);
     // Egui removes text padding for frameless buttons, including menu labels.
     // Keep the frame geometry and make inactive menu frames transparent instead.
@@ -1111,8 +1189,15 @@ fn configure_style(context: &egui::Context) {
     style
         .text_styles
         .insert(TextStyle::Monospace, FontId::monospace(TYPE.secondary));
-    context.set_style_of(egui::Theme::Dark, style);
-    context.set_theme(egui::ThemePreference::Dark);
+    context.set_style_of(theme, style);
+}
+
+fn palette(ui: &egui::Ui) -> Palette {
+    if ui.visuals().dark_mode {
+        DARK_PALETTE
+    } else {
+        LIGHT_PALETTE
+    }
 }
 
 fn editor_frame(fill: Color32) -> Frame {
@@ -1147,6 +1232,7 @@ fn content_frame() -> Frame {
 }
 
 fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let colors = palette(ui);
     let font = if selected {
         medium_font(TYPE.primary)
     } else {
@@ -1155,7 +1241,11 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         font,
-        if selected { TEXT } else { SECONDARY_TEXT },
+        if selected {
+            colors.text
+        } else {
+            colors.secondary_text
+        },
     );
     let width = galley.size().x.ceil() + LABEL_PADDING * 2.0;
     let (slot, response) =
@@ -1165,13 +1255,14 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
     });
     if response.hovered() || response.has_focus() {
-        ui.painter().rect_filled(rect, UI.radius, PANEL_RAISED);
+        ui.painter()
+            .rect_filled(rect, UI.radius, colors.panel_raised);
     }
     if selected {
         ui.painter().hline(
             rect.x_range(),
             rect.max.y - 1.0,
-            Stroke::new(1.0, ACCENT_DARK),
+            Stroke::new(1.0, colors.selection),
         );
     }
     ui.painter().galley(
@@ -1180,7 +1271,11 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
             slot.center().y - galley.size().y * 0.5,
         ),
         galley,
-        if selected { TEXT } else { SECONDARY_TEXT },
+        if selected {
+            colors.text
+        } else {
+            colors.secondary_text
+        },
     );
     paint_focus(ui, &response);
     response
@@ -1188,13 +1283,17 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
 
 // Allocate headers once: frame strokes/margins must never change their height.
 fn editor_header(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> Rect {
+    let colors = palette(ui);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), EDITOR_HEADER_HEIGHT),
         Sense::hover(),
     );
-    ui.painter().rect_filled(rect, 0.0, PANEL_HEADER);
-    ui.painter()
-        .hline(rect.x_range(), rect.max.y - 0.5, Stroke::new(1.0, BORDER));
+    ui.painter().rect_filled(rect, 0.0, colors.panel_header);
+    ui.painter().hline(
+        rect.x_range(),
+        rect.max.y - 0.5,
+        Stroke::new(1.0, colors.border),
+    );
     let mut header = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(rect.shrink2(egui::vec2(UI.inset, 0.0)))
@@ -1207,28 +1306,30 @@ fn editor_header(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> Rect
 }
 
 fn panel_header(ui: &mut egui::Ui, icon: Icon, title: &str, actions: impl FnOnce(&mut egui::Ui)) {
+    let colors = palette(ui);
     editor_header(ui, |ui| {
-        inline_icon(ui, icon, MUTED);
+        inline_icon(ui, icon, colors.muted);
         ui.label(
             RichText::new(title)
                 .font(semibold_font(TYPE.primary))
-                .color(TEXT),
+                .color(colors.text),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), actions);
     });
 }
 
 fn selected_object_header(ui: &mut egui::Ui, name: &str, kind: &str) {
+    let colors = palette(ui);
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), UI.row),
         Layout::left_to_right(Align::Center),
         |ui| {
-            inline_icon(ui, Icon::Object, MUTED);
+            inline_icon(ui, Icon::Object, colors.muted);
             ui.add(
                 egui::Label::new(
                     RichText::new(name)
                         .font(semibold_font(TYPE.primary))
-                        .color(TEXT),
+                        .color(colors.text),
                 )
                 .truncate(),
             )
@@ -1238,10 +1339,11 @@ fn selected_object_header(ui: &mut egui::Ui, name: &str, kind: &str) {
 }
 
 fn property_section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
+    let colors = palette(ui);
     egui::CollapsingHeader::new(
         RichText::new(title)
             .font(semibold_font(TYPE.secondary))
-            .color(TEXT),
+            .color(colors.text),
     )
     .default_open(true)
     .show(ui, |ui| {
@@ -1252,15 +1354,17 @@ fn property_section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut eg
 }
 
 fn property_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    let colors = palette(ui);
     let field = property_field(ui, label);
-    ui.painter().rect_filled(field, UI.radius, SURFACE);
+    ui.painter().rect_filled(field, UI.radius, colors.surface);
     ui.put(
         field.shrink2(egui::vec2(6.0, 0.0)),
-        egui::Label::new(RichText::new(value).size(TYPE.secondary).color(TEXT)).truncate(),
+        egui::Label::new(RichText::new(value).size(TYPE.secondary).color(colors.text)).truncate(),
     );
 }
 
 fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
+    let colors = palette(ui);
     let (row, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), CONTROL_HEIGHT),
         Sense::hover(),
@@ -1271,7 +1375,7 @@ fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
         Align2::RIGHT_CENTER,
         label,
         FontId::proportional(TYPE.secondary),
-        SECONDARY_TEXT,
+        colors.secondary_text,
     );
     Rect::from_min_max(row.min + egui::vec2(label_width, 0.0), row.max)
 }
@@ -1284,8 +1388,9 @@ fn drag_property_row(
     speed: f64,
     suffix: &str,
 ) {
+    let colors = palette(ui);
     let field = property_field(ui, label);
-    ui.painter().rect_filled(field, UI.radius, FIELD);
+    ui.painter().rect_filled(field, UI.radius, colors.field);
     let mut value_rect = field;
     if !axis.is_empty() {
         value_rect.min.x += 20.0;
@@ -1294,7 +1399,7 @@ fn drag_property_row(
             Align2::CENTER_CENTER,
             axis,
             FontId::proportional(TYPE.meta),
-            axis_color(axis),
+            axis_color(axis, colors),
         );
     }
     ui.push_id((label, axis), |ui| {
@@ -1322,6 +1427,7 @@ fn scene_row(
     name: &'static str,
     selected: &mut &'static str,
 ) {
+    let colors = palette(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
     let is_selected = *selected == name;
@@ -1333,9 +1439,9 @@ fn scene_row(
             rect,
             0.0,
             if is_selected {
-                ACCENT_DARK
+                colors.selection
             } else {
-                PANEL_RAISED
+                colors.panel_raised
             },
         );
     }
@@ -1350,14 +1456,18 @@ fn scene_row(
             } else {
                 Icon::ChevronRight
             },
-            FAINT,
+            colors.faint,
         );
     }
     paint_icon(
         ui.painter(),
         Rect::from_center_size(egui::pos2(x + 19.0, rect.center().y), Vec2::splat(UI.icon)),
         icon,
-        if is_selected { TEXT } else { FAINT },
+        if is_selected {
+            colors.text
+        } else {
+            colors.faint
+        },
     );
     let label_font = if is_selected || matches!(icon, Icon::Folder | Icon::World) {
         medium_font(TYPE.primary)
@@ -1369,7 +1479,11 @@ fn scene_row(
         Align2::LEFT_CENTER,
         name,
         label_font,
-        if is_selected { TEXT } else { SECONDARY_TEXT },
+        if is_selected {
+            colors.text
+        } else {
+            colors.secondary_text
+        },
     );
     paint_icon(
         ui.painter(),
@@ -1379,9 +1493,9 @@ fn scene_row(
         ),
         Icon::Eye,
         if response.hovered() || is_selected {
-            MUTED
+            colors.muted
         } else {
-            SURFACE
+            colors.surface
         },
     );
     if response.clicked() {
@@ -1390,14 +1504,15 @@ fn scene_row(
 }
 
 fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: &mut &'static str) {
+    let colors = palette(ui);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(76.0, 62.0), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name)
     });
     let border = if selected {
-        ASSET_SELECTION_STROKE
+        colors.asset_selection_stroke
     } else if response.hovered() {
-        BORDER_STRONG
+        colors.border_strong
     } else {
         Color32::TRANSPARENT
     };
@@ -1406,9 +1521,9 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
             rect,
             UI.radius,
             if selected {
-                ASSET_SELECTION
+                colors.asset_selection
             } else {
-                PANEL_RAISED
+                colors.panel_raised
             },
         );
     }
@@ -1416,20 +1531,20 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
         rect.min + egui::vec2(6.0, 4.0),
         egui::pos2(rect.max.x - 6.0, rect.max.y - 17.0),
     );
-    ui.painter().rect_filled(preview, UI.radius, SURFACE);
+    ui.painter().rect_filled(preview, UI.radius, colors.surface);
     let (asset_icon, kind) = asset_kind(name);
     paint_icon(
         ui.painter(),
         Rect::from_center_size(preview.center(), Vec2::splat(22.0)),
         asset_icon,
-        MUTED,
+        colors.muted,
     );
     ui.painter().text(
         egui::pos2(rect.center().x, rect.max.y - 8.0),
         Align2::CENTER_CENTER,
         name,
         FontId::proportional(TYPE.meta),
-        if selected { TEXT } else { MUTED },
+        if selected { colors.text } else { colors.muted },
     );
     ui.painter().rect_stroke(
         rect,
@@ -1445,10 +1560,11 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
 }
 
 fn compact_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let colors = palette(ui);
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         FontId::proportional(TYPE.secondary),
-        if selected { TEXT } else { MUTED },
+        if selected { colors.text } else { colors.muted },
     );
     let width = galley.size().x.ceil() + 12.0;
     let (rect, response) =
@@ -1457,25 +1573,27 @@ fn compact_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
     });
     if response.hovered() {
-        ui.painter().rect_filled(rect, UI.radius, PANEL_RAISED);
+        ui.painter()
+            .rect_filled(rect, UI.radius, colors.panel_raised);
     }
     if selected {
         ui.painter().hline(
             rect.x_range(),
             rect.max.y - 1.0,
-            Stroke::new(1.0, ACCENT_DARK),
+            Stroke::new(1.0, colors.selection),
         );
     }
     ui.painter().galley(
         rect.center() - galley.size() * 0.5,
         galley,
-        if selected { TEXT } else { MUTED },
+        if selected { colors.text } else { colors.muted },
     );
     paint_focus(ui, &response);
     response
 }
 
 fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
+    let colors = palette(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
     response.widget_info(|| {
@@ -1485,7 +1603,11 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
         ui.painter().rect_filled(
             rect,
             UI.radius,
-            if selected { ACCENT_DARK } else { PANEL_RAISED },
+            if selected {
+                colors.selection
+            } else {
+                colors.panel_raised
+            },
         );
     }
     paint_icon(
@@ -1495,7 +1617,11 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
             Vec2::splat(UI.icon),
         ),
         icon,
-        if selected { ACCENT } else { MUTED },
+        if selected {
+            colors.accent
+        } else {
+            colors.muted
+        },
     );
     let label_font = if selected {
         medium_font(TYPE.primary)
@@ -1507,18 +1633,20 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
         Align2::LEFT_CENTER,
         label,
         label_font,
-        if selected { TEXT } else { MUTED },
+        if selected { colors.text } else { colors.muted },
     );
     paint_focus(ui, &response);
     response
 }
 
 fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
+    let colors = palette(ui);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(width.min(ui.available_width()).max(80.0), CONTROL_HEIGHT),
         Sense::hover(),
     );
-    ui.painter().rect_filled(rect, UI.radius, SURFACE_DEEP);
+    ui.painter()
+        .rect_filled(rect, UI.radius, colors.surface_deep);
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
@@ -1526,7 +1654,7 @@ fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
             Vec2::splat(UI.icon),
         ),
         Icon::Search,
-        FAINT,
+        colors.faint,
     );
     let text_rect = Rect::from_min_max(
         rect.min + egui::vec2(23.0, 1.0),
@@ -1546,32 +1674,40 @@ fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
 }
 
 fn drop_target(ui: &mut egui::Ui, label: &str) {
+    let colors = palette(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), Sense::click());
     ui.painter().rect_filled(
         rect,
         UI.radius,
         if response.hovered() {
-            PANEL_RAISED
+            colors.panel_raised
         } else {
-            SURFACE
+            colors.surface
         },
     );
     ui.painter().rect_stroke(
         rect,
         UI.radius,
-        Stroke::new(1.0, if response.hovered() { ACCENT } else { BORDER }),
+        Stroke::new(
+            1.0,
+            if response.hovered() {
+                colors.accent
+            } else {
+                colors.border
+            },
+        ),
         StrokeKind::Inside,
     );
     let icon_rect =
         Rect::from_center_size(rect.center() - egui::vec2(0.0, 7.0), Vec2::splat(UI.icon));
-    paint_icon(ui.painter(), icon_rect, Icon::Open, MUTED);
+    paint_icon(ui.painter(), icon_rect, Icon::Open, colors.muted);
     ui.painter().text(
         rect.center() + egui::vec2(0.0, 10.0),
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(TYPE.secondary),
-        MUTED,
+        colors.muted,
     );
 }
 
@@ -1583,6 +1719,7 @@ fn menu_entry(
     shortcut: &str,
     enabled: bool,
 ) -> egui::Response {
+    let colors = palette(ui);
     let sense = if enabled {
         Sense::click()
     } else {
@@ -1591,9 +1728,9 @@ fn menu_entry(
     let (rect, response) = ui.allocate_exact_size(egui::vec2(220.0, 24.0), sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     if enabled && (response.hovered() || response.has_focus()) {
-        ui.painter().rect_filled(rect, UI.radius, ACCENT_DARK);
+        ui.painter().rect_filled(rect, UI.radius, colors.selection);
     }
-    let color = if enabled { TEXT } else { FAINT };
+    let color = if enabled { colors.text } else { colors.faint };
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
@@ -1601,7 +1738,7 @@ fn menu_entry(
             Vec2::splat(UI.icon),
         ),
         icon,
-        if enabled { MUTED } else { FAINT },
+        if enabled { colors.muted } else { colors.faint },
     );
     ui.painter().text(
         rect.left_center() + egui::vec2(28.0, 0.0),
@@ -1616,20 +1753,25 @@ fn menu_entry(
             Align2::RIGHT_CENTER,
             shortcut,
             FontId::proportional(TYPE.meta),
-            FAINT,
+            colors.faint,
         );
     }
     response
 }
 
 fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> egui::Response {
+    let colors = palette(ui);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(54.0, CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     if active || response.hovered() {
         ui.painter().rect_filled(
             rect,
             UI.radius,
-            if active { ACCENT_DARK } else { PANEL_RAISED },
+            if active {
+                colors.selection
+            } else {
+                colors.panel_raised
+            },
         );
     }
     paint_icon(
@@ -1639,42 +1781,51 @@ fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> e
             Vec2::splat(UI.icon),
         ),
         icon,
-        if active { ACCENT } else { TEXT },
+        if active { colors.accent } else { colors.text },
     );
     ui.painter().text(
         rect.left_center() + egui::vec2(22.0, 0.0),
         Align2::LEFT_CENTER,
         label,
         medium_font(TYPE.secondary),
-        TEXT,
+        colors.text,
     );
     paint_focus(ui, &response);
     response
 }
 
 fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str, active: bool) -> egui::Response {
+    let colors = palette(ui);
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
     if active || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, UI.radius, if active { FIELD } else { PANEL_RAISED });
+        ui.painter().rect_filled(
+            rect,
+            UI.radius,
+            if active {
+                colors.field
+            } else {
+                colors.panel_raised
+            },
+        );
     }
     paint_icon(
         ui.painter(),
         rect.shrink(3.0),
         icon,
-        if active { TEXT } else { MUTED },
+        if active { colors.text } else { colors.muted },
     );
     paint_focus(ui, &response);
     response.on_hover_text(tooltip)
 }
 
 fn paint_focus(ui: &egui::Ui, response: &egui::Response) {
+    let colors = palette(ui);
     if response.has_focus() {
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
             UI.radius,
-            Stroke::new(1.0, ACCENT),
+            Stroke::new(1.0, colors.accent),
             StrokeKind::Inside,
         );
     }
@@ -1698,24 +1849,26 @@ fn paint_status_label(ui: &egui::Ui, rect: Rect, color: Color32, label: &str) {
 }
 
 fn vertical_separator(ui: &mut egui::Ui, height: f32) {
+    let colors = palette(ui);
     let response = ui.allocate_response(egui::vec2(1.0, height), Sense::hover());
     ui.painter().line_segment(
         [response.rect.center_top(), response.rect.center_bottom()],
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0, colors.border),
     );
 }
 
 fn paint_down_chevron(ui: &mut egui::Ui) {
+    let colors = palette(ui);
     let response = ui.allocate_response(Vec2::splat(UI.icon), Sense::hover());
-    paint_icon(ui.painter(), response.rect, Icon::ChevronDown, FAINT);
+    paint_icon(ui.painter(), response.rect, Icon::ChevronDown, colors.faint);
 }
 
-fn axis_color(axis: &str) -> Color32 {
+fn axis_color(axis: &str, colors: Palette) -> Color32 {
     match axis {
-        "X" => Color32::from_rgb(218, 105, 105),
-        "Y" => Color32::from_rgb(112, 193, 126),
-        "Z" => Color32::from_rgb(103, 151, 218),
-        _ => MUTED,
+        "X" => colors.axis_x,
+        "Y" => colors.axis_y,
+        "Z" => colors.axis_z,
+        _ => colors.muted,
     }
 }
 
