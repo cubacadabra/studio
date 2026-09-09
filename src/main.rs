@@ -9,6 +9,8 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Instant,
 };
+#[cfg(target_os = "macos")]
+mod macos;
 mod network;
 mod shell;
 use network::{BackendClient, BackendEvent};
@@ -1175,6 +1177,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "macos")]
     event_loop_builder.with_activation_policy(ActivationPolicy::Regular);
     let event_loop = event_loop_builder.build()?;
+    #[cfg(target_os = "macos")]
+    macos::set_application_icon();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app)?;
     Ok(())
