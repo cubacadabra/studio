@@ -106,6 +106,7 @@ pub(crate) struct StudioShell {
     playing: bool,
     notice: String,
     search_query: String,
+    logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
     scale: f32,
@@ -130,6 +131,7 @@ impl StudioShell {
             game_renderer.studio_overlay_format(),
             RendererOptions::default(),
         );
+        let logo_texture = load_logo_texture(&context);
         Self {
             context,
             state,
@@ -143,6 +145,7 @@ impl StudioShell {
             playing: false,
             notice: "Ready".to_owned(),
             search_query: String::new(),
+            logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
             scale: 1.0,
@@ -249,7 +252,7 @@ impl StudioShell {
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
                     ui.add(
-                        egui::Image::from_bytes("bytes://cubacadabra/logo.png", LOGO_BYTES)
+                        egui::Image::from_texture(&self.logo_texture)
                             .fit_to_exact_size(egui::vec2(20.0, 20.0))
                             .sense(Sense::hover()),
                     );
@@ -829,6 +832,19 @@ fn configure_style(context: &egui::Context) {
 
 fn editor_frame(fill: Color32) -> Frame {
     Frame::NONE.fill(fill).inner_margin(Margin::same(0))
+}
+
+fn load_logo_texture(context: &egui::Context) -> egui::TextureHandle {
+    let image = image::load_from_memory(LOGO_BYTES)
+        .expect("Cubacadabra Studio logo should be a valid image")
+        .to_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    context.load_texture(
+        "cubacadabra-studio-logo",
+        color_image,
+        egui::TextureOptions::LINEAR,
+    )
 }
 
 fn menu_bar_style(style: &mut egui::Style) {
