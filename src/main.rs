@@ -254,6 +254,12 @@ impl StudioApp {
 
     fn render(&mut self) {
         self.drain_backend_events();
+        #[cfg(target_os = "macos")]
+        while let Some(command) = macos::take_menu_action() {
+            if let Some(shell) = &mut self.shell {
+                shell.execute_command(command);
+            }
+        }
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
@@ -953,7 +959,7 @@ impl ApplicationHandler for StudioApp {
             return;
         }
         #[cfg(target_os = "macos")]
-        macos::install_about_panel_handler();
+        macos::install_native_menu();
         if let Err(error) = self.create_window(event_loop) {
             eprintln!("Cubacadabra Studio: {error}");
             event_loop.exit();

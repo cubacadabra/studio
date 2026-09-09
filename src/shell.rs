@@ -77,10 +77,14 @@ enum Icon {
     ChevronRight,
     Eye,
     Lock,
+    #[cfg(not(target_os = "macos"))]
     Save,
     Open,
+    #[cfg(not(target_os = "macos"))]
     Undo,
+    #[cfg(not(target_os = "macos"))]
     Redo,
+    #[cfg(not(target_os = "macos"))]
     Settings,
     Network,
     Logs,
@@ -107,6 +111,29 @@ impl Workspace {
             Self::Test => "Test",
         }
     }
+
+    fn command(self) -> StudioCommand {
+        match self {
+            Self::World => StudioCommand::ShowWorld,
+            Self::Assets => StudioCommand::ShowAssets,
+            Self::Materials => StudioCommand::ShowMaterials,
+            Self::Test => StudioCommand::ShowTest,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StudioCommand {
+    OpenProject,
+    Save,
+    RevealProject,
+    Preferences,
+    MaximizeViewport,
+    ResetLayout,
+    ShowWorld,
+    ShowAssets,
+    ShowMaterials,
+    ShowTest,
 }
 
 pub(crate) struct PreparedShell {
@@ -185,6 +212,38 @@ impl StudioShell {
 
     pub(crate) fn is_playing(&self) -> bool {
         self.playing
+    }
+
+    pub(crate) fn execute_command(&mut self, command: StudioCommand) {
+        match command {
+            StudioCommand::OpenProject => {
+                self.notice = "Open Project is a layout preview".to_owned();
+            }
+            StudioCommand::Save => {
+                self.notice = "Nothing to save yet".to_owned();
+            }
+            StudioCommand::RevealProject => {
+                self.notice = "Reveal Project is not connected yet".to_owned();
+            }
+            StudioCommand::Preferences => {
+                self.notice = "Preferences are coming later".to_owned();
+            }
+            StudioCommand::MaximizeViewport => {
+                self.notice = "Viewport maximize is coming later".to_owned();
+            }
+            StudioCommand::ResetLayout => {
+                self.notice = "Layout reset".to_owned();
+            }
+            StudioCommand::ShowWorld => self.select_workspace(Workspace::World),
+            StudioCommand::ShowAssets => self.select_workspace(Workspace::Assets),
+            StudioCommand::ShowMaterials => self.select_workspace(Workspace::Materials),
+            StudioCommand::ShowTest => self.select_workspace(Workspace::Test),
+        }
+    }
+
+    fn select_workspace(&mut self, workspace: Workspace) {
+        self.workspace = workspace;
+        self.notice = format!("{} workspace", workspace.label());
     }
 
     pub(crate) fn prepare(&mut self, window: &Window, project_name: &str) -> PreparedShell {
@@ -278,53 +337,58 @@ impl StudioShell {
                             .sense(Sense::hover()),
                     );
 
-                    ui.menu_button("File", |ui| {
-                        ui.set_min_width(220.0);
-                        if menu_entry(ui, Icon::Open, "Open Project…", "⌘O", true).clicked() {
-                            self.notice = "Open Project is a layout preview".to_owned();
-                            ui.close();
-                        }
-                        if menu_entry(ui, Icon::Save, "Save", "⌘S", true).clicked() {
-                            self.notice = "Nothing to save yet".to_owned();
-                            ui.close();
-                        }
-                        ui.separator();
-                        if menu_entry(ui, Icon::Folder, "Reveal Project", "", true).clicked() {
-                            self.notice = "Reveal Project is not connected yet".to_owned();
-                            ui.close();
-                        }
-                    });
-                    ui.menu_button("Edit", |ui| {
-                        ui.set_min_width(220.0);
-                        menu_entry(ui, Icon::Undo, "Undo", "⌘Z", false);
-                        menu_entry(ui, Icon::Redo, "Redo", "⇧⌘Z", false);
-                        ui.separator();
-                        if menu_entry(ui, Icon::Settings, "Preferences…", "⌘,", true).clicked()
-                        {
-                            self.notice = "Preferences are coming later".to_owned();
-                            ui.close();
-                        }
-                    });
-                    ui.menu_button("Window", |ui| {
-                        ui.set_min_width(220.0);
-                        if menu_entry(ui, Icon::Grid, "Maximize Viewport", "Space", true).clicked()
-                        {
-                            self.notice = "Viewport maximize is coming later".to_owned();
-                            ui.close();
-                        }
-                        if menu_entry(ui, Icon::Sliders, "Reset Layout", "", true).clicked() {
-                            self.notice = "Layout reset".to_owned();
-                            ui.close();
-                        }
-                    });
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        ui.menu_button("File", |ui| {
+                            ui.set_min_width(220.0);
+                            if menu_entry(ui, Icon::Open, "Open Project…", "Ctrl+O", true).clicked()
+                            {
+                                self.execute_command(StudioCommand::OpenProject);
+                                ui.close();
+                            }
+                            if menu_entry(ui, Icon::Save, "Save", "Ctrl+S", true).clicked() {
+                                self.execute_command(StudioCommand::Save);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if menu_entry(ui, Icon::Folder, "Reveal Project", "", true).clicked() {
+                                self.execute_command(StudioCommand::RevealProject);
+                                ui.close();
+                            }
+                        });
+                        ui.menu_button("Edit", |ui| {
+                            ui.set_min_width(220.0);
+                            menu_entry(ui, Icon::Undo, "Undo", "Ctrl+Z", false);
+                            menu_entry(ui, Icon::Redo, "Redo", "Ctrl+Shift+Z", false);
+                            ui.separator();
+                            if menu_entry(ui, Icon::Settings, "Preferences…", "Ctrl+,", true)
+                                .clicked()
+                            {
+                                self.execute_command(StudioCommand::Preferences);
+                                ui.close();
+                            }
+                        });
+                        ui.menu_button("Window", |ui| {
+                            ui.set_min_width(220.0);
+                            if menu_entry(ui, Icon::Grid, "Maximize Viewport", "Space", true)
+                                .clicked()
+                            {
+                                self.execute_command(StudioCommand::MaximizeViewport);
+                                ui.close();
+                            }
+                            if menu_entry(ui, Icon::Sliders, "Reset Layout", "", true).clicked() {
+                                self.execute_command(StudioCommand::ResetLayout);
+                                ui.close();
+                            }
+                        });
+                    }
 
                     ui.add_space(8.0);
                     for workspace in Workspace::ALL {
                         if workspace_tab(ui, workspace.label(), self.workspace == workspace)
                             .clicked()
                         {
-                            self.workspace = workspace;
-                            self.notice = format!("{} workspace", workspace.label());
+                            self.execute_command(workspace.command());
                         }
                     }
 
@@ -1277,6 +1341,7 @@ fn drop_target(ui: &mut egui::Ui, label: &str) {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
 fn menu_entry(
     ui: &mut egui::Ui,
     icon: Icon,
@@ -1704,6 +1769,7 @@ fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 stroke,
             ));
         }
+        #[cfg(not(target_os = "macos"))]
         Icon::Save => {
             painter.rect_stroke(rect.shrink(size * 0.08), 1.0, stroke, StrokeKind::Inside);
             painter.rect_stroke(
@@ -1725,6 +1791,7 @@ fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 StrokeKind::Inside,
             );
         }
+        #[cfg(not(target_os = "macos"))]
         Icon::Undo | Icon::Redo => {
             let direction = if matches!(icon, Icon::Redo) {
                 -1.0
@@ -1755,6 +1822,7 @@ fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 stroke,
             );
         }
+        #[cfg(not(target_os = "macos"))]
         Icon::Settings => {
             painter.circle_stroke(c, r * 0.42, stroke);
             painter.circle_stroke(c, r * 0.14, stroke);

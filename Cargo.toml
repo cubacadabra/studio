@@ -23,6 +23,7 @@ winit = "0.30"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSApplication",
+    "NSEvent",
     "NSImage",
     "NSMenu",
     "NSMenuItem",
@@ -32,6 +33,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSData",
     "NSDictionary",
     "NSObject",
+    "NSString",
 ] }
 
 [profile.release]
