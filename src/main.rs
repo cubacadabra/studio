@@ -952,6 +952,8 @@ impl ApplicationHandler for StudioApp {
         if self.window.is_some() {
             return;
         }
+        #[cfg(target_os = "macos")]
+        macos::install_about_panel_handler();
         if let Err(error) = self.create_window(event_loop) {
             eprintln!("Cubacadabra Studio: {error}");
             event_loop.exit();
