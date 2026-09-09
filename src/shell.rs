@@ -38,18 +38,21 @@ const EDITOR_HEADER_HEIGHT: f32 = UI.editor_header;
 const CONTROL_HEIGHT: f32 = UI.control;
 const LABEL_PADDING: f32 = UI.inset;
 const PANEL: Color32 = Color32::from_rgb(49, 49, 49);
-const PANEL_RAISED: Color32 = Color32::from_rgb(55, 55, 55);
-const PANEL_HEADER: Color32 = Color32::from_rgb(52, 52, 52);
+const PANEL_RAISED: Color32 = Color32::from_rgb(51, 51, 51);
+const PANEL_HEADER: Color32 = Color32::from_rgb(55, 55, 55);
 const SURFACE: Color32 = Color32::from_rgb(43, 43, 43);
 const SURFACE_DEEP: Color32 = Color32::from_rgb(35, 35, 35);
-const FIELD: Color32 = Color32::from_rgb(61, 61, 61);
+const FIELD: Color32 = Color32::from_rgb(63, 63, 63);
 const BORDER: Color32 = Color32::from_rgb(43, 43, 43);
 const BORDER_STRONG: Color32 = Color32::from_rgb(73, 73, 73);
 const TEXT: Color32 = Color32::from_rgb(210, 210, 210);
 const MUTED: Color32 = Color32::from_rgb(164, 164, 164);
+const SECONDARY_TEXT: Color32 = Color32::from_rgb(180, 180, 180);
 const FAINT: Color32 = Color32::from_rgb(116, 116, 116);
 const ACCENT: Color32 = Color32::from_rgb(122, 157, 193);
-const ACCENT_DARK: Color32 = Color32::from_rgb(68, 82, 99);
+const ACCENT_DARK: Color32 = Color32::from_rgb(72, 87, 103);
+const ASSET_SELECTION: Color32 = Color32::from_rgb(57, 63, 69);
+const ASSET_SELECTION_STROKE: Color32 = Color32::from_rgb(88, 108, 128);
 const LIVE: Color32 = Color32::from_rgb(120, 166, 137);
 const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 
@@ -409,7 +412,7 @@ impl StudioShell {
                         }
                         if ui.available_width() > 180.0 {
                             vertical_separator(ui, 14.0);
-                            ui.label(RichText::new(project_name).size(10.0).color(FAINT));
+                            ui.label(RichText::new(project_name).size(10.0).color(MUTED));
                         }
                     });
                 });
@@ -568,7 +571,7 @@ impl StudioShell {
                         property_row(ui, "Image", self.selected_asset);
                     });
                     property_section(ui, "Surface", |ui| {
-                        ui.label(RichText::new("Roughness").size(11.0).color(MUTED));
+                        ui.label(RichText::new("Roughness").size(11.0).color(SECONDARY_TEXT));
                         if ui
                             .add(egui::Slider::new(&mut self.roughness, 0.0..=1.0))
                             .changed()
@@ -791,7 +794,7 @@ impl StudioShell {
         });
         content_frame().show(ui, |ui| {
             selected_object_header(ui, self.selected_scene, "Mesh instance");
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             property_section(ui, "Transform", |ui| {
                 for (index, (axis, value)) in ["X", "Y", "Z"]
                     .into_iter()
@@ -807,7 +810,7 @@ impl StudioShell {
                         "",
                     );
                 }
-                ui.add_space(4.0);
+                ui.add_space(2.0);
                 drag_property_row(ui, "Rotation", "", &mut self.rotation, 0.5, "°");
                 drag_property_row(ui, "Scale", "", &mut self.scale, 0.01, "");
             });
@@ -950,7 +953,7 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         FontId::proportional(11.5),
-        if selected { TEXT } else { MUTED },
+        if selected { TEXT } else { SECONDARY_TEXT },
     );
     let width = galley.size().x.ceil() + LABEL_PADDING * 2.0;
     let (slot, response) =
@@ -975,7 +978,7 @@ fn workspace_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respon
             slot.center().y - galley.size().y * 0.5,
         ),
         galley,
-        if selected { TEXT } else { MUTED },
+        if selected { TEXT } else { SECONDARY_TEXT },
     );
     paint_focus(ui, &response);
     response
@@ -1027,7 +1030,7 @@ fn property_section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut eg
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             content(ui);
-            ui.add_space(2.0);
+            ui.add_space(1.0);
         });
 }
 
@@ -1051,7 +1054,7 @@ fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
         Align2::RIGHT_CENTER,
         label,
         FontId::proportional(10.5),
-        MUTED,
+        SECONDARY_TEXT,
     );
     Rect::from_min_max(row.min + egui::vec2(label_width, 0.0), row.max)
 }
@@ -1144,7 +1147,7 @@ fn scene_row(
         Align2::LEFT_CENTER,
         name,
         FontId::proportional(10.5),
-        if is_selected { TEXT } else { MUTED },
+        if is_selected { TEXT } else { SECONDARY_TEXT },
     );
     paint_icon(
         ui.painter(),
@@ -1170,7 +1173,7 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name)
     });
     let border = if selected {
-        ACCENT
+        ASSET_SELECTION_STROKE
     } else if response.hovered() {
         BORDER_STRONG
     } else {
@@ -1180,7 +1183,11 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
         ui.painter().rect_filled(
             rect,
             UI.radius,
-            if selected { ACCENT_DARK } else { PANEL_RAISED },
+            if selected {
+                ASSET_SELECTION
+            } else {
+                PANEL_RAISED
+            },
         );
     }
     let preview = Rect::from_min_max(
