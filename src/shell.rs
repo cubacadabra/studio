@@ -51,6 +51,7 @@ const FAINT: Color32 = Color32::from_rgb(116, 116, 116);
 const ACCENT: Color32 = Color32::from_rgb(122, 157, 193);
 const ACCENT_DARK: Color32 = Color32::from_rgb(68, 82, 99);
 const LIVE: Color32 = Color32::from_rgb(120, 166, 137);
+const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 
 #[derive(Clone, Copy, Debug)]
 enum Icon {
@@ -126,6 +127,7 @@ pub(crate) struct StudioShell {
     playing: bool,
     notice: String,
     search_query: String,
+    logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
     scale: f32,
@@ -150,6 +152,7 @@ impl StudioShell {
             game_renderer.studio_overlay_format(),
             RendererOptions::default(),
         );
+        let logo_texture = load_logo_texture(&context);
         Self {
             context,
             state,
@@ -163,6 +166,7 @@ impl StudioShell {
             playing: false,
             notice: "Ready".to_owned(),
             search_query: String::new(),
+            logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
             scale: 1.0,
@@ -268,8 +272,11 @@ impl StudioShell {
             .frame(editor_frame(SURFACE).inner_margin(Margin::symmetric(6, 0)))
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
-                    let logo = ui.allocate_response(Vec2::splat(16.0), Sense::hover());
-                    paint_icon(ui.painter(), logo.rect, Icon::Object, FAINT);
+                    ui.add(
+                        egui::Image::from_texture(&self.logo_texture)
+                            .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                            .sense(Sense::hover()),
+                    );
 
                     ui.menu_button("File", |ui| {
                         ui.set_min_width(220.0);
@@ -846,6 +853,19 @@ fn configure_style(context: &egui::Context) {
 
 fn editor_frame(fill: Color32) -> Frame {
     Frame::NONE.fill(fill).inner_margin(Margin::same(0))
+}
+
+fn load_logo_texture(context: &egui::Context) -> egui::TextureHandle {
+    let image = image::load_from_memory(LOGO_BYTES)
+        .expect("Cubacadabra Studio logo should be a valid image")
+        .to_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    context.load_texture(
+        "cubacadabra-studio-logo",
+        color_image,
+        egui::TextureOptions::LINEAR,
+    )
 }
 
 fn menu_bar_style(style: &mut egui::Style) {
