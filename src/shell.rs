@@ -1,4 +1,5 @@
 use cubacadabra_client::native::Renderer as GameRenderer;
+use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 #[cfg(target_os = "macos")]
 use egui::FontTweak;
 use egui::{
@@ -265,17 +266,25 @@ enum Workspace {
     World,
     Assets,
     Materials,
+    Morphs,
     Test,
 }
 
 impl Workspace {
-    const ALL: [Self; 4] = [Self::World, Self::Assets, Self::Materials, Self::Test];
+    const ALL: [Self; 5] = [
+        Self::World,
+        Self::Assets,
+        Self::Materials,
+        Self::Morphs,
+        Self::Test,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::World => "World",
             Self::Assets => "Assets",
             Self::Materials => "Materials",
+            Self::Morphs => "Morphs",
             Self::Test => "Test",
         }
     }
@@ -285,10 +294,31 @@ impl Workspace {
             Self::World => StudioCommand::ShowWorld,
             Self::Assets => StudioCommand::ShowAssets,
             Self::Materials => StudioCommand::ShowMaterials,
+            Self::Morphs => StudioCommand::ShowMorphs,
             Self::Test => StudioCommand::ShowTest,
         }
     }
 }
+
+const MORPH_LIBRARY_KINDS: [MorphAssetKind; 17] = [
+    MorphAssetKind::Base,
+    MorphAssetKind::Face,
+    MorphAssetKind::Hair,
+    MorphAssetKind::Outfit,
+    MorphAssetKind::Top,
+    MorphAssetKind::Outerwear,
+    MorphAssetKind::Bottom,
+    MorphAssetKind::OnePiece,
+    MorphAssetKind::Footwear,
+    MorphAssetKind::Headwear,
+    MorphAssetKind::Facewear,
+    MorphAssetKind::Accessory,
+    MorphAssetKind::Tail,
+    MorphAssetKind::Wings,
+    MorphAssetKind::Horns,
+    MorphAssetKind::Ears,
+    MorphAssetKind::HeldItem,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StudioCommand {
@@ -301,6 +331,7 @@ pub(crate) enum StudioCommand {
     ShowWorld,
     ShowAssets,
     ShowMaterials,
+    ShowMorphs,
     ShowTest,
 }
 
@@ -322,6 +353,9 @@ pub(crate) struct StudioShell {
     playing: bool,
     notice: String,
     search_query: String,
+    morph_query: String,
+    morph_catalog: MorphCatalog,
+    selected_morph: MorphAssetId,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
@@ -366,6 +400,13 @@ impl StudioShell {
             playing: true,
             notice: "Ready".to_owned(),
             search_query: String::new(),
+            morph_query: String::new(),
+            morph_catalog: parse_catalog(include_str!(
+                "../../rust/assets/characters/morph_catalog.json"
+            ))
+            .expect("bundled morph catalog must be valid"),
+            selected_morph: MorphAssetId::parse("cuba:base/person.v1")
+                .expect("built-in morph ID must be valid"),
             logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
@@ -410,6 +451,7 @@ impl StudioShell {
             StudioCommand::ShowWorld => self.select_workspace(Workspace::World),
             StudioCommand::ShowAssets => self.select_workspace(Workspace::Assets),
             StudioCommand::ShowMaterials => self.select_workspace(Workspace::Materials),
+            StudioCommand::ShowMorphs => self.select_workspace(Workspace::Morphs),
             StudioCommand::ShowTest => self.select_workspace(Workspace::Test),
         }
     }
@@ -493,6 +535,7 @@ impl StudioShell {
             Workspace::World => self.show_world(ui),
             Workspace::Assets => self.show_assets(ui),
             Workspace::Materials => self.show_materials(ui),
+            Workspace::Morphs => self.show_morphs(ui),
             Workspace::Test => self.show_test(ui),
         }
         ui.ctx().request_repaint_after(Duration::from_millis(16));
@@ -775,6 +818,145 @@ impl StudioShell {
                 });
             });
         self.viewport_panel(root, "Daylight", "Material preview");
+    }
+
+    fn show_morphs(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
+        egui::Panel::left("morph_library")
+            .resizable(true)
+            .default_size(236.0)
+            .size_range(200.0..=340.0)
+            .frame(editor_frame(colors.panel))
+            .show(root, |ui| {
+                panel_header(ui, Icon::Character, "Morph library", |ui| {
+                    if icon_button(ui, Icon::Plus, "Create morph", false).clicked() {
+                        self.notice = "Create Morph is not connected yet".to_owned();
+                    }
+                });
+                content_frame().show(ui, |ui| {
+                    search_field(ui, &mut self.morph_query, ui.available_width());
+                    ui.add_space(6.0);
+                    let query = self.morph_query.trim().to_ascii_lowercase();
+                    for kind in MORPH_LIBRARY_KINDS {
+                        let assets = self
+                            .morph_catalog
+                            .assets
+                            .iter()
+                            .filter(|asset| asset.kind == kind)
+                            .filter(|asset| {
+                                query.is_empty()
+                                    || asset.display_name.to_ascii_lowercase().contains(&query)
+                                    || asset.id.as_str().contains(&query)
+                            })
+                            .map(|asset| (asset.id.clone(), asset.display_name.clone()))
+                            .collect::<Vec<_>>();
+                        if assets.is_empty() {
+                            continue;
+                        }
+                        egui::CollapsingHeader::new(
+                            RichText::new(morph_kind_label(kind))
+                                .font(semibold_font(TYPE.secondary))
+                                .color(colors.secondary_text),
+                        )
+                        .default_open(matches!(kind, MorphAssetKind::Base | MorphAssetKind::Hair))
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            for (id, name) in &assets {
+                                if navigation_row(
+                                    ui,
+                                    Icon::Character,
+                                    name,
+                                    self.selected_morph == *id,
+                                )
+                                .clicked()
+                                {
+                                    self.selected_morph = id.clone();
+                                    self.notice = format!("Selected {name}");
+                                }
+                            }
+                        });
+                    }
+                    if self.morph_catalog.assets.iter().all(|asset| {
+                        !query.is_empty()
+                            && !asset.display_name.to_ascii_lowercase().contains(&query)
+                            && !asset.id.as_str().contains(&query)
+                    }) {
+                        ui.label(
+                            RichText::new("No morphs match this search.")
+                                .size(TYPE.secondary)
+                                .color(colors.muted),
+                        );
+                    }
+                });
+            });
+
+        egui::Panel::right("morph_inspector")
+            .resizable(true)
+            .default_size(280.0)
+            .size_range(236.0..=360.0)
+            .frame(editor_frame(colors.panel_raised))
+            .show(root, |ui| {
+                panel_header(ui, Icon::Sliders, "Morph inspector", |ui| {
+                    icon_button(ui, Icon::More, "Morph options", false);
+                });
+                content_frame().show(ui, |ui| {
+                    if let Some(asset) = self.morph_catalog.asset(&self.selected_morph) {
+                        selected_object_header(
+                            ui,
+                            &asset.display_name,
+                            morph_kind_label(asset.kind),
+                        );
+                        ui.add_space(4.0);
+                        property_section(ui, "Identity", |ui| {
+                            let id = asset.id.to_string();
+                            property_row(ui, "ID", &id);
+                            property_row(ui, "Kind", morph_kind_label(asset.kind));
+                            if let Some(rig) = &asset.rig_profile {
+                                let rig = rig.to_string();
+                                property_row(ui, "Rig", &rig);
+                            }
+                        });
+                        property_section(ui, "Compatibility", |ui| {
+                            let fits = asset
+                                .fit_profiles
+                                .iter()
+                                .map(MorphAssetId::as_str)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            property_row(ui, "Fits", &fits);
+                            let bases = asset
+                                .supported_bases
+                                .iter()
+                                .map(MorphAssetId::as_str)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            property_row(
+                                ui,
+                                "Bases",
+                                if bases.is_empty() { "Any" } else { &bases },
+                            );
+                        });
+                        property_section(ui, "Runtime", |ui| {
+                            let capabilities = asset
+                                .required_capabilities
+                                .iter()
+                                .map(|capability| capability.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            property_row(ui, "Needs", &capabilities);
+                            property_row(ui, "LOD", "Near / Mid / Far");
+                        });
+                    } else {
+                        ui.label(
+                            RichText::new("Select a morph to inspect its contract.")
+                                .size(TYPE.secondary)
+                                .color(colors.muted),
+                        );
+                    }
+                });
+            });
+
+        self.viewport_panel(root, "Orbit", "Morph preview");
     }
 
     fn show_test(&mut self, root: &mut egui::Ui) {
@@ -1989,6 +2171,28 @@ fn asset_kind(name: &str) -> (Icon, &'static str) {
         (Icon::Object, "MODEL")
     } else {
         (Icon::Image, "IMAGE")
+    }
+}
+
+fn morph_kind_label(kind: MorphAssetKind) -> &'static str {
+    match kind {
+        MorphAssetKind::Base => "Bases",
+        MorphAssetKind::Face => "Faces",
+        MorphAssetKind::Hair => "Hair",
+        MorphAssetKind::Outfit => "Outfits",
+        MorphAssetKind::Top => "Tops",
+        MorphAssetKind::Outerwear => "Outerwear",
+        MorphAssetKind::Bottom => "Bottoms",
+        MorphAssetKind::OnePiece => "One-piece",
+        MorphAssetKind::Footwear => "Footwear",
+        MorphAssetKind::Headwear => "Headwear",
+        MorphAssetKind::Facewear => "Facewear",
+        MorphAssetKind::Accessory => "Accessories",
+        MorphAssetKind::Tail => "Tails",
+        MorphAssetKind::Wings => "Wings",
+        MorphAssetKind::Horns => "Horns",
+        MorphAssetKind::Ears => "Ears",
+        MorphAssetKind::HeldItem => "Held items",
     }
 }
 

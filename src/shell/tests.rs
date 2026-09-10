@@ -89,6 +89,7 @@ fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
                 "World",
                 "Assets",
                 "Materials",
+                "Morphs",
                 "Test"
             ]
         );
