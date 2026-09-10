@@ -1,8 +1,10 @@
 use crate::morphs::{
     MorphDraftDocument, MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
     build_morph_draft_json, build_source_manifest_json, default_rigid_accessory_asset,
+    fit_rigid_headwear_to_person, morph_mesh_bounds,
 };
 use cubacadabra_client::native::Renderer as GameRenderer;
+use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 #[cfg(target_os = "macos")]
 use egui::FontTweak;
@@ -369,6 +371,9 @@ pub(crate) struct StudioShell {
     morph_source_summary: Option<MorphGlbSourceSummary>,
     morph_draft_asset: Option<cubacadabra_morphs::MorphAssetDefinition>,
     morph_attachment_joint: String,
+    morph_attachment_translation: [f32; 3],
+    morph_attachment_rotation: [f32; 4],
+    morph_attachment_scale: [f32; 3],
     morph_lod_nodes: [String; 3],
     morph_draft_status: Option<(bool, String)>,
     morph_draft_export_requested: bool,
@@ -438,6 +443,9 @@ impl StudioShell {
             morph_source_summary: None,
             morph_draft_asset: None,
             morph_attachment_joint: "head".to_owned(),
+            morph_attachment_translation: [0.0; 3],
+            morph_attachment_rotation: [0.0, 0.0, 0.0, 1.0],
+            morph_attachment_scale: [1.0; 3],
             morph_lod_nodes: [String::new(), String::new(), String::new()],
             morph_draft_status: None,
             morph_draft_export_requested: false,
@@ -496,6 +504,16 @@ impl StudioShell {
         std::mem::take(&mut self.morph_thumbnail_requested)
     }
 
+    fn morph_attachment(&self) -> MorphAttachment {
+        MorphAttachment {
+            mode: MorphAttachmentMode::Rigid,
+            joint: self.morph_attachment_joint.trim().to_owned(),
+            translation: self.morph_attachment_translation,
+            rotation: self.morph_attachment_rotation,
+            scale: self.morph_attachment_scale,
+        }
+    }
+
     pub(crate) fn morph_sidecar_payload(&self) -> Result<(String, String), String> {
         let path = self
             .morph_preview_path
@@ -537,7 +555,7 @@ impl StudioShell {
         let json = build_source_manifest_json(
             asset,
             geometry_file,
-            self.morph_attachment_joint.trim(),
+            self.morph_attachment(),
             lod_nodes,
             triangle_counts,
         )
@@ -621,7 +639,7 @@ impl StudioShell {
         let json = build_morph_draft_json(
             asset,
             geometry_file,
-            self.morph_attachment_joint.trim(),
+            self.morph_attachment(),
             lod_nodes,
             triangle_counts,
         )?;
@@ -749,6 +767,9 @@ impl StudioShell {
         self.morph_lod_previews = [None, None, None];
         self.morph_preview_lod = None;
         self.morph_attachment_joint = "head".to_owned();
+        self.morph_attachment_translation = [0.0; 3];
+        self.morph_attachment_rotation = [0.0, 0.0, 0.0, 1.0];
+        self.morph_attachment_scale = [1.0; 3];
         self.morph_lod_nodes = ["near", "mid", "far"].map(|level| {
             summary
                 .lod_candidates
@@ -794,7 +815,7 @@ impl StudioShell {
         preview: MorphGlbPreviewMesh,
         summary: MorphGlbSourceSummary,
     ) {
-        let attachment_joint = manifest.attachment.joint.clone();
+        let attachment = manifest.attachment.clone();
         let lod_nodes = ["near", "mid", "far"].map(|level| {
             manifest
                 .geometry
@@ -805,7 +826,10 @@ impl StudioShell {
         });
         self.set_morph_preview(glb_path, preview, summary);
         self.morph_draft_asset = Some(manifest.asset);
-        self.morph_attachment_joint = attachment_joint;
+        self.morph_attachment_joint = attachment.joint;
+        self.morph_attachment_translation = attachment.translation;
+        self.morph_attachment_rotation = attachment.rotation;
+        self.morph_attachment_scale = attachment.scale;
         self.morph_lod_nodes = lod_nodes;
         self.morph_draft_status = Some((
             true,
@@ -823,7 +847,10 @@ impl StudioShell {
     ) {
         self.set_morph_preview(glb_path, preview, summary);
         self.morph_draft_asset = Some(draft.asset);
-        self.morph_attachment_joint = draft.attachment_joint;
+        self.morph_attachment_joint = draft.attachment.joint;
+        self.morph_attachment_translation = draft.attachment.translation;
+        self.morph_attachment_rotation = draft.attachment.rotation;
+        self.morph_attachment_scale = draft.attachment.scale;
         self.morph_lod_nodes = draft.lod_nodes;
         self.validate_morph_draft();
         self.notice = "Morph draft reimported".to_owned();
@@ -846,6 +873,48 @@ impl StudioShell {
         let joint = self.morph_attachment_joint.trim();
         if joint.is_empty() || joint.contains('/') || joint.contains('\\') {
             issues.push("Attachment joint must be a non-empty joint name.".to_owned());
+        }
+        if !self
+            .morph_attachment_translation
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= 10.0)
+        {
+            issues.push("Attachment offset must stay within +/-10 units.".to_owned());
+        }
+        if !self
+            .morph_attachment_scale
+            .iter()
+            .all(|value| value.is_finite() && (0.01..=100.0).contains(value))
+        {
+            issues.push("Attachment scale must stay within 0.01–100.".to_owned());
+        }
+        let rotation_length = self
+            .morph_attachment_rotation
+            .iter()
+            .map(|value| value * value)
+            .sum::<f32>()
+            .sqrt();
+        if !rotation_length.is_finite() || !(0.99..=1.01).contains(&rotation_length) {
+            issues.push("Attachment rotation must be a normalized quaternion.".to_owned());
+        }
+        if self
+            .morph_draft_asset
+            .as_ref()
+            .is_some_and(|asset| asset.kind == MorphAssetKind::Headwear)
+            && let Some(mesh) = self
+                .morph_lod_previews
+                .first()
+                .and_then(Option::as_ref)
+                .or(self.morph_preview.as_ref())
+            && let Some((minimum, maximum)) = morph_mesh_bounds(mesh)
+        {
+            let runtime_width = ((maximum[0] - minimum[0]) * self.morph_attachment_scale[0].abs())
+                .max((maximum[2] - minimum[2]) * self.morph_attachment_scale[2].abs());
+            if !(0.25..=2.20).contains(&runtime_width) {
+                issues.push(format!(
+                    "Headwear runtime width is {runtime_width:.2} units; use Fit to person head or adjust attachment scale."
+                ));
+            }
         }
         for (index, level) in ["Near", "Mid", "Far"].into_iter().enumerate() {
             let node = self.morph_lod_nodes[index].trim();
@@ -874,6 +943,37 @@ impl StudioShell {
         } else {
             self.morph_draft_status = Some((false, issues.join(" ")));
             self.notice = "Draft mapping needs attention".to_owned();
+        }
+    }
+
+    fn fit_current_morph_to_person(&mut self) {
+        let result = self
+            .morph_lod_previews
+            .first()
+            .and_then(Option::as_ref)
+            .or(self.morph_preview.as_ref())
+            .ok_or_else(|| "Import a headwear mesh before fitting it.".to_owned())
+            .and_then(|mesh| {
+                fit_rigid_headwear_to_person(mesh, self.morph_attachment_joint.trim())
+            });
+        match result {
+            Ok(attachment) => {
+                self.morph_attachment_translation = attachment.translation;
+                self.morph_attachment_rotation = attachment.rotation;
+                self.morph_attachment_scale = attachment.scale;
+                self.morph_draft_status = Some((
+                    true,
+                    format!(
+                        "Fit to person head at {:.3}× scale. Validate and republish the pack.",
+                        attachment.scale[0]
+                    ),
+                ));
+                self.notice = "Headwear attachment fitted".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
         }
     }
 
@@ -1378,6 +1478,29 @@ impl StudioShell {
                                     "Triangles",
                                     &(preview.indices.len() / 3).to_string(),
                                 );
+                                if let Some((minimum, maximum)) = morph_mesh_bounds(preview) {
+                                    let size: [f32; 3] = std::array::from_fn(|axis| {
+                                        maximum[axis] - minimum[axis]
+                                    });
+                                    property_row(
+                                        ui,
+                                        "Source size",
+                                        &format!(
+                                            "{:.2} × {:.2} × {:.2}",
+                                            size[0], size[1], size[2]
+                                        ),
+                                    );
+                                    property_row(
+                                        ui,
+                                        "Runtime size",
+                                        &format!(
+                                            "{:.2} × {:.2} × {:.2}",
+                                            size[0] * self.morph_attachment_scale[0],
+                                            size[1] * self.morph_attachment_scale[1],
+                                            size[2] * self.morph_attachment_scale[2]
+                                        ),
+                                    );
+                                }
                             }
                             if let Some(asset) = &self.morph_draft_asset {
                                 property_row(ui, "Draft", &asset.display_name);
@@ -1426,6 +1549,45 @@ impl StudioShell {
                                         .hint_text("head")
                                         .desired_width(ui.available_width()),
                                 );
+                                ui.label(
+                                    RichText::new("Attachment offset X / Y / Z")
+                                        .size(TYPE.meta)
+                                        .color(colors.secondary_text),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    for (axis, value) in
+                                        self.morph_attachment_translation.iter_mut().enumerate()
+                                    {
+                                        ui.add(
+                                            egui::DragValue::new(value)
+                                                .speed(0.01)
+                                                .range(-10.0..=10.0)
+                                                .prefix(["X ", "Y ", "Z "][axis]),
+                                        );
+                                    }
+                                });
+                                ui.label(
+                                    RichText::new("Attachment scale X / Y / Z")
+                                        .size(TYPE.meta)
+                                        .color(colors.secondary_text),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    for (axis, value) in
+                                        self.morph_attachment_scale.iter_mut().enumerate()
+                                    {
+                                        ui.add(
+                                            egui::DragValue::new(value)
+                                                .speed(0.01)
+                                                .range(0.01..=100.0)
+                                                .prefix(["X ", "Y ", "Z "][axis]),
+                                        );
+                                    }
+                                });
+                                if ui.button("Fit to person head").clicked() {
+                                    self.fit_current_morph_to_person();
+                                }
                                 for (index, level) in ["Near", "Mid", "Far"].into_iter().enumerate()
                                 {
                                     ui.label(
@@ -1651,14 +1813,27 @@ impl StudioShell {
                 }
 
                 if let Some(preview) = &self.morph_preview {
-                    paint_morph_surface(ui, preview_rect, preview, colors.accent);
+                    let attachment = self.morph_attachment();
+                    paint_morph_head_reference(ui, preview_rect, preview, &attachment, colors);
+                    paint_morph_surface(ui, preview_rect, preview, &attachment, colors.accent);
                     if self.morph_wireframe {
-                        paint_morph_wireframe(ui, preview_rect, preview, colors.accent);
+                        paint_morph_wireframe(
+                            ui,
+                            preview_rect,
+                            preview,
+                            &attachment,
+                            colors.accent,
+                        );
                     }
                     ui.painter().text(
                         preview_rect.left_top() + egui::vec2(10.0, 10.0),
                         Align2::LEFT_TOP,
-                        format!("{} · {} vertices", preview.name, preview.vertices.len()),
+                        format!(
+                            "{} · {} vertices · {:.3}× attachment",
+                            preview.name,
+                            preview.vertices.len(),
+                            attachment.scale[0]
+                        ),
                         FontId::proportional(TYPE.meta),
                         colors.secondary_text,
                     );
@@ -1964,16 +2139,70 @@ impl StudioShell {
     }
 }
 
+#[derive(Clone, Copy)]
+struct MorphPreviewProjection {
+    rect: Rect,
+    center: [f32; 3],
+    pixels_per_unit: f32,
+    translation: [f32; 3],
+    rotation: [f32; 4],
+    scale: [f32; 3],
+}
+
+impl MorphPreviewProjection {
+    fn project_world(self, vertex: [f32; 3]) -> egui::Pos2 {
+        egui::pos2(
+            self.rect.center().x
+                + (vertex[0] - self.center[0]) * self.pixels_per_unit
+                + (vertex[2] - self.center[2]) * self.pixels_per_unit * 0.12,
+            self.rect.center().y - (vertex[1] - self.center[1]) * self.pixels_per_unit
+                + (vertex[2] - self.center[2]) * self.pixels_per_unit * 0.06,
+        )
+    }
+
+    fn transform_mesh(self, vertex: [f32; 3]) -> [f32; 3] {
+        let scaled = [
+            vertex[0] * self.scale[0],
+            vertex[1] * self.scale[1],
+            vertex[2] * self.scale[2],
+        ];
+        let [qx, qy, qz, qw] = self.rotation;
+        let q = [qx, qy, qz];
+        let twice_cross = cross3(q, scaled).map(|value| value * 2.0);
+        let rotated = add3(
+            scaled,
+            add3(twice_cross.map(|value| value * qw), cross3(q, twice_cross)),
+        );
+        add3(rotated, self.translation)
+    }
+
+    fn project_mesh(self, vertex: [f32; 3]) -> egui::Pos2 {
+        self.project_world(self.transform_mesh(vertex))
+    }
+}
+
 fn morph_preview_projection(
     rect: Rect,
     mesh: &MorphGlbPreviewMesh,
-) -> Option<(impl Fn([f32; 3]) -> egui::Pos2, f32)> {
+    attachment: &MorphAttachment,
+) -> Option<MorphPreviewProjection> {
     if mesh.vertices.is_empty() {
         return None;
     }
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
+    // Keep the standard person head in frame so attachment scale is visible
+    // instead of being hidden by an isolated auto-fit preview.
+    let mut min: [f32; 3] = [-0.55, -0.46, -0.39];
+    let mut max: [f32; 3] = [0.55, 0.46, 0.39];
+    let projection = MorphPreviewProjection {
+        rect,
+        center: [0.0; 3],
+        pixels_per_unit: 1.0,
+        translation: attachment.translation,
+        rotation: attachment.rotation,
+        scale: attachment.scale,
+    };
     for vertex in &mesh.vertices {
+        let vertex = projection.transform_mesh(*vertex);
         for axis in 0..3 {
             min[axis] = min[axis].min(vertex[axis]);
             max[axis] = max[axis].max(vertex[axis]);
@@ -1983,31 +2212,53 @@ fn morph_preview_projection(
         .max(max[1] - min[1])
         .max(max[2] - min[2])
         .max(0.0001);
-    let scale = (rect.width().min(rect.height()) * 0.78) / span;
+    let pixels_per_unit = (rect.width().min(rect.height()) * 0.78) / span;
     let center = [
         (min[0] + max[0]) * 0.5,
         (min[1] + max[1]) * 0.5,
         (min[2] + max[2]) * 0.5,
     ];
-    let project = move |vertex: [f32; 3]| {
-        // A small depth offset keeps front and back surfaces legible while
-        // preserving the model's useful front-facing silhouette.
-        egui::pos2(
-            rect.center().x
-                + (vertex[0] - center[0]) * scale
-                + (vertex[2] - center[2]) * scale * 0.12,
-            rect.center().y - (vertex[1] - center[1]) * scale
-                + (vertex[2] - center[2]) * scale * 0.06,
-        )
-    };
-    Some((project, scale))
+    Some(MorphPreviewProjection {
+        center,
+        pixels_per_unit,
+        ..projection
+    })
 }
 
-fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
+fn paint_morph_head_reference(
+    ui: &egui::Ui,
+    rect: Rect,
+    mesh: &MorphGlbPreviewMesh,
+    attachment: &MorphAttachment,
+    colors: Palette,
+) {
+    let Some(projection) = morph_preview_projection(rect, mesh, attachment) else {
+        return;
+    };
+    let minimum = projection.project_world([-0.55, 0.46, 0.0]);
+    let maximum = projection.project_world([0.55, -0.46, 0.0]);
+    let head = Rect::from_min_max(minimum, maximum);
+    ui.painter()
+        .rect_filled(head, 18.0, colors.secondary_text.linear_multiply(0.16));
+    ui.painter().rect_stroke(
+        head,
+        18.0,
+        Stroke::new(1.0, colors.secondary_text.linear_multiply(0.45)),
+        StrokeKind::Inside,
+    );
+}
+
+fn paint_morph_surface(
+    ui: &egui::Ui,
+    rect: Rect,
+    mesh: &MorphGlbPreviewMesh,
+    attachment: &MorphAttachment,
+    color: Color32,
+) {
     if mesh.indices.len() < 3 {
         return;
     }
-    let Some((project, _scale)) = morph_preview_projection(rect, mesh) else {
+    let Some(projection) = morph_preview_projection(rect, mesh, attachment) else {
         return;
     };
     let light = normalize3([0.35, 0.75, 0.65]);
@@ -2032,7 +2283,14 @@ fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, co
         let Some(c) = mesh.vertices.get(triangle[2] as usize).copied() else {
             continue;
         };
-        let points = [project(a), project(b), project(c)];
+        let a = projection.transform_mesh(a);
+        let b = projection.transform_mesh(b);
+        let c = projection.transform_mesh(c);
+        let points = [
+            projection.project_world(a),
+            projection.project_world(b),
+            projection.project_world(c),
+        ];
         // Low-detail exports can contain faces that are valid in 3D but
         // collapse to a sub-pixel sliver in this fixed front preview. egui's
         // polygon fill turns those into distracting bars, so leave them to
@@ -2067,11 +2325,17 @@ fn projected_triangle_area(points: [egui::Pos2; 3]) -> f32 {
         * 0.5
 }
 
-fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
+fn paint_morph_wireframe(
+    ui: &egui::Ui,
+    rect: Rect,
+    mesh: &MorphGlbPreviewMesh,
+    attachment: &MorphAttachment,
+    color: Color32,
+) {
     if mesh.vertices.is_empty() || mesh.indices.len() < 3 {
         return;
     }
-    let Some((project, _scale)) = morph_preview_projection(rect, mesh) else {
+    let Some(projection) = morph_preview_projection(rect, mesh, attachment) else {
         return;
     };
     let stroke = Stroke::new(1.0, color);
@@ -2089,7 +2353,11 @@ fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, 
         let Some(c) = mesh.vertices.get(triangle[2] as usize).copied() else {
             continue;
         };
-        let points = [project(a), project(b), project(c)];
+        let points = [
+            projection.project_mesh(a),
+            projection.project_mesh(b),
+            projection.project_mesh(c),
+        ];
         ui.painter().line_segment([points[0], points[1]], stroke);
         ui.painter().line_segment([points[1], points[2]], stroke);
         ui.painter().line_segment([points[2], points[0]], stroke);
@@ -2101,6 +2369,14 @@ fn sub3(first: [f32; 3], second: [f32; 3]) -> [f32; 3] {
         first[0] - second[0],
         first[1] - second[1],
         first[2] - second[2],
+    ]
+}
+
+fn add3(first: [f32; 3], second: [f32; 3]) -> [f32; 3] {
+    [
+        first[0] + second[0],
+        first[1] + second[1],
+        first[2] + second[2],
     ]
 }
 

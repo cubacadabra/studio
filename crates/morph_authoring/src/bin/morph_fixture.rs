@@ -137,7 +137,7 @@ fn box_indices(offset: u16) -> Vec<u16> {
 }
 
 fn align4(bytes: &mut Vec<u8>, fill: u8) {
-    while bytes.len() % 4 != 0 {
+    while !bytes.len().is_multiple_of(4) {
         bytes.push(fill);
     }
 }

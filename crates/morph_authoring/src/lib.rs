@@ -256,7 +256,10 @@ pub fn inspect_glb_bytes(
         let node_name = manifest.geometry.lod_nodes[level].as_str();
         let matching_nodes = nodes
             .iter()
-            .filter(|node| node.get("name").and_then(serde_json::Value::as_str) == Some(node_name))
+            .enumerate()
+            .filter(|(_, node)| {
+                node.get("name").and_then(serde_json::Value::as_str) == Some(node_name)
+            })
             .collect::<Vec<_>>();
         if matching_nodes.len() != 1 {
             diagnostics.push(error(
@@ -266,7 +269,15 @@ pub fn inspect_glb_bytes(
             ));
             continue;
         }
-        let node = matching_nodes[0];
+        let (node_index, node) = matching_nodes[0];
+        if !node_hierarchy_transform_is_applied(nodes, node_index) {
+            diagnostics.push(error(
+                "MORPH_GLB_UNAPPLIED_NODE_TRANSFORM",
+                &format!("geometry.lodNodes.{level}"),
+                "LOD node and parent transforms must be identity; apply Location, Rotation, and Scale in Blender before export",
+            ));
+            continue;
+        }
         let Some(mesh_index) = node.get("mesh").and_then(serde_json::Value::as_u64) else {
             diagnostics.push(error(
                 "MORPH_GLB_LOD_NODE_MISSING_MESH",
@@ -299,6 +310,14 @@ pub fn inspect_glb_bytes(
             ));
             continue;
         };
+        if primitives.len() != 1 {
+            diagnostics.push(error(
+                "MORPH_GLB_LOD_PRIMITIVE_COUNT",
+                &format!("geometry.lodNodes.{level}"),
+                "rigid LOD meshes must contain exactly one triangle-list primitive",
+            ));
+            continue;
+        }
         let mut triangle_count = 0u32;
         let mut valid = true;
         for (primitive_index, primitive) in primitives.iter().enumerate() {
@@ -306,6 +325,15 @@ pub fn inspect_glb_bytes(
                 .get("mode")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(4);
+            if mode != 4 {
+                diagnostics.push(error(
+                    "MORPH_GLB_UNSUPPORTED_PRIMITIVE_MODE",
+                    &format!("geometry.lodNodes.{level}.primitives[{primitive_index}].mode"),
+                    "compiled rigid LODs must use a triangle list; triangulate the mesh before export",
+                ));
+                valid = false;
+                continue;
+            }
             let count = primitive
                 .get("indices")
                 .and_then(serde_json::Value::as_u64)
@@ -332,15 +360,16 @@ pub fn inspect_glb_bytes(
                 valid = false;
                 continue;
             };
-            let Some(triangles) = triangle_count_for_mode(mode, count) else {
+            if count % 3 != 0 {
                 diagnostics.push(error(
-                    "MORPH_GLB_UNSUPPORTED_PRIMITIVE_MODE",
-                    &format!("geometry.lodNodes.{level}.primitives[{primitive_index}].mode"),
-                    "only triangles, triangle strips, and triangle fans are supported",
+                    "MORPH_GLB_INVALID_TRIANGLE_LIST",
+                    &format!("geometry.lodNodes.{level}.primitives[{primitive_index}]"),
+                    "triangle-list index or vertex count must be divisible by three",
                 ));
                 valid = false;
                 continue;
-            };
+            }
+            let triangles = count / 3;
             let Ok(triangles) = u32::try_from(triangles) else {
                 diagnostics.push(error(
                     "MORPH_GLB_TRIANGLE_COUNT_OVERFLOW",
@@ -1073,6 +1102,90 @@ fn read_index(bytes: &[u8], start: usize, component_type: u64) -> Option<u32> {
     }
 }
 
+fn node_transform_is_applied(node: &serde_json::Value) -> bool {
+    const EPSILON: f64 = 0.0001;
+    let values = |field: &str| {
+        node.get(field).map(|value| {
+            value
+                .as_array()
+                .and_then(|values| {
+                    values
+                        .iter()
+                        .map(serde_json::Value::as_f64)
+                        .collect::<Option<Vec<_>>>()
+                })
+                .filter(|values| values.iter().all(|value| value.is_finite()))
+        })
+    };
+    let translation = values("translation").is_none_or(|values| {
+        values.is_some_and(|values| {
+            values.len() == 3 && values.iter().all(|value| value.abs() <= EPSILON)
+        })
+    });
+    let scale = values("scale").is_none_or(|values| {
+        values.is_some_and(|values| {
+            values.len() == 3 && values.iter().all(|value| (value - 1.0).abs() <= EPSILON)
+        })
+    });
+    let rotation = values("rotation").is_none_or(|values| {
+        values.is_some_and(|values| {
+            values.len() == 4
+                && values[..3].iter().all(|value| value.abs() <= EPSILON)
+                && (values[3].abs() - 1.0).abs() <= EPSILON
+        })
+    });
+    let matrix = values("matrix").is_none_or(|values| {
+        values.is_some_and(|values| {
+            let identity = [
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ];
+            values.len() == identity.len()
+                && values
+                    .iter()
+                    .zip(identity)
+                    .all(|(value, expected)| (value - expected).abs() <= EPSILON)
+        })
+    });
+    translation && rotation && scale && matrix
+}
+
+fn node_hierarchy_transform_is_applied(nodes: &[serde_json::Value], node_index: usize) -> bool {
+    let mut current = node_index;
+    let mut visited = BTreeSet::new();
+    loop {
+        if !visited.insert(current) {
+            return false;
+        }
+        let Some(node) = nodes.get(current) else {
+            return false;
+        };
+        if !node_transform_is_applied(node) {
+            return false;
+        }
+        let parents = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| {
+                candidate
+                    .get("children")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|children| {
+                        children.iter().any(|child| {
+                            child.as_u64().and_then(|child| usize::try_from(child).ok())
+                                == Some(current)
+                        })
+                    })
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        match parents.as_slice() {
+            [] => return true,
+            [parent] => current = *parent,
+            _ => return false,
+        }
+    }
+}
+
 fn triangle_count_for_mode(mode: u64, count: u64) -> Option<u64> {
     match mode {
         4 => Some(count / 3),
@@ -1401,6 +1514,31 @@ mod tests {
                 scale: [1.0; 3],
             },
         }
+    }
+
+    #[test]
+    fn publish_requires_applied_blender_node_transforms() {
+        assert!(node_transform_is_applied(
+            &json!({"translation": [0.0, 0.0, 0.00001]})
+        ));
+        assert!(!node_transform_is_applied(
+            &json!({"scale": [2.0, 2.0, 2.0]})
+        ));
+        assert!(!node_transform_is_applied(
+            &json!({"rotation": [0.0, 0.2, 0.0, 0.98]})
+        ));
+        assert!(!node_transform_is_applied(&json!({"matrix": [1.0, 0.0]})));
+        assert!(node_hierarchy_transform_is_applied(
+            &[json!({"children": [1]}), json!({})],
+            1
+        ));
+        assert!(!node_hierarchy_transform_is_applied(
+            &[
+                json!({"scale": [2.0, 2.0, 2.0], "children": [1]}),
+                json!({})
+            ],
+            1
+        ));
     }
 
     #[test]

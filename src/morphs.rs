@@ -26,9 +26,14 @@ pub(crate) const MORPH_DRAFT_SCHEMA_VERSION: u16 = 1;
 pub(crate) struct MorphDraftDocument {
     pub(crate) asset: MorphAssetDefinition,
     pub(crate) geometry_file: String,
-    pub(crate) attachment_joint: String,
+    pub(crate) attachment: MorphAttachment,
     pub(crate) lod_nodes: [String; 3],
 }
+
+const PERSON_HEAD_WIDTH: f32 = 1.10;
+const PERSON_HEAD_HEIGHT: f32 = 0.92;
+const HEADWEAR_BRIM_WIDTH: f32 = PERSON_HEAD_WIDTH * 1.23;
+const HEADWEAR_CONTACT_Y: f32 = PERSON_HEAD_HEIGHT * 0.5 - 0.04;
 
 #[allow(dead_code)]
 pub(crate) fn inspect_catalog(source: &str) -> Result<MorphCatalog, Vec<MorphDiagnostic>> {
@@ -240,7 +245,7 @@ fn normalize3(value: [f32; 3]) -> [f32; 3] {
 pub(crate) fn build_source_manifest_json(
     asset: &MorphAssetDefinition,
     geometry_file: String,
-    attachment_joint: &str,
+    attachment: MorphAttachment,
     lod_nodes: [&str; 3],
     triangle_counts: [u32; 3],
 ) -> Result<String, Vec<MorphDiagnostic>> {
@@ -270,13 +275,7 @@ pub(crate) fn build_source_manifest_json(
         schema_version: cubacadabra_morph_authoring::MORPH_SOURCE_SCHEMA_VERSION,
         asset,
         geometry,
-        attachment: MorphAttachment {
-            mode: MorphAttachmentMode::Rigid,
-            joint: attachment_joint.to_owned(),
-            translation: [0.0; 3],
-            rotation: [0.0, 0.0, 0.0, 1.0],
-            scale: [1.0; 3],
-        },
+        attachment,
     };
     let diagnostics = manifest.validate();
     if !diagnostics.is_empty() {
@@ -298,7 +297,7 @@ pub(crate) fn build_source_manifest_json(
 pub(crate) fn build_morph_draft_json(
     asset: &MorphAssetDefinition,
     geometry_file: String,
-    attachment_joint: &str,
+    attachment: MorphAttachment,
     lod_nodes: [&str; 3],
     triangle_counts: [u32; 3],
 ) -> Result<String, String> {
@@ -326,10 +325,10 @@ pub(crate) fn build_morph_draft_json(
         },
         "attachment": {
             "mode": "rigid",
-            "joint": attachment_joint,
-            "translation": [0.0, 0.0, 0.0],
-            "rotation": [0.0, 0.0, 0.0, 1.0],
-            "scale": [1.0, 1.0, 1.0]
+            "joint": attachment.joint,
+            "translation": attachment.translation,
+            "rotation": attachment.rotation,
+            "scale": attachment.scale
         }
     }))
     .map_err(|error| format!("could not serialize morph draft: {error}"))
@@ -386,17 +385,63 @@ pub(crate) fn parse_morph_draft_json(source: &str) -> Result<MorphDraftDocument,
             .unwrap_or_default()
             .to_owned()
     });
-    let attachment_joint = root
+    let attachment: MorphAttachment = root
         .get("attachment")
-        .and_then(|attachment| attachment.get("joint"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+        .cloned()
+        .ok_or_else(|| "draft is missing attachment metadata.".to_owned())
+        .and_then(|value| {
+            serde_json::from_value(value)
+                .map_err(|error| format!("draft attachment metadata is invalid: {error}"))
+        })?;
     Ok(MorphDraftDocument {
         asset,
         geometry_file,
-        attachment_joint,
+        attachment,
         lod_nodes,
+    })
+}
+
+pub(crate) fn morph_mesh_bounds(mesh: &MorphGlbPreviewMesh) -> Option<([f32; 3], [f32; 3])> {
+    let mut minimum = [f32::INFINITY; 3];
+    let mut maximum = [f32::NEG_INFINITY; 3];
+    for vertex in &mesh.vertices {
+        if !vertex.iter().all(|value| value.is_finite()) {
+            return None;
+        }
+        for axis in 0..3 {
+            minimum[axis] = minimum[axis].min(vertex[axis]);
+            maximum[axis] = maximum[axis].max(vertex[axis]);
+        }
+    }
+    (!mesh.vertices.is_empty()).then_some((minimum, maximum))
+}
+
+/// Calibrate a rigid headwear mesh against the standard person head. The
+/// source geometry remains untouched; the resulting joint-local transform is
+/// persisted in the sidecar and compiled pack.
+pub(crate) fn fit_rigid_headwear_to_person(
+    mesh: &MorphGlbPreviewMesh,
+    joint: &str,
+) -> Result<MorphAttachment, String> {
+    let (minimum, maximum) = morph_mesh_bounds(mesh)
+        .ok_or_else(|| "The preview mesh has no finite bounds to fit.".to_owned())?;
+    let horizontal_span = (maximum[0] - minimum[0]).max(maximum[2] - minimum[2]);
+    if !horizontal_span.is_finite() || horizontal_span <= 0.0001 {
+        return Err("The preview mesh needs non-zero horizontal size to fit.".to_owned());
+    }
+    let scale = (HEADWEAR_BRIM_WIDTH / horizontal_span).clamp(0.01, 100.0);
+    let center_x = (minimum[0] + maximum[0]) * 0.5;
+    let center_z = (minimum[2] + maximum[2]) * 0.5;
+    Ok(MorphAttachment {
+        mode: MorphAttachmentMode::Rigid,
+        joint: joint.trim().to_owned(),
+        translation: [
+            -center_x * scale,
+            HEADWEAR_CONTACT_Y - minimum[1] * scale,
+            -center_z * scale,
+        ],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        scale: [scale; 3],
     })
 }
 
@@ -502,6 +547,16 @@ mod tests {
     const COMPATIBILITY_CATALOG: &str =
         include_str!("../../rust/assets/characters/morph_catalog.json");
 
+    fn identity_head_attachment() -> MorphAttachment {
+        MorphAttachment {
+            mode: MorphAttachmentMode::Rigid,
+            joint: "head".to_owned(),
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        }
+    }
+
     #[test]
     fn studio_can_inspect_the_shared_catalog_without_engine_internals() {
         let catalog = inspect_catalog(COMPATIBILITY_CATALOG).expect("compatibility catalog");
@@ -540,10 +595,13 @@ mod tests {
         let catalog = inspect_catalog(COMPATIBILITY_CATALOG).expect("compatibility catalog");
         let asset_id = MorphAssetId::parse("cuba:hair/swept.v1").unwrap();
         let asset = catalog.asset(&asset_id).expect("catalog hair asset");
+        let mut attachment = identity_head_attachment();
+        attachment.translation = [0.0, 0.657, 0.0];
+        attachment.scale = [0.451; 3];
         let source = build_source_manifest_json(
             asset,
             "test_top_hat.glb".to_owned(),
-            "head",
+            attachment,
             ["Near", "Mid", "Far"],
             [248, 124, 48],
         )
@@ -555,6 +613,8 @@ mod tests {
         assert_eq!(manifest.asset.lod.mid, 124);
         assert_eq!(manifest.asset.lod.far, 48);
         assert_eq!(manifest.attachment.joint, "head");
+        assert_eq!(manifest.attachment.translation, [0.0, 0.657, 0.0]);
+        assert_eq!(manifest.attachment.scale, [0.451; 3]);
     }
 
     #[test]
@@ -563,7 +623,7 @@ mod tests {
         let source = build_morph_draft_json(
             &asset,
             "test_top_hat.glb".to_owned(),
-            "head",
+            identity_head_attachment(),
             ["", "", ""],
             [0, 0, 0],
         )
@@ -577,10 +637,13 @@ mod tests {
     #[test]
     fn studio_can_reopen_an_incomplete_morph_draft() {
         let asset = default_rigid_accessory_asset("test_top_hat.glb", 248);
+        let mut attachment = identity_head_attachment();
+        attachment.translation = [0.1, 0.6, -0.2];
+        attachment.scale = [0.45; 3];
         let source = build_morph_draft_json(
             &asset,
             "test_top_hat.glb".to_owned(),
-            "head",
+            attachment.clone(),
             ["", "", ""],
             [0, 0, 0],
         )
@@ -588,7 +651,8 @@ mod tests {
         let draft = parse_morph_draft_json(&source).expect("draft should parse");
         assert_eq!(draft.asset.id, asset.id);
         assert_eq!(draft.geometry_file, "test_top_hat.glb");
-        assert_eq!(draft.attachment_joint, "head");
+        assert_eq!(draft.attachment.joint, "head");
+        assert_eq!(draft.attachment, attachment);
         assert_eq!(
             draft.lod_nodes,
             [String::new(), String::new(), String::new()]
@@ -601,6 +665,22 @@ mod tests {
         assert_eq!(asset.id.as_str(), "cuba:headwear/test-top-hat.v1");
         assert_eq!(asset.display_name, "Test Top Hat");
         assert!(asset.validate().is_empty());
+    }
+
+    #[test]
+    fn studio_fits_headwear_bounds_to_the_person_head_contract() {
+        let preview = MorphGlbPreviewMesh {
+            name: "oversized hat".to_owned(),
+            vertices: vec![[-1.5, -0.525, -1.5], [1.5, 1.945, 1.5]],
+            indices: vec![0, 1, 1],
+            base_color: None,
+        };
+        let attachment = fit_rigid_headwear_to_person(&preview, "head").unwrap();
+        assert!((attachment.scale[0] - 0.451).abs() < 0.002);
+        assert_eq!(attachment.scale, [attachment.scale[0]; 3]);
+        let fitted_bottom =
+            preview.vertices[0][1] * attachment.scale[1] + attachment.translation[1];
+        assert!((fitted_bottom - HEADWEAR_CONTACT_Y).abs() < 1e-5);
     }
 
     #[test]
