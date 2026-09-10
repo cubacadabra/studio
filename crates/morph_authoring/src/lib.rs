@@ -79,6 +79,7 @@ pub struct MorphGlbPreviewMesh {
     pub name: String,
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    pub base_color: Option<[f32; 4]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -555,6 +556,16 @@ pub fn inspect_glb_source(bytes: &[u8]) -> Result<MorphGlbSourceSummary, Vec<Mor
 /// it bounded, and the result is CPU-owned data that can later be replaced by
 /// the compiled `.morphpack` path.
 pub fn decode_glb_preview(bytes: &[u8]) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
+    decode_glb_preview_node(bytes, None)
+}
+
+/// Decode the first primitive from a named node's mesh for the Studio LOD
+/// preview. Passing `None` preserves the original first-mesh behavior used by
+/// raw imports without authored LOD mappings.
+pub fn decode_glb_preview_node(
+    bytes: &[u8],
+    node_name: Option<&str>,
+) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
     if bytes.len() > MAX_SOURCE_GLB_BYTES {
         return Err(vec![error(
             "MORPH_GLB_TOO_LARGE",
@@ -580,11 +591,34 @@ pub fn decode_glb_preview(bytes: &[u8]) -> Result<MorphGlbPreviewMesh, Vec<Morph
                 "GLB JSON must contain a meshes array",
             )]
         })?;
-    let mesh = meshes.first().ok_or_else(|| {
+    let mesh_index = if let Some(node_name) = node_name {
+        document
+            .get("nodes")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|nodes| {
+                nodes.iter().find_map(|node| {
+                    (node.get("name").and_then(serde_json::Value::as_str) == Some(node_name))
+                        .then(|| node.get("mesh"))
+                        .flatten()
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|index| usize::try_from(index).ok())
+                })
+            })
+            .ok_or_else(|| {
+                vec![error(
+                    "MORPH_GLB_PREVIEW_NODE_NOT_FOUND",
+                    "nodes",
+                    format!("preview node {node_name:?} is missing or has no mesh"),
+                )]
+            })?
+    } else {
+        0
+    };
+    let mesh = meshes.get(mesh_index).ok_or_else(|| {
         vec![error(
-            "MORPH_GLB_MISSING_MESHES",
-            "meshes",
-            "GLB must contain at least one mesh",
+            "MORPH_GLB_INVALID_MESH_INDEX",
+            "nodes",
+            format!("preview node references missing mesh {mesh_index}"),
         )]
     })?;
     let mesh_name = mesh
@@ -603,6 +637,24 @@ pub fn decode_glb_preview(bytes: &[u8]) -> Result<MorphGlbPreviewMesh, Vec<Morph
                 "mesh must contain a primitive",
             )]
         })?;
+    let base_color = primitive
+        .get("material")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .and_then(|index| document.get("materials")?.as_array()?.get(index))
+        .and_then(|material| material.get("pbrMetallicRoughness"))
+        .and_then(|pbr| pbr.get("baseColorFactor"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|values| {
+            let values = values
+                .iter()
+                .map(serde_json::Value::as_f64)
+                .collect::<Option<Vec<_>>>()?;
+            (values.len() == 4
+                && values.iter().all(|value| value.is_finite())
+                && values.iter().all(|value| (0.0..=1.0).contains(value)))
+            .then(|| [values[0] as f32, values[1] as f32, values[2] as f32, values[3] as f32])
+        });
     let position_accessor = primitive
         .get("attributes")
         .and_then(|attributes| attributes.get("POSITION"))
@@ -686,6 +738,7 @@ pub fn decode_glb_preview(bytes: &[u8]) -> Result<MorphGlbPreviewMesh, Vec<Morph
         name: mesh_name,
         vertices,
         indices,
+        base_color,
     })
 }
 

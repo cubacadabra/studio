@@ -15,8 +15,8 @@ mod morphs;
 mod network;
 mod shell;
 use morphs::{
-    decode_source_glb_preview, inspect_source_glb_structure, inspect_source_sidecar,
-    source_manifest_geometry_file,
+    MorphGlbPreviewMesh, decode_source_glb_preview, decode_source_glb_preview_node,
+    inspect_source_glb_structure, inspect_source_sidecar, source_manifest_geometry_file,
 };
 use network::{BackendClient, BackendEvent};
 use shell::{PreparedShell, StudioShell};
@@ -339,11 +339,27 @@ impl StudioApp {
                     .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
                 let summary = inspect_source_glb_structure(&bytes)
                     .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
-                Ok((preview, summary))
+                let lod_previews: [Option<MorphGlbPreviewMesh>; 3] = std::array::from_fn(|index| {
+                    let level = ["near", "mid", "far"][index];
+                    summary
+                        .lod_candidates
+                        .get(level)
+                        .filter(|candidates| candidates.len() == 1)
+                        .and_then(|candidates| candidates.first())
+                        .and_then(|node| decode_source_glb_preview_node(&bytes, node).ok())
+                });
+                Ok((preview, summary, lod_previews))
             });
         if let Some(shell) = &mut self.shell {
             match result {
-                Ok((preview, summary)) => shell.set_morph_preview(display_path, preview, summary),
+                Ok((preview, summary, lod_previews)) => {
+                    shell.set_morph_preview(display_path, preview, summary);
+                    for (level, preview) in lod_previews.into_iter().enumerate() {
+                        if let Some(preview) = preview {
+                            shell.set_morph_lod_preview(level, preview);
+                        }
+                    }
+                }
                 Err(message) => shell.set_morph_import_error(message),
             }
         }
@@ -399,12 +415,32 @@ impl StudioApp {
                 })?;
                 let (manifest, preview, summary) = inspect_source_sidecar(&manifest_source, &glb)
                     .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
-                Ok((glb_path.display().to_string(), manifest, preview, summary))
+                let lod_previews: [Option<MorphGlbPreviewMesh>; 3] = std::array::from_fn(|index| {
+                    let level = ["near", "mid", "far"][index];
+                    manifest
+                        .geometry
+                        .lod_nodes
+                        .get(level)
+                        .and_then(|node| decode_source_glb_preview_node(&glb, node).ok())
+                });
+                Ok((
+                    glb_path.display().to_string(),
+                    manifest,
+                    preview,
+                    summary,
+                    lod_previews,
+                ))
             });
         if let Some(shell) = &mut self.shell {
             match result {
-                Ok((glb_path, manifest, preview, summary)) => {
-                    shell.set_morph_sidecar_preview(glb_path, manifest, preview, summary)
+                Ok((glb_path, manifest, preview, summary, lod_previews)) => {
+                    shell.set_morph_sidecar_preview(glb_path, manifest, preview, summary);
+                    for (level, preview) in lod_previews.into_iter().enumerate() {
+                        if let Some(preview) = preview {
+                            shell.set_morph_lod_preview(level, preview);
+                        }
+                    }
+                    shell.select_morph_preview_lod(Some(0));
                 }
                 Err(message) => shell.set_morph_import_error(message),
             }

@@ -364,6 +364,8 @@ pub(crate) struct StudioShell {
     morph_sidecar_import_requested: bool,
     morph_preview_path: Option<String>,
     morph_preview: Option<MorphGlbPreviewMesh>,
+    morph_lod_previews: [Option<MorphGlbPreviewMesh>; 3],
+    morph_preview_lod: Option<usize>,
     morph_source_summary: Option<MorphGlbSourceSummary>,
     morph_draft_asset: Option<cubacadabra_morphs::MorphAssetDefinition>,
     morph_attachment_joint: String,
@@ -427,6 +429,8 @@ impl StudioShell {
             morph_sidecar_import_requested: false,
             morph_preview_path: None,
             morph_preview: None,
+            morph_lod_previews: [None, None, None],
+            morph_preview_lod: None,
             morph_source_summary: None,
             morph_draft_asset: None,
             morph_attachment_joint: "head".to_owned(),
@@ -558,6 +562,8 @@ impl StudioShell {
         let draft_asset = Some(default_rigid_accessory_asset(&path, triangle_count));
         self.morph_preview_path = Some(path);
         self.morph_preview = Some(preview);
+        self.morph_lod_previews = [None, None, None];
+        self.morph_preview_lod = None;
         self.morph_attachment_joint = "head".to_owned();
         self.morph_lod_nodes = ["near", "mid", "far"].map(|level| {
             summary
@@ -573,6 +579,32 @@ impl StudioShell {
         self.morph_draft_status = None;
         self.morph_import_error = None;
         self.notice = "GLB preview imported".to_owned();
+    }
+
+    pub(crate) fn set_morph_lod_preview(
+        &mut self,
+        level: usize,
+        preview: MorphGlbPreviewMesh,
+    ) {
+        if level >= self.morph_lod_previews.len() {
+            return;
+        }
+        self.morph_lod_previews[level] = Some(preview.clone());
+        if self.morph_preview_lod == Some(level) {
+            self.morph_preview = Some(preview);
+        }
+    }
+
+    pub(crate) fn select_morph_preview_lod(&mut self, level: Option<usize>) {
+        let Some(level) = level else {
+            self.morph_preview_lod = None;
+            return;
+        };
+        let Some(preview) = self.morph_lod_previews.get(level).and_then(Option::as_ref) else {
+            return;
+        };
+        self.morph_preview_lod = Some(level);
+        self.morph_preview = Some(preview.clone());
     }
 
     pub(crate) fn set_morph_sidecar_preview(
@@ -1327,10 +1359,33 @@ impl StudioShell {
                         }
                     });
                 });
+                ui.horizontal(|ui| {
+                    for (level, label) in [
+                        (None, "Source"),
+                        (Some(0), "Near"),
+                        (Some(1), "Mid"),
+                        (Some(2), "Far"),
+                    ] {
+                        let enabled = level.is_none()
+                            || self
+                                .morph_lod_previews
+                                .get(level.unwrap_or_default())
+                                .is_some_and(Option::is_some);
+                        if ui
+                            .add_enabled(
+                                enabled,
+                                egui::Button::new(label).selected(self.morph_preview_lod == level),
+                            )
+                            .clicked()
+                        {
+                            self.select_morph_preview_lod(level);
+                        }
+                    }
+                });
                 let preview_rect = Rect::from_min_max(
                     egui::pos2(
                         available.min.x + 1.0,
-                        available.min.y + EDITOR_HEADER_HEIGHT,
+                        available.min.y + EDITOR_HEADER_HEIGHT + CONTROL_HEIGHT + 2.0,
                     ),
                     egui::pos2(available.max.x - 1.0, available.max.y - 1.0),
                 );
@@ -1728,6 +1783,12 @@ fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, co
         return;
     };
     let light = normalize3([0.35, 0.75, 0.65]);
+    let base_color = mesh.base_color.unwrap_or([
+        f32::from(color.r()) / 255.0,
+        f32::from(color.g()) / 255.0,
+        f32::from(color.b()) / 255.0,
+        1.0,
+    ]);
     let mut triangles = Vec::new();
     for triangle in mesh
         .indices
@@ -1754,10 +1815,10 @@ fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, co
     triangles.sort_by(|first, second| first.0.total_cmp(&second.0));
     for (_, points, brightness) in triangles {
         let fill = Color32::from_rgba_unmultiplied(
-            (f32::from(color.r()) * brightness) as u8,
-            (f32::from(color.g()) * brightness) as u8,
-            (f32::from(color.b()) * brightness) as u8,
-            185,
+            (base_color[0] * brightness * 255.0) as u8,
+            (base_color[1] * brightness * 255.0) as u8,
+            (base_color[2] * brightness * 255.0) as u8,
+            (base_color[3] * 185.0) as u8,
         );
         ui.painter()
             .add(egui::Shape::convex_polygon(points.to_vec(), fill, Stroke::NONE));

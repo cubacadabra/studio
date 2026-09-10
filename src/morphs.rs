@@ -6,8 +6,8 @@
 
 use cubacadabra_morph_authoring::{
     MorphAttachment, MorphAttachmentMode, MorphGeometrySource, MorphGlbInspection,
-    MorphSourceInspection, decode_glb_preview, inspect_glb_bytes, inspect_glb_source,
-    parse_source_manifest,
+    MorphSourceInspection, decode_glb_preview, decode_glb_preview_node, inspect_glb_bytes,
+    inspect_glb_source, parse_source_manifest,
 };
 pub(crate) use cubacadabra_morph_authoring::{
     MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
@@ -47,6 +47,13 @@ pub(crate) fn decode_source_glb_preview(
     glb: &[u8],
 ) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
     decode_glb_preview(glb)
+}
+
+pub(crate) fn decode_source_glb_preview_node(
+    glb: &[u8],
+    node_name: &str,
+) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
+    decode_glb_preview_node(glb, Some(node_name))
 }
 
 pub(crate) fn inspect_source_glb_structure(
