@@ -677,6 +677,12 @@ impl ApplicationHandler for StudioApp {
             (Some(shell), Some(window)) => shell.on_window_event(window, &event),
             _ => false,
         };
+        // Once Play is active, the game owns its keyboard controls even if
+        // egui still reports that it wants keyboard input. This can happen
+        // after the editor's search field or another shell control had focus;
+        // letting that stale focus consume W/A/S/D, arrows, Shift, or Space
+        // makes the running game appear completely unresponsive.
+        let playing = self.shell.as_ref().is_some_and(StudioShell::is_playing);
         let runtime_hovered = self
             .pointer_position
             .is_some_and(|(x, y)| self.runtime_pointer(x, y, true).is_some());
@@ -692,14 +698,19 @@ impl ApplicationHandler for StudioApp {
                 self.render();
                 self.request_redraw();
             }
-            WindowEvent::KeyboardInput { event, .. } if !shell_consumed => {
+            WindowEvent::KeyboardInput { event, .. }
+                if should_forward_gameplay_keyboard(playing, shell_consumed) =>
+            {
                 self.handle_key(&event, event_loop)
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.handle_cursor_move(position.x, position.y)
             }
             WindowEvent::MouseInput { state, button, .. }
-                if runtime_hovered || !shell_consumed || state == ElementState::Released =>
+                if playing
+                    || runtime_hovered
+                    || !shell_consumed
+                    || state == ElementState::Released =>
             {
                 self.handle_mouse_button(state, button)
             }
@@ -725,6 +736,10 @@ impl ApplicationHandler for StudioApp {
 fn axis(keys: &HashSet<KeyCode>, positive: &[KeyCode], negative: &[KeyCode]) -> f32 {
     f32::from(positive.iter().any(|key| keys.contains(key)))
         - f32::from(negative.iter().any(|key| keys.contains(key)))
+}
+
+fn should_forward_gameplay_keyboard(playing: bool, shell_consumed: bool) -> bool {
+    playing || !shell_consumed
 }
 
 fn game_name(root: &Path) -> String {
@@ -877,6 +892,22 @@ fn parse_game_path() -> Result<PathBuf, Box<dyn Error>> {
         ))));
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_forward_gameplay_keyboard;
+
+    #[test]
+    fn play_mode_bypasses_stale_shell_keyboard_capture() {
+        assert!(should_forward_gameplay_keyboard(true, true));
+    }
+
+    #[test]
+    fn paused_editor_still_honors_shell_keyboard_capture() {
+        assert!(!should_forward_gameplay_keyboard(false, true));
+        assert!(should_forward_gameplay_keyboard(false, false));
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
