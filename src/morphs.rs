@@ -6,11 +6,11 @@
 
 use cubacadabra_morph_authoring::{
     MorphAttachment, MorphAttachmentMode, MorphGeometrySource, MorphGlbInspection,
-    MorphSourceInspection, decode_glb_preview, decode_glb_preview_node, inspect_glb_bytes,
-    inspect_glb_source, parse_source_manifest,
+    MorphSourceInspection, compile_morph_pack, decode_glb_preview, decode_glb_preview_node,
+    inspect_glb_bytes, inspect_glb_source, parse_source_manifest,
 };
 pub(crate) use cubacadabra_morph_authoring::{
-    MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
+    MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphPackSummary, MorphSourceManifest,
 };
 use cubacadabra_morphs::{
     CapabilitySet, MorphAssetDefinition, MorphAssetId, MorphCatalog, MorphDiagnostic,
@@ -18,6 +18,7 @@ use cubacadabra_morphs::{
     resolve_preset,
 };
 use std::collections::BTreeMap;
+use std::io::Cursor;
 
 #[allow(dead_code)]
 pub(crate) fn inspect_catalog(source: &str) -> Result<MorphCatalog, Vec<MorphDiagnostic>> {
@@ -84,6 +85,124 @@ pub(crate) fn inspect_source_sidecar(
     let preview = decode_glb_preview(glb)?;
     let summary = inspect_glb_source(glb)?;
     Ok((manifest, preview, summary))
+}
+
+pub(crate) fn compile_source_morph_pack(
+    manifest_source: &str,
+    glb: &[u8],
+) -> Result<(Vec<u8>, MorphPackSummary), Vec<MorphDiagnostic>> {
+    let manifest = parse_source_manifest(manifest_source)?;
+    compile_morph_pack(&manifest, glb)
+}
+
+pub(crate) fn encode_morph_thumbnail_png(
+    mesh: &MorphGlbPreviewMesh,
+) -> Result<Vec<u8>, String> {
+    const SIZE: u32 = 256;
+    if mesh.vertices.is_empty() || mesh.indices.len() < 3 {
+        return Err("The preview mesh has no triangles for a thumbnail.".to_owned());
+    }
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for vertex in &mesh.vertices {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(vertex[axis]);
+            max[axis] = max[axis].max(vertex[axis]);
+        }
+    }
+    let span = (max[0] - min[0]).max(max[1] - min[1]).max(0.0001);
+    let scale = 220.0 / span;
+    let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+    let project = |vertex: [f32; 3]| {
+        [
+            128.0 + (vertex[0] - center[0]) * scale,
+            128.0 - (vertex[1] - center[1]) * scale,
+        ]
+    };
+    let base = mesh.base_color.unwrap_or([0.35, 0.55, 0.78, 1.0]);
+    let mut image = image::RgbaImage::from_pixel(SIZE, SIZE, image::Rgba([24, 24, 28, 255]));
+    let mut triangles = Vec::new();
+    for triangle in mesh.indices.chunks(3).filter(|triangle| triangle.len() == 3) {
+        let Some(a) = mesh.vertices.get(triangle[0] as usize).copied() else {
+            continue;
+        };
+        let Some(b) = mesh.vertices.get(triangle[1] as usize).copied() else {
+            continue;
+        };
+        let Some(c) = mesh.vertices.get(triangle[2] as usize).copied() else {
+            continue;
+        };
+        let normal = normalize3(cross3(sub3(b, a), sub3(c, a)));
+        let brightness = (dot3(normal, normalize3([0.35, 0.75, 0.65])).abs() * 0.55 + 0.45)
+            .clamp(0.0, 1.0);
+        triangles.push(((a[2] + b[2] + c[2]) / 3.0, [project(a), project(b), project(c)], brightness));
+    }
+    triangles.sort_by(|first, second| first.0.total_cmp(&second.0));
+    for (_, points, brightness) in triangles {
+        let area = edge(points[0], points[1], points[2]);
+        if area.abs() < f32::EPSILON {
+            continue;
+        }
+        let min_x = points.iter().map(|point| point[0]).fold(f32::INFINITY, f32::min).floor() as i32;
+        let max_x = points.iter().map(|point| point[0]).fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
+        let min_y = points.iter().map(|point| point[1]).fold(f32::INFINITY, f32::min).floor() as i32;
+        let max_y = points.iter().map(|point| point[1]).fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
+        let fill = [
+            (base[0] * brightness * 255.0) as u8,
+            (base[1] * brightness * 255.0) as u8,
+            (base[2] * brightness * 255.0) as u8,
+            (base[3] * 255.0) as u8,
+        ];
+        for y in min_y.max(0)..=max_y.min(SIZE as i32 - 1) {
+            for x in min_x.max(0)..=max_x.min(SIZE as i32 - 1) {
+                let point = [x as f32 + 0.5, y as f32 + 0.5];
+                let w0 = edge(points[1], points[2], point) / area;
+                let w1 = edge(points[2], points[0], point) / area;
+                let w2 = edge(points[0], points[1], point) / area;
+                if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                    image.put_pixel(x as u32, y as u32, image::Rgba(fill));
+                }
+            }
+        }
+    }
+    let mut output = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|error| format!("could not encode thumbnail: {error}"))?;
+    Ok(output.into_inner())
+}
+
+fn edge(a: [f32; 2], b: [f32; 2], point: [f32; 2]) -> f32 {
+    (point[0] - a[0]) * (b[1] - a[1]) - (point[1] - a[1]) * (b[0] - a[0])
+}
+
+fn sub3(first: [f32; 3], second: [f32; 3]) -> [f32; 3] {
+    [
+        first[0] - second[0],
+        first[1] - second[1],
+        first[2] - second[2],
+    ]
+}
+
+fn cross3(first: [f32; 3], second: [f32; 3]) -> [f32; 3] {
+    [
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    ]
+}
+
+fn dot3(first: [f32; 3], second: [f32; 3]) -> f32 {
+    first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+}
+
+fn normalize3(value: [f32; 3]) -> [f32; 3] {
+    let length = dot3(value, value).sqrt();
+    if length > f32::EPSILON {
+        [value[0] / length, value[1] / length, value[2] / length]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
 }
 
 pub(crate) fn build_source_manifest_json(
@@ -316,5 +435,17 @@ mod tests {
             source_manifest_geometry_file(source).unwrap(),
             "models/test_top_hat.glb"
         );
+    }
+
+    #[test]
+    fn thumbnail_encoder_returns_png_bytes() {
+        let preview = MorphGlbPreviewMesh {
+            name: "triangle".to_owned(),
+            vertices: vec![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            base_color: Some([0.2, 0.4, 0.8, 1.0]),
+        };
+        let png = encode_morph_thumbnail_png(&preview).expect("thumbnail PNG");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }

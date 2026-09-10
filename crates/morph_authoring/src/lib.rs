@@ -11,6 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MORPH_SOURCE_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SOURCE_MANIFEST_BYTES: usize = 256 * 1024;
 pub const MAX_SOURCE_GLB_BYTES: usize = 64 * 1024 * 1024;
+pub const MORPH_PACK_SCHEMA_VERSION: u16 = 1;
+pub const MAX_MORPH_PACK_BYTES: usize = 64 * 1024 * 1024;
+pub const MORPH_PACK_MAGIC: &[u8; 8] = b"CUBAMORP";
 const MAX_NODE_NAME_BYTES: usize = 96;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +94,13 @@ pub struct MorphGlbSourceSummary {
     pub lod_candidates: BTreeMap<String, Vec<String>>,
     pub node_triangle_counts: BTreeMap<String, u32>,
     pub triangle_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MorphPackSummary {
+    pub asset_id: String,
+    pub byte_len: usize,
+    pub lod_triangle_counts: BTreeMap<String, u32>,
 }
 
 impl MorphSourceManifest {
@@ -740,6 +750,101 @@ pub fn decode_glb_preview_node(
         indices,
         base_color,
     })
+}
+
+/// Compile a validated rigid accessory into a deterministic CPU mesh pack.
+/// The format is intentionally small and renderer-neutral so the shared
+/// runtime can adopt it later without making Studio depend on GPU code.
+pub fn compile_morph_pack(
+    manifest: &MorphSourceManifest,
+    glb: &[u8],
+) -> Result<(Vec<u8>, MorphPackSummary), Vec<MorphDiagnostic>> {
+    let inspection = inspect_glb_bytes(manifest, glb)?;
+    let manifest_json = serde_json::to_vec(manifest).map_err(|serialize_error| {
+        vec![error(
+            "MORPH_PACK_SERIALIZE_FAILED",
+            "$",
+            serialize_error.to_string(),
+        )]
+    })?;
+    let mut meshes = Vec::new();
+    for level in ["near", "mid", "far"] {
+        let node = manifest.geometry.lod_nodes[level].as_str();
+        let mesh = decode_glb_preview_node(glb, Some(node))?;
+        meshes.push((level, mesh));
+    }
+    let mut pack = Vec::with_capacity(manifest_json.len() + 64);
+    pack.extend_from_slice(MORPH_PACK_MAGIC);
+    write_u16(&mut pack, MORPH_PACK_SCHEMA_VERSION);
+    write_u16(&mut pack, 0);
+    write_u32(&mut pack, u32::try_from(manifest_json.len()).map_err(|_| {
+        vec![error(
+            "MORPH_PACK_LIMIT",
+            "$",
+            "manifest is too large for a morph pack",
+        )]
+    })?);
+    pack.extend_from_slice(&manifest_json);
+    let mut lod_triangle_counts = BTreeMap::new();
+    for (level, mesh) in meshes {
+        let triangle_count = inspection.lods[level].triangle_count;
+        lod_triangle_counts.insert(level.to_owned(), triangle_count);
+        write_u32(&mut pack, triangle_count);
+        write_u32(&mut pack, u32::try_from(mesh.vertices.len()).map_err(|_| {
+            vec![error(
+                "MORPH_PACK_LIMIT",
+                "geometry",
+                "vertex count is too large for a morph pack",
+            )]
+        })?);
+        write_u32(&mut pack, u32::try_from(mesh.indices.len()).map_err(|_| {
+            vec![error(
+                "MORPH_PACK_LIMIT",
+                "geometry",
+                "index count is too large for a morph pack",
+            )]
+        })?);
+        match mesh.base_color {
+            Some(color) => {
+                pack.push(1);
+                for value in color {
+                    pack.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            None => pack.push(0),
+        }
+        for vertex in mesh.vertices {
+            for value in vertex {
+                pack.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        for index in mesh.indices {
+            pack.extend_from_slice(&index.to_le_bytes());
+        }
+        if pack.len() > MAX_MORPH_PACK_BYTES {
+            return Err(vec![error(
+                "MORPH_PACK_TOO_LARGE",
+                "$",
+                format!("compiled pack exceeds {MAX_MORPH_PACK_BYTES} bytes"),
+            )]);
+        }
+    }
+    Ok((
+        pack.clone(),
+        MorphPackSummary {
+            asset_id: manifest.asset.id.to_string(),
+            byte_len: pack.len(),
+            lod_triangle_counts,
+        },
+    ))
+}
+
+fn write_u16(bytes: &mut Vec<u8>, value: u16) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
 }
 
 const MAX_PREVIEW_VERTICES: usize = 200_000;
@@ -1473,5 +1578,21 @@ mod tests {
         assert_eq!(preview.vertices.len(), 3);
         assert_eq!(preview.indices, [0, 1, 2]);
         assert_eq!(preview.vertices[2], [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn compiles_the_checked_in_three_lod_fixture_deterministically() {
+        let source = include_str!("../fixtures/top_hat_3lod.morph.json");
+        let manifest = parse_source_manifest(source).unwrap();
+        let glb = include_bytes!("../fixtures/top_hat_3lod.glb");
+        let (first, summary) = compile_morph_pack(&manifest, glb).unwrap();
+        let (second, repeated_summary) = compile_morph_pack(&manifest, glb).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(summary, repeated_summary);
+        assert_eq!(&first[..8], MORPH_PACK_MAGIC);
+        assert_eq!(summary.asset_id, "cuba:headwear/top-hat-3lod.v1");
+        assert_eq!(summary.lod_triangle_counts["near"], 24);
+        assert_eq!(summary.lod_triangle_counts["mid"], 8);
+        assert_eq!(summary.lod_triangle_counts["far"], 4);
     }
 }

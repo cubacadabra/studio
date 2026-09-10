@@ -16,7 +16,8 @@ mod network;
 mod shell;
 use morphs::{
     MorphGlbPreviewMesh, decode_source_glb_preview, decode_source_glb_preview_node,
-    inspect_source_glb_structure, inspect_source_sidecar, source_manifest_geometry_file,
+    compile_source_morph_pack, encode_morph_thumbnail_png, inspect_source_glb_structure,
+    inspect_source_sidecar, source_manifest_geometry_file,
 };
 use network::{BackendClient, BackendEvent};
 use shell::{PreparedShell, StudioShell};
@@ -241,6 +242,20 @@ impl StudioApp {
         if sidecar_import_requested {
             self.import_morph_sidecar();
         }
+        let publish_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_publish_request);
+        if publish_requested {
+            self.publish_morph_pack();
+        }
+        let thumbnail_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_thumbnail_request);
+        if thumbnail_requested {
+            self.generate_morph_thumbnail();
+        }
         self.update_viewport();
         let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
 
@@ -444,6 +459,61 @@ impl StudioApp {
                 }
                 Err(message) => shell.set_morph_import_error(message),
             }
+        }
+        self.request_redraw();
+    }
+
+    fn publish_morph_pack(&mut self) {
+        let inputs = self
+            .shell
+            .as_ref()
+            .map(StudioShell::morph_pack_inputs)
+            .unwrap_or_else(|| Err("Studio shell is not ready.".to_owned()));
+        let result = inputs.and_then(|(glb_path, suggested_name, manifest_json)| {
+            let glb = fs::read(&glb_path)
+                .map_err(|error| format!("Could not read {}: {error}", glb_path))?;
+            let (pack, summary) = compile_source_morph_pack(&manifest_json, &glb)
+                .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Morph pack", &["morphpack"])
+                .set_file_name(&suggested_name)
+                .set_title("Publish morph pack")
+                .save_file()
+            else {
+                return Err("Morph pack publish cancelled.".to_owned());
+            };
+            fs::write(&path, pack).map_err(|error| {
+                format!("Could not write {}: {error}", path.display())
+            })?;
+            Ok((summary.asset_id, summary.byte_len))
+        });
+        if let Some(shell) = &mut self.shell {
+            shell.set_morph_publish_result(result);
+        }
+        self.request_redraw();
+    }
+
+    fn generate_morph_thumbnail(&mut self) {
+        let payload = self
+            .shell
+            .as_ref()
+            .map(StudioShell::morph_thumbnail_payload)
+            .unwrap_or_else(|| Err("Studio shell is not ready.".to_owned()));
+        let result = payload.and_then(|(suggested_name, preview)| {
+            let png = encode_morph_thumbnail_png(&preview)?;
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("PNG image", &["png"])
+                .set_file_name(&suggested_name)
+                .set_title("Generate morph thumbnail")
+                .save_file()
+            else {
+                return Err("Thumbnail generation cancelled.".to_owned());
+            };
+            fs::write(&path, png)
+                .map_err(|error| format!("Could not write {}: {error}", path.display()))
+        });
+        if let Some(shell) = &mut self.shell {
+            shell.set_morph_thumbnail_result(result);
         }
         self.request_redraw();
     }

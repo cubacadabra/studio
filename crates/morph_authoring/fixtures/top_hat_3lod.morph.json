@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "asset": {
+    "id": "cuba:headwear/top-hat-3lod.v1",
+    "kind": "headwear",
+    "displayName": "Top Hat 3 LOD",
+    "rigProfile": "cuba:rig/biped15.v1",
+    "fitProfiles": ["cuba:fit/person-standard.v1"],
+    "supportedBases": ["cuba:base/person.v1"],
+    "occupiedSlots": ["headwear"],
+    "coverage": ["head"],
+    "conflicts": [],
+    "materials": ["hat-blue"],
+    "lod": {"near": 24, "mid": 8, "far": 4},
+    "requiredCapabilities": ["mesh.rigid.v1"],
+    "source": {"geometry": "top_hat_3lod.glb"},
+    "provenance": {
+      "source": "Cubacadabra Studio fixture",
+      "license": "Cubacadabra test data"
+    }
+  },
+  "geometry": {
+    "file": "top_hat_3lod.glb",
+    "lodNodes": {
+      "near": "TopHat_Near",
+      "mid": "TopHat_Mid",
+      "far": "TopHat_Far"
+    },
+    "triangleCounts": {"near": 24, "mid": 8, "far": 4}
+  },
+  "attachment": {
+    "mode": "rigid",
+    "joint": "head"
+  }
+}

@@ -372,6 +372,8 @@ pub(crate) struct StudioShell {
     morph_lod_nodes: [String; 3],
     morph_draft_status: Option<(bool, String)>,
     morph_sidecar_export_requested: bool,
+    morph_publish_requested: bool,
+    morph_thumbnail_requested: bool,
     morph_wireframe: bool,
     morph_import_error: Option<String>,
     logo_texture: egui::TextureHandle,
@@ -437,6 +439,8 @@ impl StudioShell {
             morph_lod_nodes: [String::new(), String::new(), String::new()],
             morph_draft_status: None,
             morph_sidecar_export_requested: false,
+            morph_publish_requested: false,
+            morph_thumbnail_requested: false,
             morph_wireframe: true,
             morph_import_error: None,
             logo_texture,
@@ -470,6 +474,14 @@ impl StudioShell {
 
     pub(crate) fn take_morph_sidecar_export_request(&mut self) -> bool {
         std::mem::take(&mut self.morph_sidecar_export_requested)
+    }
+
+    pub(crate) fn take_morph_publish_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_publish_requested)
+    }
+
+    pub(crate) fn take_morph_thumbnail_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_thumbnail_requested)
     }
 
     pub(crate) fn morph_sidecar_payload(&self) -> Result<(String, String), String> {
@@ -534,6 +546,23 @@ impl StudioShell {
         Ok((suggested_name, json))
     }
 
+    pub(crate) fn morph_pack_inputs(&self) -> Result<(String, String, String), String> {
+        let (sidecar_name, manifest_json) = self.morph_sidecar_payload()?;
+        let glb_path = self
+            .morph_preview_path
+            .as_ref()
+            .ok_or_else(|| "Import a GLB before publishing its pack.".to_owned())?
+            .clone();
+        let suggested_name = format!(
+            "{}.morphpack",
+            std::path::Path::new(&sidecar_name)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("morph")
+        );
+        Ok((glb_path, suggested_name, manifest_json))
+    }
+
     pub(crate) fn set_morph_sidecar_export_result(&mut self, result: Result<(), String>) {
         match result {
             Ok(()) => {
@@ -542,6 +571,61 @@ impl StudioShell {
                     "Sidecar saved. The GLB and .morph.json can now travel together.".to_owned(),
                 ));
                 self.notice = "Morph sidecar saved".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
+        }
+    }
+
+    pub(crate) fn set_morph_publish_result(
+        &mut self,
+        result: Result<(String, usize), String>,
+    ) {
+        match result {
+            Ok((asset_id, byte_len)) => {
+                self.morph_draft_status = Some((
+                    true,
+                    format!("Published {asset_id} ({byte_len} bytes)."),
+                ));
+                self.notice = "Morph pack published".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
+        }
+    }
+
+    pub(crate) fn morph_thumbnail_payload(&self) -> Result<(String, MorphGlbPreviewMesh), String> {
+        let path = self
+            .morph_preview_path
+            .as_ref()
+            .ok_or_else(|| "Import a GLB before generating a thumbnail.".to_owned())?;
+        let preview = self
+            .morph_preview
+            .as_ref()
+            .ok_or_else(|| "The imported GLB has no preview mesh.".to_owned())?
+            .clone();
+        let suggested_name = format!(
+            "{}.png",
+            std::path::Path::new(path)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("morph")
+        );
+        Ok((suggested_name, preview))
+    }
+
+    pub(crate) fn set_morph_thumbnail_result(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.morph_draft_status = Some((
+                    true,
+                    "Thumbnail generated from the current shaded preview.".to_owned(),
+                ));
+                self.notice = "Morph thumbnail generated".to_owned();
             }
             Err(message) => {
                 self.morph_draft_status = Some((false, message.clone()));
@@ -1250,6 +1334,19 @@ impl StudioShell {
                                     {
                                         self.morph_sidecar_export_requested = true;
                                     }
+                                }
+                                if ui.button("Publish .morphpack").clicked() {
+                                    self.validate_morph_draft();
+                                    if self
+                                        .morph_draft_status
+                                        .as_ref()
+                                        .is_some_and(|(valid, _)| *valid)
+                                    {
+                                        self.morph_publish_requested = true;
+                                    }
+                                }
+                                if ui.button("Generate thumbnail PNG").clicked() {
+                                    self.morph_thumbnail_requested = true;
                                 }
                                 if let Some((valid, status)) = &self.morph_draft_status {
                                     ui.label(
