@@ -20,6 +20,16 @@ use cubacadabra_morphs::{
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+pub(crate) const MORPH_DRAFT_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MorphDraftDocument {
+    pub(crate) asset: MorphAssetDefinition,
+    pub(crate) geometry_file: String,
+    pub(crate) attachment_joint: String,
+    pub(crate) lod_nodes: [String; 3],
+}
+
 #[allow(dead_code)]
 pub(crate) fn inspect_catalog(source: &str) -> Result<MorphCatalog, Vec<MorphDiagnostic>> {
     parse_catalog(source)
@@ -63,9 +73,7 @@ pub(crate) fn inspect_source_glb_structure(
     inspect_glb_source(glb)
 }
 
-pub(crate) fn source_manifest_geometry_file(
-    source: &str,
-) -> Result<String, Vec<MorphDiagnostic>> {
+pub(crate) fn source_manifest_geometry_file(source: &str) -> Result<String, Vec<MorphDiagnostic>> {
     Ok(parse_source_manifest(source)?.geometry.file)
 }
 
@@ -95,9 +103,7 @@ pub(crate) fn compile_source_morph_pack(
     compile_morph_pack(&manifest, glb)
 }
 
-pub(crate) fn encode_morph_thumbnail_png(
-    mesh: &MorphGlbPreviewMesh,
-) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_morph_thumbnail_png(mesh: &MorphGlbPreviewMesh) -> Result<Vec<u8>, String> {
     const SIZE: u32 = 256;
     if mesh.vertices.is_empty() || mesh.indices.len() < 3 {
         return Err("The preview mesh has no triangles for a thumbnail.".to_owned());
@@ -122,7 +128,11 @@ pub(crate) fn encode_morph_thumbnail_png(
     let base = mesh.base_color.unwrap_or([0.35, 0.55, 0.78, 1.0]);
     let mut image = image::RgbaImage::from_pixel(SIZE, SIZE, image::Rgba([24, 24, 28, 255]));
     let mut triangles = Vec::new();
-    for triangle in mesh.indices.chunks(3).filter(|triangle| triangle.len() == 3) {
+    for triangle in mesh
+        .indices
+        .chunks(3)
+        .filter(|triangle| triangle.len() == 3)
+    {
         let Some(a) = mesh.vertices.get(triangle[0] as usize).copied() else {
             continue;
         };
@@ -133,9 +143,13 @@ pub(crate) fn encode_morph_thumbnail_png(
             continue;
         };
         let normal = normalize3(cross3(sub3(b, a), sub3(c, a)));
-        let brightness = (dot3(normal, normalize3([0.35, 0.75, 0.65])).abs() * 0.55 + 0.45)
-            .clamp(0.0, 1.0);
-        triangles.push(((a[2] + b[2] + c[2]) / 3.0, [project(a), project(b), project(c)], brightness));
+        let brightness =
+            (dot3(normal, normalize3([0.35, 0.75, 0.65])).abs() * 0.55 + 0.45).clamp(0.0, 1.0);
+        triangles.push((
+            (a[2] + b[2] + c[2]) / 3.0,
+            [project(a), project(b), project(c)],
+            brightness,
+        ));
     }
     triangles.sort_by(|first, second| first.0.total_cmp(&second.0));
     for (_, points, brightness) in triangles {
@@ -143,10 +157,26 @@ pub(crate) fn encode_morph_thumbnail_png(
         if area.abs() < f32::EPSILON {
             continue;
         }
-        let min_x = points.iter().map(|point| point[0]).fold(f32::INFINITY, f32::min).floor() as i32;
-        let max_x = points.iter().map(|point| point[0]).fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
-        let min_y = points.iter().map(|point| point[1]).fold(f32::INFINITY, f32::min).floor() as i32;
-        let max_y = points.iter().map(|point| point[1]).fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
+        let min_x = points
+            .iter()
+            .map(|point| point[0])
+            .fold(f32::INFINITY, f32::min)
+            .floor() as i32;
+        let max_x = points
+            .iter()
+            .map(|point| point[0])
+            .fold(f32::NEG_INFINITY, f32::max)
+            .ceil() as i32;
+        let min_y = points
+            .iter()
+            .map(|point| point[1])
+            .fold(f32::INFINITY, f32::min)
+            .floor() as i32;
+        let max_y = points
+            .iter()
+            .map(|point| point[1])
+            .fold(f32::NEG_INFINITY, f32::max)
+            .ceil() as i32;
         let fill = [
             (base[0] * brightness * 255.0) as u8,
             (base[1] * brightness * 255.0) as u8,
@@ -254,6 +284,127 @@ pub(crate) fn build_source_manifest_json(
     })
 }
 
+/// Serialize the in-progress Studio mapping without applying the publish-only
+/// source-manifest validation. Drafts are intentionally not consumable by the
+/// runtime compiler; they let an artist save work while a GLB still needs
+/// LODs or other repairs.
+pub(crate) fn build_morph_draft_json(
+    asset: &MorphAssetDefinition,
+    geometry_file: String,
+    attachment_joint: &str,
+    lod_nodes: [&str; 3],
+    triangle_counts: [u32; 3],
+) -> Result<String, String> {
+    let mut asset = asset.clone();
+    asset.source = Some(MorphSourceReference {
+        geometry: geometry_file.clone(),
+    });
+    let asset = serde_json::to_value(asset)
+        .map_err(|error| format!("could not serialize draft asset: {error}"))?;
+    serde_json::to_string_pretty(&serde_json::json!({
+        "draftSchemaVersion": MORPH_DRAFT_SCHEMA_VERSION,
+        "asset": asset,
+        "geometry": {
+            "file": geometry_file,
+            "lodNodes": {
+                "near": lod_nodes[0],
+                "mid": lod_nodes[1],
+                "far": lod_nodes[2]
+            },
+            "triangleCounts": {
+                "near": triangle_counts[0],
+                "mid": triangle_counts[1],
+                "far": triangle_counts[2]
+            }
+        },
+        "attachment": {
+            "mode": "rigid",
+            "joint": attachment_joint,
+            "translation": [0.0, 0.0, 0.0],
+            "rotation": [0.0, 0.0, 0.0, 1.0],
+            "scale": [1.0, 1.0, 1.0]
+        }
+    }))
+    .map_err(|error| format!("could not serialize morph draft: {error}"))
+}
+
+pub(crate) fn is_morph_draft_json(source: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(source)
+        .ok()
+        .is_some_and(|value| value.get("draftSchemaVersion").is_some())
+}
+
+pub(crate) fn parse_morph_draft_json(source: &str) -> Result<MorphDraftDocument, String> {
+    let root: serde_json::Value = serde_json::from_str(source)
+        .map_err(|error| format!("draft is not valid JSON: {error}"))?;
+    let version = root
+        .get("draftSchemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "draft is missing draftSchemaVersion.".to_owned())?;
+    if version != u64::from(MORPH_DRAFT_SCHEMA_VERSION) {
+        return Err(format!(
+            "unsupported morph draft schema {version}; expected {MORPH_DRAFT_SCHEMA_VERSION}."
+        ));
+    }
+    let asset: MorphAssetDefinition = root
+        .get("asset")
+        .cloned()
+        .ok_or_else(|| "draft is missing asset metadata.".to_owned())
+        .and_then(|value| {
+            serde_json::from_value(value)
+                .map_err(|error| format!("draft asset metadata is invalid: {error}"))
+        })?;
+    let asset_diagnostics = asset.validate();
+    if !asset_diagnostics.is_empty() {
+        return Err(asset_diagnostics
+            .iter()
+            .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    let geometry = root
+        .get("geometry")
+        .ok_or_else(|| "draft is missing geometry metadata.".to_owned())?;
+    let geometry_file = geometry
+        .get("file")
+        .and_then(serde_json::Value::as_str)
+        .filter(|file| is_safe_draft_geometry_file(file))
+        .ok_or_else(|| "draft geometry.file must be a safe relative .glb path.".to_owned())?
+        .to_owned();
+    let lod_nodes = ["near", "mid", "far"].map(|level| {
+        geometry
+            .get("lodNodes")
+            .and_then(|nodes| nodes.get(level))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    });
+    let attachment_joint = root
+        .get("attachment")
+        .and_then(|attachment| attachment.get("joint"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok(MorphDraftDocument {
+        asset,
+        geometry_file,
+        attachment_joint,
+        lod_nodes,
+    })
+}
+
+fn is_safe_draft_geometry_file(file: &str) -> bool {
+    !file.is_empty()
+        && file.len() <= 240
+        && file.is_ascii()
+        && !file.starts_with('/')
+        && !file.contains('\\')
+        && file
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+        && file.ends_with(".glb")
+}
+
 pub(crate) fn default_rigid_accessory_asset(
     source_path: &str,
     triangle_count: u32,
@@ -298,16 +449,14 @@ pub(crate) fn default_rigid_accessory_asset(
         kind: cubacadabra_morphs::MorphAssetKind::Headwear,
         display_name,
         rig_profile: Some(
-            MorphAssetId::parse("cuba:rig/biped15.v1")
-                .expect("built-in rig ID must be valid"),
+            MorphAssetId::parse("cuba:rig/biped15.v1").expect("built-in rig ID must be valid"),
         ),
         fit_profiles: vec![
             MorphAssetId::parse("cuba:fit/person-standard.v1")
                 .expect("built-in fit ID must be valid"),
         ],
         supported_bases: vec![
-            MorphAssetId::parse("cuba:base/person.v1")
-                .expect("built-in base ID must be valid"),
+            MorphAssetId::parse("cuba:base/person.v1").expect("built-in base ID must be valid"),
         ],
         occupied_slots: vec!["headwear".to_owned()],
         coverage: vec!["head".to_owned()],
@@ -396,6 +545,44 @@ mod tests {
         assert_eq!(manifest.geometry.file, "test_top_hat.glb");
         assert_eq!(manifest.geometry.triangle_counts["near"], 248);
         assert_eq!(manifest.attachment.joint, "head");
+    }
+
+    #[test]
+    fn studio_can_save_an_incomplete_morph_draft() {
+        let asset = default_rigid_accessory_asset("test_top_hat.glb", 248);
+        let source = build_morph_draft_json(
+            &asset,
+            "test_top_hat.glb".to_owned(),
+            "head",
+            ["", "", ""],
+            [0, 0, 0],
+        )
+        .expect("draft should serialize before LOD mapping");
+        let json: serde_json::Value = serde_json::from_str(&source).expect("draft JSON");
+        assert_eq!(json["draftSchemaVersion"], MORPH_DRAFT_SCHEMA_VERSION);
+        assert_eq!(json["geometry"]["lodNodes"]["near"], "");
+        assert_eq!(json["attachment"]["joint"], "head");
+    }
+
+    #[test]
+    fn studio_can_reopen_an_incomplete_morph_draft() {
+        let asset = default_rigid_accessory_asset("test_top_hat.glb", 248);
+        let source = build_morph_draft_json(
+            &asset,
+            "test_top_hat.glb".to_owned(),
+            "head",
+            ["", "", ""],
+            [0, 0, 0],
+        )
+        .expect("draft should serialize");
+        let draft = parse_morph_draft_json(&source).expect("draft should parse");
+        assert_eq!(draft.asset.id, asset.id);
+        assert_eq!(draft.geometry_file, "test_top_hat.glb");
+        assert_eq!(draft.attachment_joint, "head");
+        assert_eq!(
+            draft.lod_nodes,
+            [String::new(), String::new(), String::new()]
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::morphs::{
-    MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest, build_source_manifest_json,
-    default_rigid_accessory_asset,
+    MorphDraftDocument, MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
+    build_morph_draft_json, build_source_manifest_json, default_rigid_accessory_asset,
 };
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
@@ -371,6 +371,7 @@ pub(crate) struct StudioShell {
     morph_attachment_joint: String,
     morph_lod_nodes: [String; 3],
     morph_draft_status: Option<(bool, String)>,
+    morph_draft_export_requested: bool,
     morph_sidecar_export_requested: bool,
     morph_publish_requested: bool,
     morph_thumbnail_requested: bool,
@@ -438,6 +439,7 @@ impl StudioShell {
             morph_attachment_joint: "head".to_owned(),
             morph_lod_nodes: [String::new(), String::new(), String::new()],
             morph_draft_status: None,
+            morph_draft_export_requested: false,
             morph_sidecar_export_requested: false,
             morph_publish_requested: false,
             morph_thumbnail_requested: false,
@@ -474,6 +476,10 @@ impl StudioShell {
 
     pub(crate) fn take_morph_sidecar_export_request(&mut self) -> bool {
         std::mem::take(&mut self.morph_sidecar_export_requested)
+    }
+
+    pub(crate) fn take_morph_draft_export_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_draft_export_requested)
     }
 
     pub(crate) fn take_morph_publish_request(&mut self) -> bool {
@@ -563,6 +569,66 @@ impl StudioShell {
         Ok((glb_path, suggested_name, manifest_json))
     }
 
+    pub(crate) fn morph_draft_payload(&self) -> Result<(String, String), String> {
+        let path = self
+            .morph_preview_path
+            .as_deref()
+            .ok_or_else(|| "Import a GLB before saving its draft.".to_owned())?;
+        let asset = self
+            .morph_draft_asset
+            .as_ref()
+            .or_else(|| self.morph_catalog.asset(&self.selected_morph))
+            .ok_or_else(|| "Select a catalog asset before saving its draft.".to_owned())?;
+        let geometry_file = std::path::Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "The imported GLB needs a safe filename for its draft.".to_owned())?
+            .to_owned();
+        let summary = self
+            .morph_source_summary
+            .as_ref()
+            .ok_or_else(|| "The imported GLB has no source summary to save.".to_owned())?;
+        let fallback_triangle_count = self
+            .morph_preview
+            .as_ref()
+            .map(|preview| preview.indices.len() / 3)
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(|| "The imported GLB has no preview triangle count.".to_owned())?;
+        let lod_nodes = [
+            self.morph_lod_nodes[0].trim(),
+            self.morph_lod_nodes[1].trim(),
+            self.morph_lod_nodes[2].trim(),
+        ];
+        let triangle_counts = lod_nodes.map(|node| {
+            summary
+                .node_triangle_counts
+                .get(node)
+                .copied()
+                .unwrap_or_else(|| {
+                    if node.is_empty() {
+                        0
+                    } else {
+                        fallback_triangle_count
+                    }
+                })
+        });
+        let json = build_morph_draft_json(
+            asset,
+            geometry_file,
+            self.morph_attachment_joint.trim(),
+            lod_nodes,
+            triangle_counts,
+        )?;
+        let suggested_name = format!(
+            "{}.morph.draft.json",
+            std::path::Path::new(path)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("morph")
+        );
+        Ok((suggested_name, json))
+    }
+
     pub(crate) fn set_morph_sidecar_export_result(&mut self, result: Result<(), String>) {
         match result {
             Ok(()) => {
@@ -579,16 +645,28 @@ impl StudioShell {
         }
     }
 
-    pub(crate) fn set_morph_publish_result(
-        &mut self,
-        result: Result<(String, usize), String>,
-    ) {
+    pub(crate) fn set_morph_draft_export_result(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.morph_draft_status = Some((
+                    false,
+                    "Draft saved. Complete the LOD mapping before exporting or publishing."
+                        .to_owned(),
+                ));
+                self.notice = "Morph draft saved".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
+        }
+    }
+
+    pub(crate) fn set_morph_publish_result(&mut self, result: Result<(String, usize), String>) {
         match result {
             Ok((asset_id, byte_len)) => {
-                self.morph_draft_status = Some((
-                    true,
-                    format!("Published {asset_id} ({byte_len} bytes)."),
-                ));
+                self.morph_draft_status =
+                    Some((true, format!("Published {asset_id} ({byte_len} bytes).")));
                 self.notice = "Morph pack published".to_owned();
             }
             Err(message) => {
@@ -665,11 +743,7 @@ impl StudioShell {
         self.notice = "GLB preview imported".to_owned();
     }
 
-    pub(crate) fn set_morph_lod_preview(
-        &mut self,
-        level: usize,
-        preview: MorphGlbPreviewMesh,
-    ) {
+    pub(crate) fn set_morph_lod_preview(&mut self, level: usize, preview: MorphGlbPreviewMesh) {
         if level >= self.morph_lod_previews.len() {
             return;
         }
@@ -716,6 +790,21 @@ impl StudioShell {
             "Sidecar reimported and GLB contract validated.".to_owned(),
         ));
         self.notice = "Morph sidecar reimported".to_owned();
+    }
+
+    pub(crate) fn set_morph_draft_preview(
+        &mut self,
+        glb_path: String,
+        draft: MorphDraftDocument,
+        preview: MorphGlbPreviewMesh,
+        summary: MorphGlbSourceSummary,
+    ) {
+        self.set_morph_preview(glb_path, preview, summary);
+        self.morph_draft_asset = Some(draft.asset);
+        self.morph_attachment_joint = draft.attachment_joint;
+        self.morph_lod_nodes = draft.lod_nodes;
+        self.validate_morph_draft();
+        self.notice = "Morph draft reimported".to_owned();
     }
 
     pub(crate) fn set_morph_import_error(&mut self, message: String) {
@@ -1327,6 +1416,9 @@ impl StudioShell {
                                 if ui.button("Validate mapping").clicked() {
                                     self.validate_morph_draft();
                                 }
+                                if ui.button("Save draft").clicked() {
+                                    self.morph_draft_export_requested = true;
+                                }
                                 if ui.button("Export .morph.json").clicked() {
                                     self.validate_morph_draft();
                                     if self
@@ -1448,13 +1540,8 @@ impl StudioShell {
                         icon_button(ui, Icon::More, "Preview options", false);
                         icon_button(ui, Icon::Camera, "Camera view", false);
                         icon_button(ui, Icon::Grid, "Toggle grid", true);
-                        if icon_button(
-                            ui,
-                            Icon::Object,
-                            "Toggle wireframe",
-                            self.morph_wireframe,
-                        )
-                        .clicked()
+                        if icon_button(ui, Icon::Object, "Toggle wireframe", self.morph_wireframe)
+                            .clicked()
                         {
                             self.morph_wireframe = !self.morph_wireframe;
                         }
@@ -1880,7 +1967,8 @@ fn morph_preview_projection(
         // A small depth offset keeps front and back surfaces legible while
         // preserving the model's useful front-facing silhouette.
         egui::pos2(
-            rect.center().x + (vertex[0] - center[0]) * scale
+            rect.center().x
+                + (vertex[0] - center[0]) * scale
                 + (vertex[2] - center[2]) * scale * 0.12,
             rect.center().y - (vertex[1] - center[1]) * scale
                 + (vertex[2] - center[2]) * scale * 0.06,
@@ -1934,8 +2022,11 @@ fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, co
             (base_color[2] * brightness * 255.0) as u8,
             (base_color[3] * 185.0) as u8,
         );
-        ui.painter()
-            .add(egui::Shape::convex_polygon(points.to_vec(), fill, Stroke::NONE));
+        ui.painter().add(egui::Shape::convex_polygon(
+            points.to_vec(),
+            fill,
+            Stroke::NONE,
+        ));
     }
 }
 

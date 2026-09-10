@@ -15,9 +15,10 @@ mod morphs;
 mod network;
 mod shell;
 use morphs::{
-    MorphGlbPreviewMesh, decode_source_glb_preview, decode_source_glb_preview_node,
-    compile_source_morph_pack, encode_morph_thumbnail_png, inspect_source_glb_structure,
-    inspect_source_sidecar, source_manifest_geometry_file,
+    MorphGlbPreviewMesh, compile_source_morph_pack, decode_source_glb_preview,
+    decode_source_glb_preview_node, encode_morph_thumbnail_png, inspect_source_glb_structure,
+    inspect_source_sidecar, is_morph_draft_json, parse_morph_draft_json,
+    source_manifest_geometry_file,
 };
 use network::{BackendClient, BackendEvent};
 use shell::{PreparedShell, StudioShell};
@@ -228,6 +229,13 @@ impl StudioApp {
         if import_requested {
             self.import_morph_glb();
         }
+        let draft_export_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_draft_export_request);
+        if draft_export_requested {
+            self.export_morph_draft();
+        }
         let sidecar_export_requested = self
             .shell
             .as_mut()
@@ -405,6 +413,30 @@ impl StudioApp {
         self.request_redraw();
     }
 
+    fn export_morph_draft(&mut self) {
+        let payload = self
+            .shell
+            .as_ref()
+            .map(StudioShell::morph_draft_payload)
+            .unwrap_or_else(|| Err("Studio shell is not ready.".to_owned()));
+        let result = payload.and_then(|(suggested_name, json)| {
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Morph draft", &["json"])
+                .set_file_name(&suggested_name)
+                .set_title("Save morph draft")
+                .save_file()
+            else {
+                return Err("Morph draft save cancelled.".to_owned());
+            };
+            fs::write(&path, json)
+                .map_err(|error| format!("Could not write {}: {error}", path.display()))
+        });
+        if let Some(shell) = &mut self.shell {
+            shell.set_morph_draft_export_result(result);
+        }
+        self.request_redraw();
+    }
+
     fn import_morph_sidecar(&mut self) {
         let Some(sidecar_path) = rfd::FileDialog::new()
             .add_filter("Morph sidecar", &["json"])
@@ -416,8 +448,16 @@ impl StudioApp {
         let result = fs::read_to_string(&sidecar_path)
             .map_err(|error| format!("Could not read {}: {error}", sidecar_path.display()))
             .and_then(|manifest_source| {
-                let geometry_file = source_manifest_geometry_file(&manifest_source)
-                    .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                let draft = if is_morph_draft_json(&manifest_source) {
+                    Some(parse_morph_draft_json(&manifest_source)?)
+                } else {
+                    None
+                };
+                let geometry_file = match &draft {
+                    Some(draft) => draft.geometry_file.clone(),
+                    None => source_manifest_geometry_file(&manifest_source)
+                        .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?,
+                };
                 let glb_path = sidecar_path
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new("."))
@@ -428,19 +468,42 @@ impl StudioApp {
                         glb_path.display()
                     )
                 })?;
-                let (manifest, preview, summary) = inspect_source_sidecar(&manifest_source, &glb)
-                    .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
-                let lod_previews: [Option<MorphGlbPreviewMesh>; 3] = std::array::from_fn(|index| {
-                    let level = ["near", "mid", "far"][index];
-                    manifest
-                        .geometry
-                        .lod_nodes
-                        .get(level)
-                        .and_then(|node| decode_source_glb_preview_node(&glb, node).ok())
-                });
+                let (manifest, draft, preview, summary, lod_previews) = match draft {
+                    Some(draft) => {
+                        let preview = decode_source_glb_preview(&glb)
+                            .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                        let summary = inspect_source_glb_structure(&glb)
+                            .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                        let lod_previews: [Option<MorphGlbPreviewMesh>; 3] =
+                            std::array::from_fn(|index| {
+                                if draft.lod_nodes[index].is_empty() {
+                                    None
+                                } else {
+                                    decode_source_glb_preview_node(&glb, &draft.lod_nodes[index])
+                                        .ok()
+                                }
+                            });
+                        (None, Some(draft), preview, summary, lod_previews)
+                    }
+                    None => {
+                        let (manifest, preview, summary) =
+                            inspect_source_sidecar(&manifest_source, &glb).map_err(
+                                |diagnostics| Self::format_morph_diagnostics(&diagnostics),
+                            )?;
+                        let lod_previews: [Option<MorphGlbPreviewMesh>; 3] =
+                            std::array::from_fn(|index| {
+                                let level = ["near", "mid", "far"][index];
+                                manifest.geometry.lod_nodes.get(level).and_then(|node| {
+                                    decode_source_glb_preview_node(&glb, node).ok()
+                                })
+                            });
+                        (Some(manifest), None, preview, summary, lod_previews)
+                    }
+                };
                 Ok((
                     glb_path.display().to_string(),
                     manifest,
+                    draft,
                     preview,
                     summary,
                     lod_previews,
@@ -448,8 +511,12 @@ impl StudioApp {
             });
         if let Some(shell) = &mut self.shell {
             match result {
-                Ok((glb_path, manifest, preview, summary, lod_previews)) => {
-                    shell.set_morph_sidecar_preview(glb_path, manifest, preview, summary);
+                Ok((glb_path, manifest, draft, preview, summary, lod_previews)) => {
+                    if let Some(manifest) = manifest {
+                        shell.set_morph_sidecar_preview(glb_path, manifest, preview, summary);
+                    } else if let Some(draft) = draft {
+                        shell.set_morph_draft_preview(glb_path, draft, preview, summary);
+                    }
                     for (level, preview) in lod_previews.into_iter().enumerate() {
                         if let Some(preview) = preview {
                             shell.set_morph_lod_preview(level, preview);
@@ -482,9 +549,8 @@ impl StudioApp {
             else {
                 return Err("Morph pack publish cancelled.".to_owned());
             };
-            fs::write(&path, pack).map_err(|error| {
-                format!("Could not write {}: {error}", path.display())
-            })?;
+            fs::write(&path, pack)
+                .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
             Ok((summary.asset_id, summary.byte_len))
         });
         if let Some(shell) = &mut self.shell {
