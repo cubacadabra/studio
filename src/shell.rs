@@ -361,6 +361,9 @@ pub(crate) struct StudioShell {
     morph_preview_path: Option<String>,
     morph_preview: Option<MorphGlbPreviewMesh>,
     morph_source_summary: Option<MorphGlbSourceSummary>,
+    morph_attachment_joint: String,
+    morph_lod_nodes: [String; 3],
+    morph_draft_status: Option<(bool, String)>,
     morph_import_error: Option<String>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
@@ -417,6 +420,9 @@ impl StudioShell {
             morph_preview_path: None,
             morph_preview: None,
             morph_source_summary: None,
+            morph_attachment_joint: "head".to_owned(),
+            morph_lod_nodes: [String::new(), String::new(), String::new()],
+            morph_draft_status: None,
             morph_import_error: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
@@ -451,7 +457,18 @@ impl StudioShell {
     ) {
         self.morph_preview_path = Some(path);
         self.morph_preview = Some(preview);
+        self.morph_attachment_joint = "head".to_owned();
+        self.morph_lod_nodes = ["near", "mid", "far"].map(|level| {
+            summary
+                .lod_candidates
+                .get(level)
+                .filter(|candidates| candidates.len() == 1)
+                .and_then(|candidates| candidates.first())
+                .cloned()
+                .unwrap_or_default()
+        });
         self.morph_source_summary = Some(summary);
+        self.morph_draft_status = None;
         self.morph_import_error = None;
         self.notice = "GLB preview imported".to_owned();
     }
@@ -459,6 +476,49 @@ impl StudioShell {
     pub(crate) fn set_morph_import_error(&mut self, message: String) {
         self.morph_import_error = Some(message.clone());
         self.notice = message;
+    }
+
+    fn validate_morph_draft(&mut self) {
+        let Some(summary) = &self.morph_source_summary else {
+            self.morph_draft_status = Some((
+                false,
+                "Import a GLB before validating its draft.".to_owned(),
+            ));
+            return;
+        };
+        let mut issues = Vec::new();
+        let joint = self.morph_attachment_joint.trim();
+        if joint.is_empty() || joint.contains('/') || joint.contains('\\') {
+            issues.push("Attachment joint must be a non-empty joint name.".to_owned());
+        }
+        for (index, level) in ["Near", "Mid", "Far"].into_iter().enumerate() {
+            let node = self.morph_lod_nodes[index].trim();
+            if node.is_empty() {
+                issues.push(format!("{level} LOD needs a node mapping."));
+            } else if !summary.node_names.iter().any(|candidate| candidate == node) {
+                issues.push(format!(
+                    "{level} LOD node {node:?} is not present in the GLB."
+                ));
+            }
+        }
+        for first in 0..self.morph_lod_nodes.len() {
+            for second in (first + 1)..self.morph_lod_nodes.len() {
+                let first_node = self.morph_lod_nodes[first].trim();
+                if !first_node.is_empty() && first_node == self.morph_lod_nodes[second].trim() {
+                    issues.push("Near, Mid, and Far must use distinct nodes.".to_owned());
+                }
+            }
+        }
+        if issues.is_empty() {
+            self.morph_draft_status = Some((
+                true,
+                "Draft mapping is ready for sidecar export.".to_owned(),
+            ));
+            self.notice = "Draft mapping validated".to_owned();
+        } else {
+            self.morph_draft_status = Some((false, issues.join(" ")));
+            self.notice = "Draft mapping needs attention".to_owned();
+        }
     }
 
     pub(crate) fn execute_command(&mut self, command: StudioCommand) {
@@ -954,7 +1014,7 @@ impl StudioShell {
                                 );
                             }
                         });
-                        if let Some(summary) = &self.morph_source_summary {
+                        if let Some(summary) = self.morph_source_summary.clone() {
                             property_section(ui, "Source contract", |ui| {
                                 property_row(ui, "Nodes", &summary.node_names.len().to_string());
                                 property_row(ui, "Meshes", &summary.mesh_names.len().to_string());
@@ -969,7 +1029,7 @@ impl StudioShell {
                                     &summary.triangle_count.to_string(),
                                 );
                                 for level in ["near", "mid", "far"] {
-                                    let status = source_lod_status(summary, level);
+                                    let status = source_lod_status(&summary, level);
                                     property_row(ui, &format!("{} LOD", title_case(level)), &status);
                                 }
                                 if ["near", "mid", "far"]
@@ -982,6 +1042,41 @@ impl StudioShell {
                                         )
                                         .size(TYPE.meta)
                                         .color(colors.axis_x),
+                                    );
+                                }
+                            });
+                            property_section(ui, "Draft mapping", |ui| {
+                                ui.label(
+                                    RichText::new("Attachment joint")
+                                        .size(TYPE.meta)
+                                        .color(colors.secondary_text),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.morph_attachment_joint)
+                                        .hint_text("head")
+                                        .desired_width(ui.available_width()),
+                                );
+                                for (index, level) in ["Near", "Mid", "Far"].into_iter().enumerate()
+                                {
+                                    ui.label(
+                                        RichText::new(format!("{level} LOD node"))
+                                            .size(TYPE.meta)
+                                            .color(colors.secondary_text),
+                                    );
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.morph_lod_nodes[index])
+                                            .hint_text("GLB node name")
+                                            .desired_width(ui.available_width()),
+                                    );
+                                }
+                                if ui.button("Validate mapping").clicked() {
+                                    self.validate_morph_draft();
+                                }
+                                if let Some((valid, status)) = &self.morph_draft_status {
+                                    ui.label(
+                                        RichText::new(status)
+                                            .size(TYPE.meta)
+                                            .color(if *valid { colors.live } else { colors.axis_x }),
                                     );
                                 }
                             });
