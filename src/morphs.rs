@@ -248,6 +248,11 @@ pub(crate) fn build_source_manifest_json(
     asset.source = Some(MorphSourceReference {
         geometry: geometry_file.clone(),
     });
+    asset.lod = MorphLodBudget {
+        near: triangle_counts[0],
+        mid: triangle_counts[1],
+        far: triangle_counts[2],
+    };
     let geometry = MorphGeometrySource {
         file: geometry_file,
         lod_nodes: BTreeMap::from([
@@ -540,12 +545,15 @@ mod tests {
             "test_top_hat.glb".to_owned(),
             "head",
             ["Near", "Mid", "Far"],
-            [248; 3],
+            [248, 124, 48],
         )
         .expect("valid sidecar");
         let manifest = parse_source_manifest(&source).expect("round-trip sidecar");
         assert_eq!(manifest.geometry.file, "test_top_hat.glb");
         assert_eq!(manifest.geometry.triangle_counts["near"], 248);
+        assert_eq!(manifest.asset.lod.near, 248);
+        assert_eq!(manifest.asset.lod.mid, 124);
+        assert_eq!(manifest.asset.lod.far, 48);
         assert_eq!(manifest.attachment.joint, "head");
     }
 
