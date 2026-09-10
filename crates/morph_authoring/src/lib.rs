@@ -38,6 +38,7 @@ pub struct MorphAttachment {
 pub struct MorphGeometrySource {
     pub file: String,
     pub lod_nodes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub triangle_counts: BTreeMap<String, u32>,
 }
 
@@ -382,12 +383,26 @@ pub fn inspect_glb_bytes(
             triangle_count = triangle_count.saturating_add(triangles);
         }
         if valid {
-            let expected = manifest.geometry.triangle_counts[level];
-            if triangle_count != expected {
+            let expected = match level {
+                "near" => manifest.asset.lod.near,
+                "mid" => manifest.asset.lod.mid,
+                "far" => manifest.asset.lod.far,
+                _ => unreachable!("the inspector only visits known LODs"),
+            };
+            if triangle_count > expected {
                 diagnostics.push(error(
-                    "MORPH_GLB_TRIANGLE_COUNT_MISMATCH",
+                    "MORPH_GLB_TRIANGLE_BUDGET_EXCEEDED",
+                    &format!("asset.lod.{level}"),
+                    format!("asset budget is {expected}, GLB reports {triangle_count}"),
+                ));
+            }
+            if let Some(legacy_count) = manifest.geometry.triangle_counts.get(level)
+                && *legacy_count != triangle_count
+            {
+                diagnostics.push(error(
+                    "MORPH_GLB_LEGACY_TRIANGLE_COUNT_MISMATCH",
                     &format!("geometry.triangleCounts.{level}"),
-                    format!("manifest declares {expected}, GLB reports {triangle_count}"),
+                    format!("legacy sidecar count is {legacy_count}, GLB reports {triangle_count}"),
                 ));
             }
             lods.insert(
@@ -1349,31 +1364,22 @@ fn validate_geometry(source: &MorphGeometrySource, diagnostics: &mut Vec<MorphDi
                 "near, mid, and far LOD nodes are required",
             )),
         }
-        if !source.triangle_counts.contains_key(level) {
-            diagnostics.push(error(
-                "MORPH_SOURCE_MISSING_TRIANGLE_COUNT",
-                &format!("geometry.triangleCounts.{level}"),
-                "near, mid, and far triangle counts are required",
-            ));
-        }
     }
-    if source.lod_nodes.len() != 3 || source.triangle_counts.len() != 3 {
+    if source.lod_nodes.len() != 3 {
         diagnostics.push(error(
             "MORPH_SOURCE_INVALID_LOD_COUNT",
             "geometry",
-            "only near, mid, and far LOD entries are allowed",
+            "only near, mid, and far LOD node entries are allowed",
         ));
     }
-    let triangle = |level: &str| source.triangle_counts.get(level).copied().unwrap_or(0);
-    if triangle("near") < triangle("mid")
-        || triangle("mid") < triangle("far")
-        || triangle("far") == 0
-    {
-        diagnostics.push(error(
-            "MORPH_SOURCE_INVALID_TRIANGLE_BUDGET",
-            "geometry.triangleCounts",
-            "triangle counts must be near >= mid >= far > 0",
-        ));
+    for level in source.triangle_counts.keys() {
+        if !matches!(level.as_str(), "near" | "mid" | "far") {
+            diagnostics.push(error(
+                "MORPH_SOURCE_INVALID_LEGACY_TRIANGLE_COUNT",
+                "geometry.triangleCounts",
+                "legacy triangle counts may only contain near, mid, and far",
+            ));
+        }
     }
 }
 
@@ -1657,8 +1663,7 @@ mod tests {
         let glb = glb_fixture(&manifest, [1201, 500, 100]);
         let diagnostics = inspect_glb_bytes(&manifest, &glb).unwrap_err();
         assert!(diagnostics.iter().any(|item| {
-            item.code == "MORPH_GLB_TRIANGLE_COUNT_MISMATCH"
-                && item.path == "geometry.triangleCounts.near"
+            item.code == "MORPH_GLB_TRIANGLE_BUDGET_EXCEEDED" && item.path == "asset.lod.near"
         }));
     }
 

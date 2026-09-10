@@ -265,11 +265,7 @@ pub(crate) fn build_source_manifest_json(
             ("mid".to_owned(), lod_nodes[1].to_owned()),
             ("far".to_owned(), lod_nodes[2].to_owned()),
         ]),
-        triangle_counts: BTreeMap::from([
-            ("near".to_owned(), triangle_counts[0]),
-            ("mid".to_owned(), triangle_counts[1]),
-            ("far".to_owned(), triangle_counts[2]),
-        ]),
+        triangle_counts: BTreeMap::new(),
     };
     let manifest = MorphSourceManifest {
         schema_version: cubacadabra_morph_authoring::MORPH_SOURCE_SCHEMA_VERSION,
@@ -608,7 +604,7 @@ mod tests {
         .expect("valid sidecar");
         let manifest = parse_source_manifest(&source).expect("round-trip sidecar");
         assert_eq!(manifest.geometry.file, "test_top_hat.glb");
-        assert_eq!(manifest.geometry.triangle_counts["near"], 248);
+        assert!(manifest.geometry.triangle_counts.is_empty());
         assert_eq!(manifest.asset.lod.near, 248);
         assert_eq!(manifest.asset.lod.mid, 124);
         assert_eq!(manifest.asset.lod.far, 48);

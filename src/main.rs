@@ -2,7 +2,7 @@ use cubacadabra_client::{ClientAction, ClientSession, native::Renderer};
 use image::{GenericImage, RgbaImage, imageops::FilterType};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env,
     error::Error,
     fmt, fs,
@@ -77,6 +77,7 @@ struct StudioApp {
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
     mobile_sprint: bool,
+    morph_equipment: BTreeMap<String, String>,
     climb: bool,
     joystick_input: (f32, f32),
     pointer_position: Option<(f32, f32)>,
@@ -107,6 +108,7 @@ impl StudioApp {
             pressed_keys: HashSet::new(),
             jump_queued: false,
             mobile_sprint: false,
+            morph_equipment: BTreeMap::new(),
             climb: false,
             joystick_input: (0.0, 0.0),
             pointer_position: None,
@@ -589,15 +591,18 @@ impl StudioApp {
         let decoded = decode_morph_pack(pack)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
         let asset_id = decoded.asset.id.to_string();
+        let equipment_slot = morph_equipment_slot(&decoded.asset);
         self.renderer
             .as_mut()
             .ok_or_else(|| "The renderer is not ready for morph registration.".to_owned())?
             .register_morph_pack(pack)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
 
+        let mut equipment = self.morph_equipment.clone();
+        equipment.insert(equipment_slot.to_owned(), asset_id.clone());
         let appearance = serde_json::json!({
             "version": 1,
-            "equipment": { "hat": asset_id },
+            "equipment": equipment,
             "revision": self.client.engine().appearance_revision().saturating_add(1),
         })
         .to_string();
@@ -611,6 +616,7 @@ impl StudioApp {
                 "The morph pack registered, but the player appearance was rejected.".to_owned(),
             );
         }
+        self.morph_equipment = equipment;
         Ok((asset_id, pack.len()))
     }
 
@@ -1211,6 +1217,26 @@ fn safe_asset_path(root: &Path, relative: &str) -> Result<PathBuf, Box<dyn Error
         ))));
     }
     Ok(path)
+}
+
+fn morph_equipment_slot(asset: &cubacadabra_morphs::MorphAssetDefinition) -> &'static str {
+    if asset
+        .occupied_slots
+        .iter()
+        .any(|slot| slot == "ear-accessory")
+    {
+        "ear-accessory"
+    } else if asset.occupied_slots.iter().any(|slot| slot == "facewear") {
+        "glasses"
+    } else if asset.occupied_slots.iter().any(|slot| slot == "neck") {
+        "neck"
+    } else if asset.occupied_slots.iter().any(|slot| slot == "back") {
+        "back"
+    } else if asset.occupied_slots.iter().any(|slot| slot == "waist") {
+        "waist"
+    } else {
+        "hat"
+    }
 }
 
 fn next_power_of_two(value: u32) -> u32 {
