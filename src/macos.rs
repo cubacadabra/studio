@@ -5,8 +5,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionKey, NSApplication, NSEventModifierFlags,
-    NSImage, NSMenu, NSMenuItem,
+    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionKey, NSApplication, NSBitmapImageFileType,
+    NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSEventModifierFlags, NSImage, NSMenu,
+    NSMenuItem,
 };
 use objc2_foundation::{NSData, NSDictionary, NSObject, NSString, ns_string};
 
@@ -78,6 +79,22 @@ pub(crate) fn set_application_icon() {
 
     // SAFETY: NSApplication retains the valid NSImage for its icon property.
     unsafe { application.setApplicationIconImage(Some(&image)) };
+}
+
+pub(crate) fn system_symbol_png(name: &str) -> Option<Vec<u8>> {
+    let _main_thread = main_thread_marker();
+    let name = NSString::from_str(name);
+    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&name, None)?;
+    let tiff = image.TIFFRepresentation()?;
+    let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)?;
+    let properties = NSDictionary::<NSBitmapImageRepPropertyKey, AnyObject>::new();
+    // SAFETY: An empty properties dictionary is valid for PNG export and has
+    // the exact key/value types required by AppKit's image representation API.
+    unsafe {
+        bitmap
+            .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+            .map(|data| data.to_vec())
+    }
 }
 
 pub(crate) fn install_native_menu() {

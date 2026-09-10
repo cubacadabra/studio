@@ -23,8 +23,10 @@ winit = "0.30"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSApplication",
+    "NSBitmapImageRep",
     "NSEvent",
     "NSImage",
+    "NSImageRep",
     "NSMenu",
     "NSMenuItem",
     "NSResponder",

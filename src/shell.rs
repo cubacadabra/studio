@@ -7,6 +7,8 @@ use egui::{
 };
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor, wgpu};
 use egui_winit::State as EguiState;
+#[cfg(target_os = "macos")]
+use std::collections::HashMap;
 use std::{fs, sync::Arc, time::Duration};
 use winit::{event::WindowEvent, window::Window};
 
@@ -183,7 +185,7 @@ const LIGHT_PALETTE: Palette = Palette {
 };
 const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Icon {
     World,
     Assets,
@@ -220,6 +222,42 @@ enum Icon {
     Logs,
     Gauge,
 }
+
+#[cfg(target_os = "macos")]
+const MACOS_SYSTEM_SYMBOLS: &[(Icon, &str)] = &[
+    (Icon::World, "globe"),
+    (Icon::Assets, "square.grid.2x2"),
+    (Icon::Material, "circle.lefthalf.filled"),
+    (Icon::Test, "play.rectangle"),
+    (Icon::Folder, "folder.fill"),
+    (Icon::Object, "cube"),
+    (Icon::Image, "photo"),
+    (Icon::Character, "person"),
+    (Icon::Search, "magnifyingglass"),
+    (Icon::Filter, "line.3.horizontal.decrease"),
+    (Icon::Grid, "square.grid.2x2"),
+    (Icon::Camera, "camera"),
+    (Icon::Sliders, "slider.horizontal.3"),
+    (Icon::More, "ellipsis"),
+    (Icon::Plus, "plus"),
+    (Icon::Play, "play.fill"),
+    (Icon::Stop, "stop.fill"),
+    (Icon::Check, "checkmark"),
+    (Icon::ChevronDown, "chevron.down"),
+    (Icon::ChevronRight, "chevron.right"),
+    (Icon::Eye, "eye"),
+    (Icon::Lock, "lock"),
+    (Icon::Open, "square.and.arrow.down"),
+    (Icon::Network, "network"),
+    (Icon::Logs, "list.bullet.rectangle"),
+    (Icon::Gauge, "speedometer"),
+];
+
+#[cfg(target_os = "macos")]
+const SYSTEM_ICON_ATLAS_ID: &str = "studio-macos-system-icons";
+
+#[cfg(target_os = "macos")]
+type SystemIconAtlas = Arc<HashMap<Icon, egui::TextureHandle>>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Workspace {
@@ -310,6 +348,8 @@ impl StudioShell {
             RendererOptions::default(),
         );
         let logo_texture = load_logo_texture(&context);
+        #[cfg(target_os = "macos")]
+        install_system_icon_textures(&context);
         Self {
             context,
             state,
@@ -1217,6 +1257,62 @@ fn load_logo_texture(context: &egui::Context) -> egui::TextureHandle {
     )
 }
 
+#[cfg(target_os = "macos")]
+fn install_system_icon_textures(context: &egui::Context) {
+    let textures = MACOS_SYSTEM_SYMBOLS
+        .iter()
+        .filter_map(|&(icon, symbol)| {
+            let png = crate::macos::system_symbol_png(symbol)?;
+            let image = system_icon_color_image(&png)?;
+            let texture = context.load_texture(
+                format!("sf-symbol-{symbol}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            );
+            Some((icon, texture))
+        })
+        .collect::<HashMap<_, _>>();
+    context.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new(SYSTEM_ICON_ATLAS_ID),
+            Arc::new(textures) as SystemIconAtlas,
+        );
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn system_icon_color_image(png: &[u8]) -> Option<egui::ColorImage> {
+    let rgba = image::load_from_memory(png).ok()?.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut bounds = None::<(u32, u32, u32, u32)>;
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        bounds = Some(match bounds {
+            Some((min_x, min_y, max_x, max_y)) => {
+                (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+            }
+            None => (x, y, x, y),
+        });
+    }
+    let (min_x, min_y, max_x, max_y) = bounds?;
+    let min_x = min_x.saturating_sub(1);
+    let min_y = min_y.saturating_sub(1);
+    let max_x = (max_x + 1).min(width - 1);
+    let max_y = (max_y + 1).min(height - 1);
+    let mut cropped =
+        image::imageops::crop_imm(&rgba, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+            .to_image();
+    for pixel in cropped.pixels_mut() {
+        *pixel = image::Rgba([255, 255, 255, pixel[3]]);
+    }
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [cropped.width() as usize, cropped.height() as usize],
+        cropped.as_raw(),
+    ))
+}
+
 fn menu_bar_style(style: &mut egui::Style) {
     style.spacing.item_spacing.x = 0.0;
     style.spacing.button_padding = egui::vec2(LABEL_PADDING, 4.0);
@@ -1894,6 +1990,11 @@ fn asset_kind(name: &str) -> (Icon, &'static str) {
 }
 
 fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
+    #[cfg(target_os = "macos")]
+    if paint_system_icon(painter, rect, icon, color) {
+        return;
+    }
+
     let c = rect.center();
     let size = rect.width().min(rect.height()).max(1.0);
     let r = size * 0.42;
@@ -2258,4 +2359,27 @@ fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             ));
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn paint_system_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) -> bool {
+    let atlas = painter
+        .ctx()
+        .data(|data| data.get_temp::<SystemIconAtlas>(egui::Id::new(SYSTEM_ICON_ATLAS_ID)));
+    let Some(texture) = atlas.as_ref().and_then(|atlas| atlas.get(&icon)) else {
+        return false;
+    };
+    let texture_size = texture.size_vec2();
+    if texture_size.x <= 0.0 || texture_size.y <= 0.0 {
+        return false;
+    }
+    let scale = (rect.width() / texture_size.x).min(rect.height() / texture_size.y) * 0.94;
+    let symbol_rect = Rect::from_center_size(rect.center(), texture_size * scale);
+    painter.image(
+        texture.id(),
+        symbol_rect,
+        Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        color,
+    );
+    true
 }
