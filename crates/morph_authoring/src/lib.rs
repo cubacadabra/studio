@@ -1,9 +1,10 @@
 //! Studio-only source manifests for authored morph assets.
 //!
 //! This authoring slice validates the sidecar contract around a Blender export,
-//! inspects its GLB container/JSON LOD metadata, and decodes bounded mesh data
-//! for the Studio preview. It does not compile a runtime pack yet.
+//! inspects its GLB container/JSON LOD metadata, decodes bounded mesh data for
+//! the Studio preview, and compiles the shared runtime pack format.
 
+pub use cubacadabra_morphs::{MAX_MORPH_PACK_BYTES, MORPH_PACK_MAGIC, MORPH_PACK_SCHEMA_VERSION};
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,9 +12,6 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MORPH_SOURCE_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SOURCE_MANIFEST_BYTES: usize = 256 * 1024;
 pub const MAX_SOURCE_GLB_BYTES: usize = 64 * 1024 * 1024;
-pub const MORPH_PACK_SCHEMA_VERSION: u16 = 1;
-pub const MAX_MORPH_PACK_BYTES: usize = 64 * 1024 * 1024;
-pub const MORPH_PACK_MAGIC: &[u8; 8] = b"CUBAMORP";
 const MAX_NODE_NAME_BYTES: usize = 96;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
