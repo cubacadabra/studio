@@ -14,6 +14,7 @@ mod macos;
 mod morphs;
 mod network;
 mod shell;
+use cubacadabra_morphs::decode_morph_pack;
 use morphs::{
     MorphGlbPreviewMesh, compile_source_morph_pack, decode_source_glb_preview,
     decode_source_glb_preview_node, encode_morph_thumbnail_png, inspect_source_glb_structure,
@@ -249,6 +250,13 @@ impl StudioApp {
             .is_some_and(StudioShell::take_morph_sidecar_import_request);
         if sidecar_import_requested {
             self.import_morph_sidecar();
+        }
+        let pack_import_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_pack_import_request);
+        if pack_import_requested {
+            self.import_morph_pack();
         }
         let publish_requested = self
             .shell
@@ -549,14 +557,61 @@ impl StudioApp {
             else {
                 return Err("Morph pack publish cancelled.".to_owned());
             };
-            fs::write(&path, pack)
+            fs::write(&path, &pack)
                 .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
-            Ok((summary.asset_id, summary.byte_len))
+            Ok((summary.asset_id, summary.byte_len, pack))
         });
+        let result = result.and_then(|(_, _, pack)| self.activate_morph_pack(&pack));
         if let Some(shell) = &mut self.shell {
             shell.set_morph_publish_result(result);
         }
         self.request_redraw();
+    }
+
+    fn import_morph_pack(&mut self) {
+        let result = rfd::FileDialog::new()
+            .add_filter("Morph pack", &["morphpack"])
+            .set_title("Load morph pack")
+            .pick_file()
+            .ok_or_else(|| "Morph pack load cancelled.".to_owned())
+            .and_then(|path| {
+                let pack = fs::read(&path)
+                    .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+                self.activate_morph_pack(&pack)
+            });
+        if let Some(shell) = &mut self.shell {
+            shell.set_morph_runtime_result(result);
+        }
+        self.request_redraw();
+    }
+
+    fn activate_morph_pack(&mut self, pack: &[u8]) -> Result<(String, usize), String> {
+        let decoded = decode_morph_pack(pack)
+            .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+        let asset_id = decoded.asset.id.to_string();
+        self.renderer
+            .as_mut()
+            .ok_or_else(|| "The renderer is not ready for morph registration.".to_owned())?
+            .register_morph_pack(pack)
+            .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+
+        let appearance = serde_json::json!({
+            "version": 1,
+            "equipment": { "hat": asset_id },
+            "revision": self.client.engine().appearance_revision().saturating_add(1),
+        })
+        .to_string();
+        if self
+            .client
+            .engine_mut()
+            .set_local_appearance_json(&appearance)
+            == 0
+        {
+            return Err(
+                "The morph pack registered, but the player appearance was rejected.".to_owned(),
+            );
+        }
+        Ok((asset_id, pack.len()))
     }
 
     fn generate_morph_thumbnail(&mut self) {

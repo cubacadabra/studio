@@ -373,6 +373,7 @@ pub(crate) struct StudioShell {
     morph_draft_status: Option<(bool, String)>,
     morph_draft_export_requested: bool,
     morph_sidecar_export_requested: bool,
+    morph_pack_import_requested: bool,
     morph_publish_requested: bool,
     morph_thumbnail_requested: bool,
     morph_wireframe: bool,
@@ -441,6 +442,7 @@ impl StudioShell {
             morph_draft_status: None,
             morph_draft_export_requested: false,
             morph_sidecar_export_requested: false,
+            morph_pack_import_requested: false,
             morph_publish_requested: false,
             morph_thumbnail_requested: false,
             morph_wireframe: true,
@@ -472,6 +474,10 @@ impl StudioShell {
 
     pub(crate) fn take_morph_sidecar_import_request(&mut self) -> bool {
         std::mem::take(&mut self.morph_sidecar_import_requested)
+    }
+
+    pub(crate) fn take_morph_pack_import_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_pack_import_requested)
     }
 
     pub(crate) fn take_morph_sidecar_export_request(&mut self) -> bool {
@@ -668,6 +674,22 @@ impl StudioShell {
                 self.morph_draft_status =
                     Some((true, format!("Published {asset_id} ({byte_len} bytes).")));
                 self.notice = "Morph pack published".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
+        }
+    }
+
+    pub(crate) fn set_morph_runtime_result(&mut self, result: Result<(String, usize), String>) {
+        match result {
+            Ok((asset_id, byte_len)) => {
+                self.morph_draft_status = Some((
+                    true,
+                    format!("Loaded {asset_id} for the live player ({byte_len} bytes)."),
+                ));
+                self.notice = "Morph pack loaded".to_owned();
             }
             Err(message) => {
                 self.morph_draft_status = Some((false, message.clone()));
@@ -1327,13 +1349,17 @@ impl StudioShell {
                     icon_button(ui, Icon::More, "Morph options", false);
                 });
                 content_frame().show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui.button("Import GLB").clicked() {
                             self.morph_import_requested = true;
                             self.morph_import_error = None;
                         }
                         if ui.button("Open .morph.json").clicked() {
                             self.morph_sidecar_import_requested = true;
+                            self.morph_import_error = None;
+                        }
+                        if ui.button("Load .morphpack").clicked() {
+                            self.morph_pack_import_requested = true;
                             self.morph_import_error = None;
                         }
                     });
