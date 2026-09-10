@@ -154,7 +154,9 @@ pub(crate) fn encode_morph_thumbnail_png(mesh: &MorphGlbPreviewMesh) -> Result<V
     triangles.sort_by(|first, second| first.0.total_cmp(&second.0));
     for (_, points, brightness) in triangles {
         let area = edge(points[0], points[1], points[2]);
-        if area.abs() < f32::EPSILON {
+        // Avoid rasterizing faces that collapse to a sub-pixel sliver in the
+        // fixed thumbnail view; they otherwise become visible one-pixel bars.
+        if area.abs() < 1.0 {
             continue;
         }
         let min_x = points

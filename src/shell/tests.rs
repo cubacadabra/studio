@@ -138,6 +138,24 @@ fn editor_headers_keep_their_height_with_actions_at_different_widths() {
 }
 
 #[test]
+fn morph_preview_detects_screen_space_slivers() {
+    assert!(
+        projected_triangle_area([
+            egui::pos2(10.0, 10.0),
+            egui::pos2(10.005, 10.0),
+            egui::pos2(10.0, 100.0),
+        ]) < 0.5
+    );
+    assert!(
+        projected_triangle_area([
+            egui::pos2(10.0, 10.0),
+            egui::pos2(30.0, 10.0),
+            egui::pos2(10.0, 30.0),
+        ]) > 0.5
+    );
+}
+
+#[test]
 fn shell_palette_follows_the_system_appearance() {
     for (theme, expected) in [
         (egui::Theme::Dark, DARK_PALETTE),

@@ -2006,13 +2006,17 @@ fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, co
         let Some(c) = mesh.vertices.get(triangle[2] as usize).copied() else {
             continue;
         };
+        let points = [project(a), project(b), project(c)];
+        // Low-detail exports can contain faces that are valid in 3D but
+        // collapse to a sub-pixel sliver in this fixed front preview. egui's
+        // polygon fill turns those into distracting bars, so leave them to
+        // the wireframe inspection instead.
+        if projected_triangle_area(points) < 0.5 {
+            continue;
+        }
         let normal = cross3(sub3(b, a), sub3(c, a));
         let brightness = (dot3(normalize3(normal), light).abs() * 0.55 + 0.45).clamp(0.0, 1.0);
-        triangles.push((
-            (a[2] + b[2] + c[2]) / 3.0,
-            [project(a), project(b), project(c)],
-            brightness,
-        ));
+        triangles.push(((a[2] + b[2] + c[2]) / 3.0, points, brightness));
     }
     triangles.sort_by(|first, second| first.0.total_cmp(&second.0));
     for (_, points, brightness) in triangles {
@@ -2028,6 +2032,13 @@ fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, co
             Stroke::NONE,
         ));
     }
+}
+
+fn projected_triangle_area(points: [egui::Pos2; 3]) -> f32 {
+    ((points[1].x - points[0].x) * (points[2].y - points[0].y)
+        - (points[1].y - points[0].y) * (points[2].x - points[0].x))
+        .abs()
+        * 0.5
 }
 
 fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
