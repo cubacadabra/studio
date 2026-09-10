@@ -6,7 +6,7 @@
 
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const MORPH_SOURCE_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SOURCE_MANIFEST_BYTES: usize = 256 * 1024;
@@ -489,10 +489,19 @@ fn validate_geometry(source: &MorphGeometrySource, diagnostics: &mut Vec<MorphDi
         ));
     }
 
+    let mut lod_nodes = BTreeSet::new();
     for level in ["near", "mid", "far"] {
         let node_path = format!("geometry.lodNodes.{level}");
         match source.lod_nodes.get(level) {
-            Some(node) if !node.is_empty() && node.len() <= MAX_NODE_NAME_BYTES => {}
+            Some(node) if !node.is_empty() && node.len() <= MAX_NODE_NAME_BYTES => {
+                if !lod_nodes.insert(node) {
+                    diagnostics.push(error(
+                        "MORPH_SOURCE_DUPLICATE_LOD_NODE",
+                        &node_path,
+                        "near, mid, and far must reference distinct GLB nodes",
+                    ));
+                }
+            }
             Some(_) => diagnostics.push(error(
                 "MORPH_SOURCE_INVALID_LOD_NODE",
                 &node_path,
@@ -708,6 +717,19 @@ mod tests {
                 .iter()
                 .any(|item| item.code == "MORPH_SOURCE_INVALID_ATTACHMENT_ROTATION")
         );
+    }
+
+    #[test]
+    fn rejects_reusing_one_node_for_multiple_lods() {
+        let mut manifest = fixture();
+        manifest
+            .geometry
+            .lod_nodes
+            .insert("mid".to_owned(), "StarCap_LOD0".to_owned());
+        let diagnostics = manifest.validate();
+        assert!(diagnostics.iter().any(|item| {
+            item.code == "MORPH_SOURCE_DUPLICATE_LOD_NODE" && item.path == "geometry.lodNodes.mid"
+        }));
     }
 
     fn glb_fixture(manifest: &MorphSourceManifest, counts: [u64; 3]) -> Vec<u8> {
