@@ -14,6 +14,7 @@ mod macos;
 mod morphs;
 mod network;
 mod shell;
+use morphs::decode_source_glb_preview;
 use network::{BackendClient, BackendEvent};
 use shell::{PreparedShell, StudioShell};
 #[cfg(target_os = "macos")]
@@ -216,6 +217,13 @@ impl StudioApp {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
         };
+        let import_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_import_request);
+        if import_requested {
+            self.import_morph_glb();
+        }
         self.update_viewport();
         let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
 
@@ -296,6 +304,41 @@ impl StudioApp {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    fn import_morph_glb(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("GLB model", &["glb"])
+            .set_title("Import morph GLB")
+            .pick_file()
+        else {
+            return;
+        };
+        let display_path = path.display().to_string();
+        let result = fs::read(&path)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))
+            .and_then(|bytes| {
+                decode_source_glb_preview(&bytes).map_err(|diagnostics| {
+                    let summary = diagnostics
+                        .iter()
+                        .take(3)
+                        .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    if diagnostics.len() > 3 {
+                        format!("{summary}; and {} more", diagnostics.len() - 3)
+                    } else {
+                        summary
+                    }
+                })
+            });
+        if let Some(shell) = &mut self.shell {
+            match result {
+                Ok(preview) => shell.set_morph_preview(display_path, preview),
+                Err(message) => shell.set_morph_import_error(message),
+            }
+        }
+        self.request_redraw();
     }
 
     fn pointer_event(&mut self, phase: u8, x: f32, y: f32) -> bool {

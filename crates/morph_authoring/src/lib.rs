@@ -1,8 +1,8 @@
 //! Studio-only source manifests for authored morph assets.
 //!
-//! This authoring slice validates the sidecar contract around a Blender export
-//! and inspects its GLB container/JSON LOD metadata. It intentionally does not
-//! decode vertex buffers or compile a runtime pack yet.
+//! This authoring slice validates the sidecar contract around a Blender export,
+//! inspects its GLB container/JSON LOD metadata, and decodes bounded mesh data
+//! for the Studio preview. It does not compile a runtime pack yet.
 
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,13 @@ pub struct MorphGlbLodInspection {
     pub mesh_index: usize,
     pub primitive_count: usize,
     pub triangle_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MorphGlbPreviewMesh {
+    pub name: String,
+    pub vertices: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
 }
 
 impl MorphSourceManifest {
@@ -179,7 +186,7 @@ pub fn inspect_glb_bytes(
         ));
         return Err(diagnostics);
     }
-    let (version, json, bin_bytes) = match read_glb_chunks(bytes) {
+    let (version, json, bin) = match read_glb_chunks(bytes) {
         Ok(value) => value,
         Err(diagnostic) => return Err(vec![diagnostic]),
     };
@@ -349,11 +356,362 @@ pub fn inspect_glb_bytes(
         Ok(MorphGlbInspection {
             version,
             json_bytes: json.len(),
-            bin_bytes,
+            bin_bytes: bin.len(),
             lods,
         })
     } else {
         Err(diagnostics)
+    }
+}
+
+/// Decode the first mesh primitive's POSITION and index accessors for a small
+/// Studio preview. This is intentionally not a runtime importer: limits keep
+/// it bounded, and the result is CPU-owned data that can later be replaced by
+/// the compiled `.morphpack` path.
+pub fn decode_glb_preview(bytes: &[u8]) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
+    if bytes.len() > MAX_SOURCE_GLB_BYTES {
+        return Err(vec![error(
+            "MORPH_GLB_TOO_LARGE",
+            "geometry.file",
+            format!("GLB exceeds {MAX_SOURCE_GLB_BYTES} bytes"),
+        )]);
+    }
+    let (_version, json, bin) = read_glb_chunks(bytes).map_err(|diagnostic| vec![diagnostic])?;
+    let document: serde_json::Value = serde_json::from_slice(&json).map_err(|parse_error| {
+        vec![error(
+            "MORPH_GLB_INVALID_JSON",
+            "geometry.file",
+            parse_error.to_string(),
+        )]
+    })?;
+    let meshes = document
+        .get("meshes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_MESHES",
+                "meshes",
+                "GLB JSON must contain a meshes array",
+            )]
+        })?;
+    let mesh = meshes.first().ok_or_else(|| {
+        vec![error(
+            "MORPH_GLB_MISSING_MESHES",
+            "meshes",
+            "GLB must contain at least one mesh",
+        )]
+    })?;
+    let mesh_name = mesh
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("preview-mesh")
+        .to_owned();
+    let primitive = mesh
+        .get("primitives")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|primitives| primitives.first())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_PRIMITIVES",
+                "meshes[0]",
+                "mesh must contain a primitive",
+            )]
+        })?;
+    let position_accessor = primitive
+        .get("attributes")
+        .and_then(|attributes| attributes.get("POSITION"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_POSITION",
+                "meshes[0].primitives[0]",
+                "preview mesh needs a POSITION accessor",
+            )]
+        })?;
+    let accessors = document
+        .get("accessors")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_ACCESSORS",
+                "accessors",
+                "GLB JSON must contain an accessors array",
+            )]
+        })?;
+    let buffer_views = document
+        .get("bufferViews")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_BUFFER_VIEWS",
+                "bufferViews",
+                "GLB JSON must contain bufferViews",
+            )]
+        })?;
+    let vertices = decode_positions(
+        accessors.get(position_accessor).ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_ACCESSOR",
+                "meshes[0].primitives[0].attributes.POSITION",
+                "POSITION accessor is out of range",
+            )]
+        })?,
+        buffer_views,
+        &bin,
+    )?;
+    let indices = if let Some(index_accessor) = primitive
+        .get("indices")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+    {
+        decode_indices(
+            accessors.get(index_accessor).ok_or_else(|| {
+                vec![error(
+                    "MORPH_GLB_INVALID_ACCESSOR",
+                    "meshes[0].primitives[0].indices",
+                    "index accessor is out of range",
+                )]
+            })?,
+            buffer_views,
+            &bin,
+        )?
+    } else {
+        (0..u32::try_from(vertices.len()).map_err(|_| {
+            vec![error(
+                "MORPH_GLB_PREVIEW_LIMIT",
+                "meshes[0]",
+                "preview vertex count exceeds the supported limit",
+            )]
+        })?)
+            .collect()
+    };
+    if indices
+        .iter()
+        .any(|index| usize::try_from(*index).map_or(true, |index| index >= vertices.len()))
+    {
+        return Err(vec![error(
+            "MORPH_GLB_INVALID_INDEX",
+            "meshes[0].primitives[0].indices",
+            "preview index references a missing vertex",
+        )]);
+    }
+    Ok(MorphGlbPreviewMesh {
+        name: mesh_name,
+        vertices,
+        indices,
+    })
+}
+
+const MAX_PREVIEW_VERTICES: usize = 200_000;
+const MAX_PREVIEW_INDICES: usize = 600_000;
+
+fn decode_positions(
+    accessor: &serde_json::Value,
+    buffer_views: &[serde_json::Value],
+    bin: &[u8],
+) -> Result<Vec<[f32; 3]>, Vec<MorphDiagnostic>> {
+    let count = bounded_count(accessor, "POSITION")?;
+    if accessor.get("type").and_then(serde_json::Value::as_str) != Some("VEC3")
+        || accessor
+            .get("componentType")
+            .and_then(serde_json::Value::as_u64)
+            != Some(5126)
+    {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_POSITION",
+            "meshes[0].primitives[0].attributes.POSITION",
+            "POSITION must be a float VEC3 accessor",
+        )]);
+    }
+    let layout = accessor_layout(accessor, buffer_views, bin, 12, "POSITION")?;
+    let mut vertices = Vec::with_capacity(count);
+    for index in 0..count {
+        let start = layout.start + index * layout.stride;
+        let values = read_vec3(bin, start);
+        let Some(values) = values else {
+            return Err(vec![error(
+                "MORPH_GLB_TRUNCATED_POSITION",
+                "meshes[0].primitives[0].attributes.POSITION",
+                "POSITION data is truncated",
+            )]);
+        };
+        if !values.iter().all(|value| value.is_finite()) {
+            return Err(vec![error(
+                "MORPH_GLB_NONFINITE_POSITION",
+                "meshes[0].primitives[0].attributes.POSITION",
+                "POSITION data must be finite",
+            )]);
+        }
+        vertices.push(values);
+    }
+    Ok(vertices)
+}
+
+fn decode_indices(
+    accessor: &serde_json::Value,
+    buffer_views: &[serde_json::Value],
+    bin: &[u8],
+) -> Result<Vec<u32>, Vec<MorphDiagnostic>> {
+    let count = bounded_count(accessor, "indices")?;
+    let component_type = accessor
+        .get("componentType")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_UNSUPPORTED_INDICES",
+                "meshes[0].primitives[0].indices",
+                "index accessor needs a component type",
+            )]
+        })?;
+    let component_size = match component_type {
+        5121 => 1,
+        5123 => 2,
+        5125 => 4,
+        _ => {
+            return Err(vec![error(
+                "MORPH_GLB_UNSUPPORTED_INDICES",
+                "meshes[0].primitives[0].indices",
+                "indices must use unsigned byte, short, or int",
+            )]);
+        }
+    };
+    if accessor.get("type").and_then(serde_json::Value::as_str) != Some("SCALAR") {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_INDICES",
+            "meshes[0].primitives[0].indices",
+            "indices must be a SCALAR accessor",
+        )]);
+    }
+    let layout = accessor_layout(accessor, buffer_views, bin, component_size, "indices")?;
+    let mut indices = Vec::with_capacity(count);
+    for index in 0..count {
+        let start = layout.start + index * layout.stride;
+        let Some(value) = read_index(bin, start, component_type) else {
+            return Err(vec![error(
+                "MORPH_GLB_TRUNCATED_INDICES",
+                "meshes[0].primitives[0].indices",
+                "index data is truncated",
+            )]);
+        };
+        indices.push(value);
+    }
+    Ok(indices)
+}
+
+struct AccessorLayout {
+    start: usize,
+    stride: usize,
+}
+
+fn accessor_layout(
+    accessor: &serde_json::Value,
+    buffer_views: &[serde_json::Value],
+    bin: &[u8],
+    element_size: usize,
+    label: &str,
+) -> Result<AccessorLayout, Vec<MorphDiagnostic>> {
+    let view_index = accessor
+        .get("bufferView")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_BUFFER_VIEW",
+                label,
+                "accessor must reference a bufferView",
+            )]
+        })?;
+    let view = buffer_views.get(view_index).ok_or_else(|| {
+        vec![error(
+            "MORPH_GLB_INVALID_BUFFER_VIEW",
+            label,
+            "bufferView is out of range",
+        )]
+    })?;
+    let view_start = view
+        .get("byteOffset")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let stride = view
+        .get("byteStride")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(element_size);
+    if stride < element_size {
+        return Err(vec![error(
+            "MORPH_GLB_INVALID_STRIDE",
+            label,
+            "bufferView stride is smaller than the element",
+        )]);
+    }
+    let accessor_offset = accessor
+        .get("byteOffset")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let Some(start) = view_start.checked_add(accessor_offset) else {
+        return Err(vec![error(
+            "MORPH_GLB_INVALID_OFFSET",
+            label,
+            "accessor offset overflows",
+        )]);
+    };
+    if start >= bin.len() {
+        return Err(vec![error(
+            "MORPH_GLB_INVALID_OFFSET",
+            label,
+            "accessor starts outside the BIN chunk",
+        )]);
+    }
+    Ok(AccessorLayout { start, stride })
+}
+
+fn bounded_count(accessor: &serde_json::Value, label: &str) -> Result<usize, Vec<MorphDiagnostic>> {
+    let count = accessor
+        .get("count")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_COUNT",
+                label,
+                "accessor count is missing or too large",
+            )]
+        })?;
+    let limit = if label == "indices" {
+        MAX_PREVIEW_INDICES
+    } else {
+        MAX_PREVIEW_VERTICES
+    };
+    if count == 0 || count > limit {
+        return Err(vec![error(
+            "MORPH_GLB_PREVIEW_LIMIT",
+            label,
+            format!("accessor count must be 1..={limit}"),
+        )]);
+    }
+    Ok(count)
+}
+
+fn read_vec3(bytes: &[u8], start: usize) -> Option<[f32; 3]> {
+    let x = f32::from_le_bytes(bytes.get(start..start + 4)?.try_into().ok()?);
+    let y = f32::from_le_bytes(bytes.get(start + 4..start + 8)?.try_into().ok()?);
+    let z = f32::from_le_bytes(bytes.get(start + 8..start + 12)?.try_into().ok()?);
+    Some([x, y, z])
+}
+
+fn read_index(bytes: &[u8], start: usize, component_type: u64) -> Option<u32> {
+    match component_type {
+        5121 => bytes.get(start).copied().map(u32::from),
+        5123 => Some(u32::from(u16::from_le_bytes(
+            bytes.get(start..start + 2)?.try_into().ok()?,
+        ))),
+        5125 => Some(u32::from_le_bytes(
+            bytes.get(start..start + 4)?.try_into().ok()?,
+        )),
+        _ => None,
     }
 }
 
@@ -366,7 +724,7 @@ fn triangle_count_for_mode(mode: u64, count: u64) -> Option<u64> {
     }
 }
 
-fn read_glb_chunks(bytes: &[u8]) -> Result<(u32, Vec<u8>, usize), MorphDiagnostic> {
+fn read_glb_chunks(bytes: &[u8]) -> Result<(u32, Vec<u8>, Vec<u8>), MorphDiagnostic> {
     if bytes.len() < 12 {
         return Err(error(
             "MORPH_GLB_TRUNCATED",
@@ -407,7 +765,7 @@ fn read_glb_chunks(bytes: &[u8]) -> Result<(u32, Vec<u8>, usize), MorphDiagnosti
     }
     let mut offset = 12;
     let mut json = None;
-    let mut bin_bytes = 0usize;
+    let mut bin = Vec::new();
     while offset < bytes.len() {
         if bytes.len() - offset < 8 {
             return Err(error(
@@ -453,7 +811,14 @@ fn read_glb_chunks(bytes: &[u8]) -> Result<(u32, Vec<u8>, usize), MorphDiagnosti
                     "GLB must contain exactly one JSON chunk",
                 ));
             }
-            b"BIN\0" => bin_bytes = bin_bytes.saturating_add(chunk_length),
+            b"BIN\0" if bin.is_empty() => bin.extend_from_slice(&bytes[chunk_start..chunk_end]),
+            b"BIN\0" => {
+                return Err(error(
+                    "MORPH_GLB_MULTIPLE_BIN_CHUNKS",
+                    "geometry.file",
+                    "GLB must contain at most one BIN chunk",
+                ));
+            }
             _ => {}
         }
         offset = chunk_end;
@@ -468,7 +833,7 @@ fn read_glb_chunks(bytes: &[u8]) -> Result<(u32, Vec<u8>, usize), MorphDiagnosti
     while matches!(json.last(), Some(byte) if *byte == b'\0' || byte.is_ascii_whitespace()) {
         json.pop();
     }
-    Ok((version, json, bin_bytes))
+    Ok((version, json, bin))
 }
 
 fn validate_geometry(source: &MorphGeometrySource, diagnostics: &mut Vec<MorphDiagnostic>) {
@@ -799,5 +1164,61 @@ mod tests {
             item.code == "MORPH_GLB_TRIANGLE_COUNT_MISMATCH"
                 && item.path == "geometry.triangleCounts.near"
         }));
+    }
+
+    fn preview_glb_fixture() -> Vec<u8> {
+        let document = json!({
+            "asset": { "version": "2.0" },
+            "meshes": [{
+                "name": "Triangle",
+                "primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]
+            }],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+                {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+            ],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+                {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+            ],
+            "buffers": [{"byteLength": 44}]
+        });
+        let mut json_bytes = serde_json::to_vec(&document).unwrap();
+        while !json_bytes.len().is_multiple_of(4) {
+            json_bytes.push(b' ');
+        }
+        let mut bin = Vec::new();
+        for vertex in [[-1.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+            for value in vertex {
+                bin.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        for index in [0_u16, 1, 2] {
+            bin.extend_from_slice(&index.to_le_bytes());
+        }
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        let total_length = 12 + 8 + json_bytes.len() + 8 + bin.len();
+        let mut bytes = Vec::with_capacity(total_length);
+        bytes.extend_from_slice(b"glTF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&(total_length as u32).to_le_bytes());
+        bytes.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"JSON");
+        bytes.extend_from_slice(&json_bytes);
+        bytes.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"BIN\0");
+        bytes.extend_from_slice(&bin);
+        bytes
+    }
+
+    #[test]
+    fn decodes_bounded_preview_positions_and_indices() {
+        let preview = decode_glb_preview(&preview_glb_fixture()).unwrap();
+        assert_eq!(preview.name, "Triangle");
+        assert_eq!(preview.vertices.len(), 3);
+        assert_eq!(preview.indices, [0, 1, 2]);
+        assert_eq!(preview.vertices[2], [0.0, 1.0, 0.0]);
     }
 }

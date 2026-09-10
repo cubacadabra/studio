@@ -4,8 +4,10 @@
 //! future Morphs workspace to inspect drafts and diagnostics before anything
 //! is uploaded to the renderer.
 
+pub(crate) use cubacadabra_morph_authoring::MorphGlbPreviewMesh;
 use cubacadabra_morph_authoring::{
-    MorphGlbInspection, MorphSourceInspection, inspect_glb_bytes, parse_source_manifest,
+    MorphGlbInspection, MorphSourceInspection, decode_glb_preview, inspect_glb_bytes,
+    parse_source_manifest,
 };
 use cubacadabra_morphs::{
     CapabilitySet, MorphAssetId, MorphCatalog, MorphDiagnostic, ResolvedMorphLoadout,
@@ -31,6 +33,15 @@ pub(crate) fn inspect_source_glb(
 ) -> Result<MorphGlbInspection, Vec<MorphDiagnostic>> {
     let manifest = parse_source_manifest(manifest_source)?;
     inspect_glb_bytes(&manifest, glb)
+}
+
+/// Decode a bounded CPU preview for the Studio viewport. Runtime rendering
+/// still consumes compiled morph packs; this adapter keeps authoring concerns
+/// out of the shared client and engine paths.
+pub(crate) fn decode_source_glb_preview(
+    glb: &[u8],
+) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
+    decode_glb_preview(glb)
 }
 
 #[allow(dead_code)]

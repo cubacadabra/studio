@@ -1,3 +1,4 @@
+use crate::morphs::MorphGlbPreviewMesh;
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 #[cfg(target_os = "macos")]
@@ -356,6 +357,10 @@ pub(crate) struct StudioShell {
     morph_query: String,
     morph_catalog: MorphCatalog,
     selected_morph: MorphAssetId,
+    morph_import_requested: bool,
+    morph_preview_path: Option<String>,
+    morph_preview: Option<MorphGlbPreviewMesh>,
+    morph_import_error: Option<String>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
@@ -407,6 +412,10 @@ impl StudioShell {
             .expect("bundled morph catalog must be valid"),
             selected_morph: MorphAssetId::parse("cuba:base/person.v1")
                 .expect("built-in morph ID must be valid"),
+            morph_import_requested: false,
+            morph_preview_path: None,
+            morph_preview: None,
+            morph_import_error: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
@@ -426,6 +435,22 @@ impl StudioShell {
 
     pub(crate) fn is_playing(&self) -> bool {
         self.playing
+    }
+
+    pub(crate) fn take_morph_import_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_import_requested)
+    }
+
+    pub(crate) fn set_morph_preview(&mut self, path: String, preview: MorphGlbPreviewMesh) {
+        self.morph_preview_path = Some(path);
+        self.morph_preview = Some(preview);
+        self.morph_import_error = None;
+        self.notice = "GLB preview imported".to_owned();
+    }
+
+    pub(crate) fn set_morph_import_error(&mut self, message: String) {
+        self.morph_import_error = Some(message.clone());
+        self.notice = message;
     }
 
     pub(crate) fn execute_command(&mut self, command: StudioCommand) {
@@ -897,9 +922,35 @@ impl StudioShell {
             .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| {
                 panel_header(ui, Icon::Sliders, "Morph inspector", |ui| {
+                    if ui.button("Import GLB").clicked() {
+                        self.morph_import_requested = true;
+                        self.morph_import_error = None;
+                    }
                     icon_button(ui, Icon::More, "Morph options", false);
                 });
                 content_frame().show(ui, |ui| {
+                    if let Some(path) = &self.morph_preview_path {
+                        property_section(ui, "Imported source", |ui| {
+                            let filename = std::path::Path::new(path)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or(path);
+                            property_row(ui, "File", filename);
+                            if let Some(preview) = &self.morph_preview {
+                                property_row(ui, "Vertices", &preview.vertices.len().to_string());
+                                property_row(ui, "Indices", &preview.indices.len().to_string());
+                                property_row(
+                                    ui,
+                                    "Triangles",
+                                    &(preview.indices.len() / 3).to_string(),
+                                );
+                            }
+                        });
+                    }
+                    if let Some(error) = &self.morph_import_error {
+                        ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
+                        ui.add_space(4.0);
+                    }
                     if let Some(asset) = self.morph_catalog.asset(&self.selected_morph) {
                         selected_object_header(
                             ui,
@@ -956,7 +1007,94 @@ impl StudioShell {
                 });
             });
 
-        self.viewport_panel(root, "Orbit", "Morph preview");
+        self.morph_preview_panel(root);
+    }
+
+    fn morph_preview_panel(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
+        egui::CentralPanel::default()
+            .frame(Frame::NONE.fill(Color32::TRANSPARENT))
+            .show(root, |ui| {
+                let available = ui.available_rect_before_wrap();
+                editor_header(ui, |ui| {
+                    inline_icon(ui, Icon::Camera, colors.muted);
+                    ui.label(
+                        RichText::new("Morph preview")
+                            .font(semibold_font(TYPE.primary))
+                            .color(colors.text),
+                    );
+                    vertical_separator(ui, 12.0);
+                    ui.label(
+                        RichText::new("Imported GLB")
+                            .size(TYPE.secondary)
+                            .color(colors.secondary_text),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        icon_button(ui, Icon::More, "Preview options", false);
+                        icon_button(ui, Icon::Camera, "Camera view", false);
+                        icon_button(ui, Icon::Grid, "Toggle grid", true);
+                    });
+                });
+                let preview_rect = Rect::from_min_max(
+                    egui::pos2(
+                        available.min.x + 1.0,
+                        available.min.y + EDITOR_HEADER_HEIGHT,
+                    ),
+                    egui::pos2(available.max.x - 1.0, available.max.y - 1.0),
+                );
+                ui.painter()
+                    .rect_filled(preview_rect, 0.0, colors.surface_deep);
+                ui.painter().rect_stroke(
+                    available,
+                    0.0,
+                    Stroke::new(1.0, colors.border),
+                    StrokeKind::Inside,
+                );
+
+                let grid_color = colors.border.linear_multiply(0.55);
+                let grid_step = 32.0;
+                let mut x = preview_rect.left();
+                while x <= preview_rect.right() {
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(x, preview_rect.top()),
+                            egui::pos2(x, preview_rect.bottom()),
+                        ],
+                        Stroke::new(1.0, grid_color),
+                    );
+                    x += grid_step;
+                }
+                let mut y = preview_rect.top();
+                while y <= preview_rect.bottom() {
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(preview_rect.left(), y),
+                            egui::pos2(preview_rect.right(), y),
+                        ],
+                        Stroke::new(1.0, grid_color),
+                    );
+                    y += grid_step;
+                }
+
+                if let Some(preview) = &self.morph_preview {
+                    paint_morph_wireframe(ui, preview_rect, preview, colors.accent);
+                    ui.painter().text(
+                        preview_rect.left_top() + egui::vec2(10.0, 10.0),
+                        Align2::LEFT_TOP,
+                        format!("{} · {} vertices", preview.name, preview.vertices.len()),
+                        FontId::proportional(TYPE.meta),
+                        colors.secondary_text,
+                    );
+                } else {
+                    ui.painter().text(
+                        preview_rect.center(),
+                        Align2::CENTER_CENTER,
+                        "Import a GLB to preview its mesh",
+                        FontId::proportional(TYPE.secondary),
+                        colors.muted,
+                    );
+                }
+            });
     }
 
     fn show_test(&mut self, root: &mut egui::Ui) {
@@ -1246,6 +1384,56 @@ impl StudioShell {
                     }
                 });
             });
+    }
+}
+
+fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
+    if mesh.vertices.is_empty() || mesh.indices.len() < 3 {
+        return;
+    }
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for vertex in &mesh.vertices {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(vertex[axis]);
+            max[axis] = max[axis].max(vertex[axis]);
+        }
+    }
+    let span = (max[0] - min[0])
+        .max(max[1] - min[1])
+        .max(max[2] - min[2])
+        .max(0.0001);
+    let scale = (rect.width().min(rect.height()) * 0.78) / span;
+    let center = [
+        (min[0] + max[0]) * 0.5,
+        (min[1] + max[1]) * 0.5,
+        (min[2] + max[2]) * 0.5,
+    ];
+    let project = |vertex: [f32; 3]| {
+        egui::pos2(
+            rect.center().x + (vertex[0] - center[0]) * scale,
+            rect.center().y - (vertex[1] - center[1]) * scale,
+        )
+    };
+    let stroke = Stroke::new(1.0, color);
+    for triangle in mesh
+        .indices
+        .chunks(3)
+        .filter(|triangle| triangle.len() == 3)
+    {
+        let Some(a) = mesh.vertices.get(triangle[0] as usize).copied() else {
+            continue;
+        };
+        let Some(b) = mesh.vertices.get(triangle[1] as usize).copied() else {
+            continue;
+        };
+        let Some(c) = mesh.vertices.get(triangle[2] as usize).copied() else {
+            continue;
+        };
+        let points = [project(a), project(b), project(c)];
+        ui.painter().line_segment([points[0], points[1]], stroke);
+        ui.painter().line_segment([points[1], points[2]], stroke);
+        ui.painter().line_segment([points[2], points[0]], stroke);
     }
 }
 
