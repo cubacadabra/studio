@@ -663,7 +663,14 @@ pub fn decode_glb_preview_node(
             (values.len() == 4
                 && values.iter().all(|value| value.is_finite())
                 && values.iter().all(|value| (0.0..=1.0).contains(value)))
-            .then(|| [values[0] as f32, values[1] as f32, values[2] as f32, values[3] as f32])
+            .then(|| {
+                [
+                    values[0] as f32,
+                    values[1] as f32,
+                    values[2] as f32,
+                    values[3] as f32,
+                ]
+            })
         });
     let position_accessor = primitive
         .get("attributes")
@@ -777,33 +784,42 @@ pub fn compile_morph_pack(
     pack.extend_from_slice(MORPH_PACK_MAGIC);
     write_u16(&mut pack, MORPH_PACK_SCHEMA_VERSION);
     write_u16(&mut pack, 0);
-    write_u32(&mut pack, u32::try_from(manifest_json.len()).map_err(|_| {
-        vec![error(
-            "MORPH_PACK_LIMIT",
-            "$",
-            "manifest is too large for a morph pack",
-        )]
-    })?);
+    write_u32(
+        &mut pack,
+        u32::try_from(manifest_json.len()).map_err(|_| {
+            vec![error(
+                "MORPH_PACK_LIMIT",
+                "$",
+                "manifest is too large for a morph pack",
+            )]
+        })?,
+    );
     pack.extend_from_slice(&manifest_json);
     let mut lod_triangle_counts = BTreeMap::new();
     for (level, mesh) in meshes {
         let triangle_count = inspection.lods[level].triangle_count;
         lod_triangle_counts.insert(level.to_owned(), triangle_count);
         write_u32(&mut pack, triangle_count);
-        write_u32(&mut pack, u32::try_from(mesh.vertices.len()).map_err(|_| {
-            vec![error(
-                "MORPH_PACK_LIMIT",
-                "geometry",
-                "vertex count is too large for a morph pack",
-            )]
-        })?);
-        write_u32(&mut pack, u32::try_from(mesh.indices.len()).map_err(|_| {
-            vec![error(
-                "MORPH_PACK_LIMIT",
-                "geometry",
-                "index count is too large for a morph pack",
-            )]
-        })?);
+        write_u32(
+            &mut pack,
+            u32::try_from(mesh.vertices.len()).map_err(|_| {
+                vec![error(
+                    "MORPH_PACK_LIMIT",
+                    "geometry",
+                    "vertex count is too large for a morph pack",
+                )]
+            })?,
+        );
+        write_u32(
+            &mut pack,
+            u32::try_from(mesh.indices.len()).map_err(|_| {
+                vec![error(
+                    "MORPH_PACK_LIMIT",
+                    "geometry",
+                    "index count is too large for a morph pack",
+                )]
+            })?,
+        );
         match mesh.base_color {
             Some(color) => {
                 pack.push(1);
