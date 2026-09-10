@@ -360,7 +360,10 @@ impl StudioShell {
             selected_asset: "forest-grass",
             test_tool: "Sessions",
             asset_filter: "All",
-            playing: false,
+            // Studio historically launched directly into its live runtime.
+            // Keep that behavior now that the shell has a Play/Stop toggle so
+            // keyboard and engine-owned pointer controls work immediately.
+            playing: true,
             notice: "Ready".to_owned(),
             search_query: String::new(),
             logo_texture,
