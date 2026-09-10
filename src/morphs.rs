@@ -4,11 +4,30 @@
 //! future Morphs workspace to inspect drafts and diagnostics before anything
 //! is uploaded to the renderer.
 
+use cubacadabra_morph_authoring::{
+    MorphGlbInspection, MorphSourceInspection, inspect_glb_bytes, parse_source_manifest,
+};
 use cubacadabra_morphs::{MorphCatalog, MorphDiagnostic, parse_catalog};
 
 #[allow(dead_code)]
 pub(crate) fn inspect_catalog(source: &str) -> Result<MorphCatalog, Vec<MorphDiagnostic>> {
     parse_catalog(source)
+}
+
+#[allow(dead_code)]
+pub(crate) fn inspect_source_manifest(
+    source: &str,
+) -> Result<MorphSourceInspection, Vec<MorphDiagnostic>> {
+    parse_source_manifest(source)?.inspect()
+}
+
+#[allow(dead_code)]
+pub(crate) fn inspect_source_glb(
+    manifest_source: &str,
+    glb: &[u8],
+) -> Result<MorphGlbInspection, Vec<MorphDiagnostic>> {
+    let manifest = parse_source_manifest(manifest_source)?;
+    inspect_glb_bytes(&manifest, glb)
 }
 
 #[cfg(test)]

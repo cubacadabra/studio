@@ -9,6 +9,7 @@ name = "studio"
 path = "src/main.rs"
 
 [dependencies]
+cubacadabra-morph-authoring = { path = "crates/morph_authoring" }
 cubacadabra-morphs = { path = "../rust/crates/morphs" }
 cubacadabra-client = { path = "../rust/crates/client", features = ["desktop-backends", "studio-ui"] }
 egui = "0.35"
