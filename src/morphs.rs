@@ -4,11 +4,11 @@
 //! future Morphs workspace to inspect drafts and diagnostics before anything
 //! is uploaded to the renderer.
 
-pub(crate) use cubacadabra_morph_authoring::MorphGlbPreviewMesh;
 use cubacadabra_morph_authoring::{
     MorphGlbInspection, MorphSourceInspection, decode_glb_preview, inspect_glb_bytes,
-    parse_source_manifest,
+    inspect_glb_source, parse_source_manifest,
 };
+pub(crate) use cubacadabra_morph_authoring::{MorphGlbPreviewMesh, MorphGlbSourceSummary};
 use cubacadabra_morphs::{
     CapabilitySet, MorphAssetId, MorphCatalog, MorphDiagnostic, ResolvedMorphLoadout,
     parse_catalog, resolve_preset,
@@ -42,6 +42,12 @@ pub(crate) fn decode_source_glb_preview(
     glb: &[u8],
 ) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
     decode_glb_preview(glb)
+}
+
+pub(crate) fn inspect_source_glb_structure(
+    glb: &[u8],
+) -> Result<MorphGlbSourceSummary, Vec<MorphDiagnostic>> {
+    inspect_glb_source(glb)
 }
 
 #[allow(dead_code)]

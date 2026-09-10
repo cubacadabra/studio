@@ -14,7 +14,7 @@ mod macos;
 mod morphs;
 mod network;
 mod shell;
-use morphs::decode_source_glb_preview;
+use morphs::{decode_source_glb_preview, inspect_source_glb_structure};
 use network::{BackendClient, BackendEvent};
 use shell::{PreparedShell, StudioShell};
 #[cfg(target_os = "macos")]
@@ -318,27 +318,33 @@ impl StudioApp {
         let result = fs::read(&path)
             .map_err(|error| format!("Could not read {}: {error}", path.display()))
             .and_then(|bytes| {
-                decode_source_glb_preview(&bytes).map_err(|diagnostics| {
-                    let summary = diagnostics
-                        .iter()
-                        .take(3)
-                        .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    if diagnostics.len() > 3 {
-                        format!("{summary}; and {} more", diagnostics.len() - 3)
-                    } else {
-                        summary
-                    }
-                })
+                let preview = decode_source_glb_preview(&bytes)
+                    .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                let summary = inspect_source_glb_structure(&bytes)
+                    .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                Ok((preview, summary))
             });
         if let Some(shell) = &mut self.shell {
             match result {
-                Ok(preview) => shell.set_morph_preview(display_path, preview),
+                Ok((preview, summary)) => shell.set_morph_preview(display_path, preview, summary),
                 Err(message) => shell.set_morph_import_error(message),
             }
         }
         self.request_redraw();
+    }
+
+    fn format_morph_diagnostics(diagnostics: &[cubacadabra_morphs::MorphDiagnostic]) -> String {
+        let summary = diagnostics
+            .iter()
+            .take(3)
+            .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if diagnostics.len() > 3 {
+            format!("{summary}; and {} more", diagnostics.len() - 3)
+        } else {
+            summary
+        }
     }
 
     fn pointer_event(&mut self, phase: u8, x: f32, y: f32) -> bool {

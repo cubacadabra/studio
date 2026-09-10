@@ -81,6 +81,16 @@ pub struct MorphGlbPreviewMesh {
     pub indices: Vec<u32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MorphGlbSourceSummary {
+    pub version: u32,
+    pub node_names: Vec<String>,
+    pub mesh_names: Vec<String>,
+    pub material_names: Vec<String>,
+    pub lod_candidates: BTreeMap<String, Vec<String>>,
+    pub triangle_count: u32,
+}
+
 impl MorphSourceManifest {
     pub fn validate(&self) -> Vec<MorphDiagnostic> {
         let mut diagnostics = Vec::new();
@@ -362,6 +372,129 @@ pub fn inspect_glb_bytes(
     } else {
         Err(diagnostics)
     }
+}
+
+/// Inspect the source structure without requiring a `.morph.json` sidecar.
+/// Studio uses this to turn a raw Blender export into an actionable draft
+/// review before an artist has mapped LOD nodes or an attachment joint.
+pub fn inspect_glb_source(bytes: &[u8]) -> Result<MorphGlbSourceSummary, Vec<MorphDiagnostic>> {
+    if bytes.len() > MAX_SOURCE_GLB_BYTES {
+        return Err(vec![error(
+            "MORPH_GLB_TOO_LARGE",
+            "geometry.file",
+            format!("GLB exceeds {MAX_SOURCE_GLB_BYTES} bytes"),
+        )]);
+    }
+    let (version, json, _bin) = read_glb_chunks(bytes).map_err(|diagnostic| vec![diagnostic])?;
+    let document: serde_json::Value = serde_json::from_slice(&json).map_err(|parse_error| {
+        vec![error(
+            "MORPH_GLB_INVALID_JSON",
+            "geometry.file",
+            parse_error.to_string(),
+        )]
+    })?;
+    let nodes = document
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_NODES",
+                "nodes",
+                "GLB JSON must contain a nodes array",
+            )]
+        })?;
+    let meshes = document
+        .get("meshes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_MISSING_MESHES",
+                "meshes",
+                "GLB JSON must contain a meshes array",
+            )]
+        })?;
+    let materials = document
+        .get("materials")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let accessors = document
+        .get("accessors")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let node_names = nodes
+        .iter()
+        .filter_map(|node| node.get("name").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mesh_names = meshes
+        .iter()
+        .filter_map(|mesh| mesh.get("name").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let material_names = materials
+        .iter()
+        .filter_map(|material| material.get("name").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut lod_candidates = BTreeMap::new();
+    for level in ["near", "mid", "far"] {
+        let candidates = node_names
+            .iter()
+            .filter(|name| {
+                let normalized = name.to_ascii_lowercase();
+                normalized.contains(level)
+                    || (level == "near" && normalized.contains("lod0"))
+                    || (level == "mid" && normalized.contains("lod1"))
+                    || (level == "far" && normalized.contains("lod2"))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        lod_candidates.insert(level.to_owned(), candidates);
+    }
+    let mut triangle_count = 0u32;
+    for mesh in meshes {
+        let Some(primitives) = mesh.get("primitives").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for primitive in primitives {
+            let count = primitive
+                .get("indices")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| accessors.get(index))
+                .and_then(|accessor| accessor.get("count"))
+                .and_then(serde_json::Value::as_u64)
+                .or_else(|| {
+                    primitive
+                        .get("attributes")
+                        .and_then(|attributes| attributes.get("POSITION"))
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|index| usize::try_from(index).ok())
+                        .and_then(|index| accessors.get(index))
+                        .and_then(|accessor| accessor.get("count"))
+                        .and_then(serde_json::Value::as_u64)
+                });
+            let Some(count) = count else { continue };
+            let mode = primitive
+                .get("mode")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(4);
+            if let Some(triangles) = triangle_count_for_mode(mode, count) {
+                triangle_count =
+                    triangle_count.saturating_add(triangles.min(u64::from(u32::MAX)) as u32);
+            }
+        }
+    }
+    Ok(MorphGlbSourceSummary {
+        version,
+        node_names,
+        mesh_names,
+        material_names,
+        lod_candidates,
+        triangle_count,
+    })
 }
 
 /// Decode the first mesh primitive's POSITION and index accessors for a small
@@ -1164,6 +1297,20 @@ mod tests {
             item.code == "MORPH_GLB_TRIANGLE_COUNT_MISMATCH"
                 && item.path == "geometry.triangleCounts.near"
         }));
+    }
+
+    #[test]
+    fn source_summary_reports_nodes_meshes_and_lod_candidates() {
+        let manifest = fixture();
+        let summary = inspect_glb_source(&glb_fixture(&manifest, [1200, 500, 100])).unwrap();
+        assert_eq!(summary.version, 2);
+        assert_eq!(
+            summary.node_names,
+            ["StarCap_LOD0", "StarCap_LOD1", "StarCap_LOD2"]
+        );
+        assert_eq!(summary.mesh_names.len(), 3);
+        assert_eq!(summary.lod_candidates["near"], ["StarCap_LOD0"]);
+        assert_eq!(summary.triangle_count, 1800);
     }
 
     fn preview_glb_fixture() -> Vec<u8> {

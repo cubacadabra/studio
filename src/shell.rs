@@ -1,4 +1,4 @@
-use crate::morphs::MorphGlbPreviewMesh;
+use crate::morphs::{MorphGlbPreviewMesh, MorphGlbSourceSummary};
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 #[cfg(target_os = "macos")]
@@ -360,6 +360,7 @@ pub(crate) struct StudioShell {
     morph_import_requested: bool,
     morph_preview_path: Option<String>,
     morph_preview: Option<MorphGlbPreviewMesh>,
+    morph_source_summary: Option<MorphGlbSourceSummary>,
     morph_import_error: Option<String>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
@@ -415,6 +416,7 @@ impl StudioShell {
             morph_import_requested: false,
             morph_preview_path: None,
             morph_preview: None,
+            morph_source_summary: None,
             morph_import_error: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
@@ -441,9 +443,15 @@ impl StudioShell {
         std::mem::take(&mut self.morph_import_requested)
     }
 
-    pub(crate) fn set_morph_preview(&mut self, path: String, preview: MorphGlbPreviewMesh) {
+    pub(crate) fn set_morph_preview(
+        &mut self,
+        path: String,
+        preview: MorphGlbPreviewMesh,
+        summary: MorphGlbSourceSummary,
+    ) {
         self.morph_preview_path = Some(path);
         self.morph_preview = Some(preview);
+        self.morph_source_summary = Some(summary);
         self.morph_import_error = None;
         self.notice = "GLB preview imported".to_owned();
     }
@@ -946,6 +954,38 @@ impl StudioShell {
                                 );
                             }
                         });
+                        if let Some(summary) = &self.morph_source_summary {
+                            property_section(ui, "Source contract", |ui| {
+                                property_row(ui, "Nodes", &summary.node_names.len().to_string());
+                                property_row(ui, "Meshes", &summary.mesh_names.len().to_string());
+                                property_row(
+                                    ui,
+                                    "Materials",
+                                    &summary.material_names.len().to_string(),
+                                );
+                                property_row(
+                                    ui,
+                                    "Source triangles",
+                                    &summary.triangle_count.to_string(),
+                                );
+                                for level in ["near", "mid", "far"] {
+                                    let status = source_lod_status(summary, level);
+                                    property_row(ui, &format!("{} LOD", title_case(level)), &status);
+                                }
+                                if ["near", "mid", "far"]
+                                    .into_iter()
+                                    .any(|level| summary.lod_candidates[level].is_empty())
+                                {
+                                    ui.label(
+                                        RichText::new(
+                                            "Preview only: map distinct Near / Mid / Far nodes before publishing.",
+                                        )
+                                        .size(TYPE.meta)
+                                        .color(colors.axis_x),
+                                    );
+                                }
+                            });
+                        }
                     }
                     if let Some(error) = &self.morph_import_error {
                         ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
@@ -2359,6 +2399,23 @@ fn asset_kind(name: &str) -> (Icon, &'static str) {
         (Icon::Object, "MODEL")
     } else {
         (Icon::Image, "IMAGE")
+    }
+}
+
+fn title_case(value: &str) -> String {
+    let mut characters = value.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().chain(characters).collect(),
+        None => String::new(),
+    }
+}
+
+fn source_lod_status(summary: &MorphGlbSourceSummary, level: &str) -> String {
+    match summary.lod_candidates.get(level) {
+        Some(candidates) if candidates.len() == 1 => format!("Mapped: {}", candidates[0]),
+        Some(candidates) if candidates.is_empty() => "Missing mapping".to_owned(),
+        Some(candidates) => format!("Ambiguous: {} candidates", candidates.len()),
+        None => "Missing mapping".to_owned(),
     }
 }
 
