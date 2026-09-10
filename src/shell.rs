@@ -1,5 +1,5 @@
 use crate::morphs::{
-    MorphGlbPreviewMesh, MorphGlbSourceSummary, build_source_manifest_json,
+    MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest, build_source_manifest_json,
     default_rigid_accessory_asset,
 };
 use cubacadabra_client::native::Renderer as GameRenderer;
@@ -361,6 +361,7 @@ pub(crate) struct StudioShell {
     morph_catalog: MorphCatalog,
     selected_morph: MorphAssetId,
     morph_import_requested: bool,
+    morph_sidecar_import_requested: bool,
     morph_preview_path: Option<String>,
     morph_preview: Option<MorphGlbPreviewMesh>,
     morph_source_summary: Option<MorphGlbSourceSummary>,
@@ -423,6 +424,7 @@ impl StudioShell {
             selected_morph: MorphAssetId::parse("cuba:base/person.v1")
                 .expect("built-in morph ID must be valid"),
             morph_import_requested: false,
+            morph_sidecar_import_requested: false,
             morph_preview_path: None,
             morph_preview: None,
             morph_source_summary: None,
@@ -456,6 +458,10 @@ impl StudioShell {
 
     pub(crate) fn take_morph_import_request(&mut self) -> bool {
         std::mem::take(&mut self.morph_import_requested)
+    }
+
+    pub(crate) fn take_morph_sidecar_import_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_sidecar_import_requested)
     }
 
     pub(crate) fn take_morph_sidecar_export_request(&mut self) -> bool {
@@ -567,6 +573,33 @@ impl StudioShell {
         self.morph_draft_status = None;
         self.morph_import_error = None;
         self.notice = "GLB preview imported".to_owned();
+    }
+
+    pub(crate) fn set_morph_sidecar_preview(
+        &mut self,
+        glb_path: String,
+        manifest: MorphSourceManifest,
+        preview: MorphGlbPreviewMesh,
+        summary: MorphGlbSourceSummary,
+    ) {
+        let attachment_joint = manifest.attachment.joint.clone();
+        let lod_nodes = ["near", "mid", "far"].map(|level| {
+            manifest
+                .geometry
+                .lod_nodes
+                .get(level)
+                .cloned()
+                .unwrap_or_default()
+        });
+        self.set_morph_preview(glb_path, preview, summary);
+        self.morph_draft_asset = Some(manifest.asset);
+        self.morph_attachment_joint = attachment_joint;
+        self.morph_lod_nodes = lod_nodes;
+        self.morph_draft_status = Some((
+            true,
+            "Sidecar reimported and GLB contract validated.".to_owned(),
+        ));
+        self.notice = "Morph sidecar reimported".to_owned();
     }
 
     pub(crate) fn set_morph_import_error(&mut self, message: String) {
@@ -1088,6 +1121,10 @@ impl StudioShell {
                 panel_header(ui, Icon::Sliders, "Morph inspector", |ui| {
                     if ui.button("Import GLB").clicked() {
                         self.morph_import_requested = true;
+                        self.morph_import_error = None;
+                    }
+                    if ui.button("Open .morph.json").clicked() {
+                        self.morph_sidecar_import_requested = true;
                         self.morph_import_error = None;
                     }
                     icon_button(ui, Icon::More, "Morph options", false);

@@ -6,10 +6,12 @@
 
 use cubacadabra_morph_authoring::{
     MorphAttachment, MorphAttachmentMode, MorphGeometrySource, MorphGlbInspection,
-    MorphSourceInspection, MorphSourceManifest, decode_glb_preview, inspect_glb_bytes,
-    inspect_glb_source, parse_source_manifest,
+    MorphSourceInspection, decode_glb_preview, inspect_glb_bytes, inspect_glb_source,
+    parse_source_manifest,
 };
-pub(crate) use cubacadabra_morph_authoring::{MorphGlbPreviewMesh, MorphGlbSourceSummary};
+pub(crate) use cubacadabra_morph_authoring::{
+    MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
+};
 use cubacadabra_morphs::{
     CapabilitySet, MorphAssetDefinition, MorphAssetId, MorphCatalog, MorphDiagnostic,
     MorphLodBudget, MorphProvenance, MorphSourceReference, ResolvedMorphLoadout, parse_catalog,
@@ -51,6 +53,30 @@ pub(crate) fn inspect_source_glb_structure(
     glb: &[u8],
 ) -> Result<MorphGlbSourceSummary, Vec<MorphDiagnostic>> {
     inspect_glb_source(glb)
+}
+
+pub(crate) fn source_manifest_geometry_file(
+    source: &str,
+) -> Result<String, Vec<MorphDiagnostic>> {
+    Ok(parse_source_manifest(source)?.geometry.file)
+}
+
+pub(crate) fn inspect_source_sidecar(
+    manifest_source: &str,
+    glb: &[u8],
+) -> Result<
+    (
+        MorphSourceManifest,
+        MorphGlbPreviewMesh,
+        MorphGlbSourceSummary,
+    ),
+    Vec<MorphDiagnostic>,
+> {
+    let manifest = parse_source_manifest(manifest_source)?;
+    inspect_glb_bytes(&manifest, glb)?;
+    let preview = decode_glb_preview(glb)?;
+    let summary = inspect_glb_source(glb)?;
+    Ok((manifest, preview, summary))
 }
 
 pub(crate) fn build_source_manifest_json(
@@ -252,5 +278,36 @@ mod tests {
         assert_eq!(asset.id.as_str(), "cuba:headwear/test-top-hat.v1");
         assert_eq!(asset.display_name, "Test Top Hat");
         assert!(asset.validate().is_empty());
+    }
+
+    #[test]
+    fn sidecar_geometry_path_is_read_from_the_validated_manifest() {
+        let source = r#"{
+            "schemaVersion": 1,
+            "asset": {
+                "id": "cuba:headwear/test-top-hat.v1",
+                "kind": "headwear",
+                "displayName": "Test Top Hat",
+                "rigProfile": "cuba:rig/biped15.v1",
+                "fitProfiles": ["cuba:fit/person-standard.v1"],
+                "supportedBases": ["cuba:base/person.v1"],
+                "occupiedSlots": ["headwear"],
+                "coverage": ["head"],
+                "materials": ["default"],
+                "lod": {"near": 248, "mid": 248, "far": 248},
+                "source": {"geometry": "models/test_top_hat.glb"},
+                "provenance": {"source": "Studio GLB import", "license": "Unreviewed"}
+            },
+            "geometry": {
+                "file": "models/test_top_hat.glb",
+                "lodNodes": {"near": "Near", "mid": "Mid", "far": "Far"},
+                "triangleCounts": {"near": 248, "mid": 248, "far": 248}
+            },
+            "attachment": {"mode": "rigid", "joint": "head"}
+        }"#;
+        assert_eq!(
+            source_manifest_geometry_file(source).unwrap(),
+            "models/test_top_hat.glb"
+        );
     }
 }

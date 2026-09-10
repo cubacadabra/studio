@@ -14,7 +14,10 @@ mod macos;
 mod morphs;
 mod network;
 mod shell;
-use morphs::{decode_source_glb_preview, inspect_source_glb_structure};
+use morphs::{
+    decode_source_glb_preview, inspect_source_glb_structure, inspect_source_sidecar,
+    source_manifest_geometry_file,
+};
 use network::{BackendClient, BackendEvent};
 use shell::{PreparedShell, StudioShell};
 #[cfg(target_os = "macos")]
@@ -231,6 +234,13 @@ impl StudioApp {
         if sidecar_export_requested {
             self.export_morph_sidecar();
         }
+        let sidecar_import_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_sidecar_import_request);
+        if sidecar_import_requested {
+            self.import_morph_sidecar();
+        }
         self.update_viewport();
         let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
 
@@ -360,6 +370,44 @@ impl StudioApp {
         });
         if let Some(shell) = &mut self.shell {
             shell.set_morph_sidecar_export_result(result);
+        }
+        self.request_redraw();
+    }
+
+    fn import_morph_sidecar(&mut self) {
+        let Some(sidecar_path) = rfd::FileDialog::new()
+            .add_filter("Morph sidecar", &["json"])
+            .set_title("Open morph sidecar")
+            .pick_file()
+        else {
+            return;
+        };
+        let result = fs::read_to_string(&sidecar_path)
+            .map_err(|error| format!("Could not read {}: {error}", sidecar_path.display()))
+            .and_then(|manifest_source| {
+                let geometry_file = source_manifest_geometry_file(&manifest_source)
+                    .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                let glb_path = sidecar_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(geometry_file);
+                let glb = fs::read(&glb_path).map_err(|error| {
+                    format!(
+                        "Could not read referenced GLB {}: {error}",
+                        glb_path.display()
+                    )
+                })?;
+                let (manifest, preview, summary) = inspect_source_sidecar(&manifest_source, &glb)
+                    .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                Ok((glb_path.display().to_string(), manifest, preview, summary))
+            });
+        if let Some(shell) = &mut self.shell {
+            match result {
+                Ok((glb_path, manifest, preview, summary)) => {
+                    shell.set_morph_sidecar_preview(glb_path, manifest, preview, summary)
+                }
+                Err(message) => shell.set_morph_import_error(message),
+            }
         }
         self.request_redraw();
     }
