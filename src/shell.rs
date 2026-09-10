@@ -1235,17 +1235,19 @@ impl StudioShell {
             .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| {
                 panel_header(ui, Icon::Sliders, "Morph inspector", |ui| {
-                    if icon_button(ui, Icon::Open, "Import GLB", false).clicked() {
-                        self.morph_import_requested = true;
-                        self.morph_import_error = None;
-                    }
-                    if icon_button(ui, Icon::Folder, "Open .morph.json", false).clicked() {
-                        self.morph_sidecar_import_requested = true;
-                        self.morph_import_error = None;
-                    }
                     icon_button(ui, Icon::More, "Morph options", false);
                 });
                 content_frame().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Import GLB").clicked() {
+                            self.morph_import_requested = true;
+                            self.morph_import_error = None;
+                        }
+                        if ui.button("Open .morph.json").clicked() {
+                            self.morph_sidecar_import_requested = true;
+                            self.morph_import_error = None;
+                        }
+                    });
                     if let Some(path) = &self.morph_preview_path {
                         property_section(ui, "Imported source", |ui| {
                             let filename = std::path::Path::new(path)
@@ -1427,6 +1429,8 @@ impl StudioShell {
             .frame(Frame::NONE.fill(Color32::TRANSPARENT))
             .show(root, |ui| {
                 let available = ui.available_rect_before_wrap();
+                ui.painter()
+                    .rect_filled(available, 0.0, colors.surface_deep);
                 editor_header(ui, |ui| {
                     inline_icon(ui, Icon::Camera, colors.muted);
                     ui.label(
