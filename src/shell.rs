@@ -1151,11 +1151,11 @@ impl StudioShell {
             .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| {
                 panel_header(ui, Icon::Sliders, "Morph inspector", |ui| {
-                    if ui.button("Import GLB").clicked() {
+                    if icon_button(ui, Icon::Open, "Import GLB", false).clicked() {
                         self.morph_import_requested = true;
                         self.morph_import_error = None;
                     }
-                    if ui.button("Open .morph.json").clicked() {
+                    if icon_button(ui, Icon::Folder, "Open .morph.json", false).clicked() {
                         self.morph_sidecar_import_requested = true;
                         self.morph_import_error = None;
                     }
@@ -1359,29 +1359,42 @@ impl StudioShell {
                         }
                     });
                 });
-                ui.horizontal(|ui| {
-                    for (level, label) in [
-                        (None, "Source"),
-                        (Some(0), "Near"),
-                        (Some(1), "Mid"),
-                        (Some(2), "Far"),
-                    ] {
-                        let enabled = level.is_none()
-                            || self
-                                .morph_lod_previews
-                                .get(level.unwrap_or_default())
-                                .is_some_and(Option::is_some);
-                        if ui
-                            .add_enabled(
-                                enabled,
-                                egui::Button::new(label).selected(self.morph_preview_lod == level),
-                            )
-                            .clicked()
-                        {
-                            self.select_morph_preview_lod(level);
-                        }
+                let mode_rect = ui
+                    .allocate_exact_size(
+                        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
+                        Sense::hover(),
+                    )
+                    .0;
+                ui.painter()
+                    .rect_filled(mode_rect, 0.0, colors.panel_header);
+                let mut mode_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(mode_rect.shrink2(egui::vec2(UI.inset, 0.0)))
+                        .layout(Layout::left_to_right(Align::Center)),
+                );
+                mode_ui.set_clip_rect(ui.clip_rect().intersect(mode_rect));
+                mode_ui.spacing_mut().item_spacing.x = 2.0;
+                for (level, label) in [
+                    (None, "Source"),
+                    (Some(0), "Near"),
+                    (Some(1), "Mid"),
+                    (Some(2), "Far"),
+                ] {
+                    let enabled = level.is_none()
+                        || self
+                            .morph_lod_previews
+                            .get(level.unwrap_or_default())
+                            .is_some_and(Option::is_some);
+                    if mode_ui
+                        .add_enabled(
+                            enabled,
+                            egui::Button::new(label).selected(self.morph_preview_lod == level),
+                        )
+                        .clicked()
+                    {
+                        self.select_morph_preview_lod(level);
                     }
-                });
+                }
                 let preview_rect = Rect::from_min_max(
                     egui::pos2(
                         available.min.x + 1.0,
