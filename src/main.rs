@@ -11,6 +11,7 @@ use std::{
 };
 #[cfg(target_os = "macos")]
 mod macos;
+mod morphs;
 mod network;
 mod shell;
 use network::{BackendClient, BackendEvent};
