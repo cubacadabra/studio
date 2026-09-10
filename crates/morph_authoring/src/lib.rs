@@ -88,6 +88,7 @@ pub struct MorphGlbSourceSummary {
     pub mesh_names: Vec<String>,
     pub material_names: Vec<String>,
     pub lod_candidates: BTreeMap<String, Vec<String>>,
+    pub node_triangle_counts: BTreeMap<String, u32>,
     pub triangle_count: u32,
 }
 
@@ -454,6 +455,57 @@ pub fn inspect_glb_source(bytes: &[u8]) -> Result<MorphGlbSourceSummary, Vec<Mor
         lod_candidates.insert(level.to_owned(), candidates);
     }
     let mut triangle_count = 0u32;
+    let mut node_triangle_counts = BTreeMap::new();
+    for node in nodes {
+        let Some(name) = node.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(mesh_index) = node
+            .get("mesh")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+        else {
+            continue;
+        };
+        let Some(primitives) = meshes
+            .get(mesh_index)
+            .and_then(|mesh| mesh.get("primitives"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        let node_triangles = primitives
+            .iter()
+            .filter_map(|primitive| {
+                let count = primitive
+                    .get("indices")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|index| usize::try_from(index).ok())
+                    .and_then(|index| accessors.get(index))
+                    .and_then(|accessor| accessor.get("count"))
+                    .and_then(serde_json::Value::as_u64)
+                    .or_else(|| {
+                        primitive
+                            .get("attributes")
+                            .and_then(|attributes| attributes.get("POSITION"))
+                            .and_then(serde_json::Value::as_u64)
+                            .and_then(|index| usize::try_from(index).ok())
+                            .and_then(|index| accessors.get(index))
+                            .and_then(|accessor| accessor.get("count"))
+                            .and_then(serde_json::Value::as_u64)
+                    })?;
+                triangle_count_for_mode(
+                    primitive
+                        .get("mode")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(4),
+                    count,
+                )
+            })
+            .fold(0u64, u64::saturating_add)
+            .min(u64::from(u32::MAX)) as u32;
+        node_triangle_counts.insert(name.to_owned(), node_triangles);
+    }
     for mesh in meshes {
         let Some(primitives) = mesh.get("primitives").and_then(serde_json::Value::as_array) else {
             continue;
@@ -493,6 +545,7 @@ pub fn inspect_glb_source(bytes: &[u8]) -> Result<MorphGlbSourceSummary, Vec<Mor
         mesh_names,
         material_names,
         lod_candidates,
+        node_triangle_counts,
         triangle_count,
     })
 }

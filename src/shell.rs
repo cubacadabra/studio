@@ -1,4 +1,7 @@
-use crate::morphs::{MorphGlbPreviewMesh, MorphGlbSourceSummary};
+use crate::morphs::{
+    MorphGlbPreviewMesh, MorphGlbSourceSummary, build_source_manifest_json,
+    default_rigid_accessory_asset,
+};
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 #[cfg(target_os = "macos")]
@@ -361,9 +364,12 @@ pub(crate) struct StudioShell {
     morph_preview_path: Option<String>,
     morph_preview: Option<MorphGlbPreviewMesh>,
     morph_source_summary: Option<MorphGlbSourceSummary>,
+    morph_draft_asset: Option<cubacadabra_morphs::MorphAssetDefinition>,
     morph_attachment_joint: String,
     morph_lod_nodes: [String; 3],
     morph_draft_status: Option<(bool, String)>,
+    morph_sidecar_export_requested: bool,
+    morph_wireframe: bool,
     morph_import_error: Option<String>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
@@ -420,9 +426,12 @@ impl StudioShell {
             morph_preview_path: None,
             morph_preview: None,
             morph_source_summary: None,
+            morph_draft_asset: None,
             morph_attachment_joint: "head".to_owned(),
             morph_lod_nodes: [String::new(), String::new(), String::new()],
             morph_draft_status: None,
+            morph_sidecar_export_requested: false,
+            morph_wireframe: true,
             morph_import_error: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
@@ -449,12 +458,98 @@ impl StudioShell {
         std::mem::take(&mut self.morph_import_requested)
     }
 
+    pub(crate) fn take_morph_sidecar_export_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_sidecar_export_requested)
+    }
+
+    pub(crate) fn morph_sidecar_payload(&self) -> Result<(String, String), String> {
+        let path = self
+            .morph_preview_path
+            .as_deref()
+            .ok_or_else(|| "Import a GLB before exporting its sidecar.".to_owned())?;
+        let preview = self
+            .morph_preview
+            .as_ref()
+            .ok_or_else(|| "The imported GLB has no preview mesh to save.".to_owned())?;
+        let asset = self
+            .morph_draft_asset
+            .as_ref()
+            .or_else(|| self.morph_catalog.asset(&self.selected_morph))
+            .ok_or_else(|| "Select a catalog asset before exporting its sidecar.".to_owned())?;
+        let geometry_file = std::path::Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "The imported GLB needs a safe filename for its sidecar.".to_owned())?
+            .to_owned();
+        let lod_nodes = [
+            self.morph_lod_nodes[0].trim(),
+            self.morph_lod_nodes[1].trim(),
+            self.morph_lod_nodes[2].trim(),
+        ];
+        let fallback_triangle_count = u32::try_from(preview.indices.len() / 3)
+            .map_err(|_| "The preview mesh triangle count is too large.".to_owned())?;
+        let summary = self
+            .morph_source_summary
+            .as_ref()
+            .ok_or_else(|| "The imported GLB has no source summary to save.".to_owned())?;
+        let triangle_counts = lod_nodes.map(|node| {
+            summary
+                .node_triangle_counts
+                .get(node)
+                .copied()
+                .unwrap_or(fallback_triangle_count)
+                .max(1)
+        });
+        let json = build_source_manifest_json(
+            asset,
+            geometry_file,
+            self.morph_attachment_joint.trim(),
+            lod_nodes,
+            triangle_counts,
+        )
+        .map_err(|diagnostics| {
+            diagnostics
+                .iter()
+                .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        })?;
+        let suggested_name = format!(
+            "{}.morph.json",
+            std::path::Path::new(path)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("morph")
+        );
+        Ok((suggested_name, json))
+    }
+
+    pub(crate) fn set_morph_sidecar_export_result(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.morph_draft_status = Some((
+                    true,
+                    "Sidecar saved. The GLB and .morph.json can now travel together.".to_owned(),
+                ));
+                self.notice = "Morph sidecar saved".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
+        }
+    }
+
     pub(crate) fn set_morph_preview(
         &mut self,
         path: String,
         preview: MorphGlbPreviewMesh,
         summary: MorphGlbSourceSummary,
     ) {
+        let triangle_count = u32::try_from(preview.indices.len() / 3)
+            .unwrap_or(u32::MAX)
+            .max(1);
+        let draft_asset = Some(default_rigid_accessory_asset(&path, triangle_count));
         self.morph_preview_path = Some(path);
         self.morph_preview = Some(preview);
         self.morph_attachment_joint = "head".to_owned();
@@ -468,6 +563,7 @@ impl StudioShell {
                 .unwrap_or_default()
         });
         self.morph_source_summary = Some(summary);
+        self.morph_draft_asset = draft_asset;
         self.morph_draft_status = None;
         self.morph_import_error = None;
         self.notice = "GLB preview imported".to_owned();
@@ -1013,6 +1109,10 @@ impl StudioShell {
                                     &(preview.indices.len() / 3).to_string(),
                                 );
                             }
+                            if let Some(asset) = &self.morph_draft_asset {
+                                property_row(ui, "Draft", &asset.display_name);
+                                property_row(ui, "Asset ID", asset.id.as_str());
+                            }
                         });
                         if let Some(summary) = self.morph_source_summary.clone() {
                             property_section(ui, "Source contract", |ui| {
@@ -1071,6 +1171,16 @@ impl StudioShell {
                                 }
                                 if ui.button("Validate mapping").clicked() {
                                     self.validate_morph_draft();
+                                }
+                                if ui.button("Export .morph.json").clicked() {
+                                    self.validate_morph_draft();
+                                    if self
+                                        .morph_draft_status
+                                        .as_ref()
+                                        .is_some_and(|(valid, _)| *valid)
+                                    {
+                                        self.morph_sidecar_export_requested = true;
+                                    }
                                 }
                                 if let Some((valid, status)) = &self.morph_draft_status {
                                     ui.label(
@@ -1168,6 +1278,16 @@ impl StudioShell {
                         icon_button(ui, Icon::More, "Preview options", false);
                         icon_button(ui, Icon::Camera, "Camera view", false);
                         icon_button(ui, Icon::Grid, "Toggle grid", true);
+                        if icon_button(
+                            ui,
+                            Icon::Object,
+                            "Toggle wireframe",
+                            self.morph_wireframe,
+                        )
+                        .clicked()
+                        {
+                            self.morph_wireframe = !self.morph_wireframe;
+                        }
                     });
                 });
                 let preview_rect = Rect::from_min_max(
@@ -1212,7 +1332,10 @@ impl StudioShell {
                 }
 
                 if let Some(preview) = &self.morph_preview {
-                    paint_morph_wireframe(ui, preview_rect, preview, colors.accent);
+                    paint_morph_surface(ui, preview_rect, preview, colors.accent);
+                    if self.morph_wireframe {
+                        paint_morph_wireframe(ui, preview_rect, preview, colors.accent);
+                    }
                     ui.painter().text(
                         preview_rect.left_top() + egui::vec2(10.0, 10.0),
                         Align2::LEFT_TOP,
@@ -1522,9 +1645,12 @@ impl StudioShell {
     }
 }
 
-fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
-    if mesh.vertices.is_empty() || mesh.indices.len() < 3 {
-        return;
+fn morph_preview_projection(
+    rect: Rect,
+    mesh: &MorphGlbPreviewMesh,
+) -> Option<(impl Fn([f32; 3]) -> egui::Pos2, f32)> {
+    if mesh.vertices.is_empty() {
+        return None;
     }
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
@@ -1544,11 +1670,69 @@ fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, 
         (min[1] + max[1]) * 0.5,
         (min[2] + max[2]) * 0.5,
     ];
-    let project = |vertex: [f32; 3]| {
+    let project = move |vertex: [f32; 3]| {
+        // A small depth offset keeps front and back surfaces legible while
+        // preserving the model's useful front-facing silhouette.
         egui::pos2(
-            rect.center().x + (vertex[0] - center[0]) * scale,
-            rect.center().y - (vertex[1] - center[1]) * scale,
+            rect.center().x + (vertex[0] - center[0]) * scale
+                + (vertex[2] - center[2]) * scale * 0.12,
+            rect.center().y - (vertex[1] - center[1]) * scale
+                + (vertex[2] - center[2]) * scale * 0.06,
         )
+    };
+    Some((project, scale))
+}
+
+fn paint_morph_surface(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
+    if mesh.indices.len() < 3 {
+        return;
+    }
+    let Some((project, _scale)) = morph_preview_projection(rect, mesh) else {
+        return;
+    };
+    let light = normalize3([0.35, 0.75, 0.65]);
+    let mut triangles = Vec::new();
+    for triangle in mesh
+        .indices
+        .chunks(3)
+        .filter(|triangle| triangle.len() == 3)
+    {
+        let Some(a) = mesh.vertices.get(triangle[0] as usize).copied() else {
+            continue;
+        };
+        let Some(b) = mesh.vertices.get(triangle[1] as usize).copied() else {
+            continue;
+        };
+        let Some(c) = mesh.vertices.get(triangle[2] as usize).copied() else {
+            continue;
+        };
+        let normal = cross3(sub3(b, a), sub3(c, a));
+        let brightness = (dot3(normalize3(normal), light).abs() * 0.55 + 0.45).clamp(0.0, 1.0);
+        triangles.push((
+            (a[2] + b[2] + c[2]) / 3.0,
+            [project(a), project(b), project(c)],
+            brightness,
+        ));
+    }
+    triangles.sort_by(|first, second| first.0.total_cmp(&second.0));
+    for (_, points, brightness) in triangles {
+        let fill = Color32::from_rgba_unmultiplied(
+            (f32::from(color.r()) * brightness) as u8,
+            (f32::from(color.g()) * brightness) as u8,
+            (f32::from(color.b()) * brightness) as u8,
+            185,
+        );
+        ui.painter()
+            .add(egui::Shape::convex_polygon(points.to_vec(), fill, Stroke::NONE));
+    }
+}
+
+fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, color: Color32) {
+    if mesh.vertices.is_empty() || mesh.indices.len() < 3 {
+        return;
+    }
+    let Some((project, _scale)) = morph_preview_projection(rect, mesh) else {
+        return;
     };
     let stroke = Stroke::new(1.0, color);
     for triangle in mesh
@@ -1569,6 +1753,35 @@ fn paint_morph_wireframe(ui: &egui::Ui, rect: Rect, mesh: &MorphGlbPreviewMesh, 
         ui.painter().line_segment([points[0], points[1]], stroke);
         ui.painter().line_segment([points[1], points[2]], stroke);
         ui.painter().line_segment([points[2], points[0]], stroke);
+    }
+}
+
+fn sub3(first: [f32; 3], second: [f32; 3]) -> [f32; 3] {
+    [
+        first[0] - second[0],
+        first[1] - second[1],
+        first[2] - second[2],
+    ]
+}
+
+fn cross3(first: [f32; 3], second: [f32; 3]) -> [f32; 3] {
+    [
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    ]
+}
+
+fn dot3(first: [f32; 3], second: [f32; 3]) -> f32 {
+    first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+}
+
+fn normalize3(value: [f32; 3]) -> [f32; 3] {
+    let length = dot3(value, value).sqrt();
+    if length > f32::EPSILON {
+        [value[0] / length, value[1] / length, value[2] / length]
+    } else {
+        [0.0, 1.0, 0.0]
     }
 }
 

@@ -224,6 +224,13 @@ impl StudioApp {
         if import_requested {
             self.import_morph_glb();
         }
+        let sidecar_export_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_sidecar_export_request);
+        if sidecar_export_requested {
+            self.export_morph_sidecar();
+        }
         self.update_viewport();
         let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
 
@@ -329,6 +336,30 @@ impl StudioApp {
                 Ok((preview, summary)) => shell.set_morph_preview(display_path, preview, summary),
                 Err(message) => shell.set_morph_import_error(message),
             }
+        }
+        self.request_redraw();
+    }
+
+    fn export_morph_sidecar(&mut self) {
+        let payload = self
+            .shell
+            .as_ref()
+            .map(StudioShell::morph_sidecar_payload)
+            .unwrap_or_else(|| Err("Studio shell is not ready.".to_owned()));
+        let result = payload.and_then(|(suggested_name, json)| {
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Morph sidecar", &["json"])
+                .set_file_name(&suggested_name)
+                .set_title("Export morph sidecar")
+                .save_file()
+            else {
+                return Err("Sidecar export cancelled.".to_owned());
+            };
+            fs::write(&path, json)
+                .map_err(|error| format!("Could not write {}: {error}", path.display()))
+        });
+        if let Some(shell) = &mut self.shell {
+            shell.set_morph_sidecar_export_result(result);
         }
         self.request_redraw();
     }
