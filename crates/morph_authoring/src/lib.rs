@@ -4,7 +4,10 @@
 //! inspects its GLB container/JSON LOD metadata, decodes bounded mesh data for
 //! the Studio preview, and compiles the shared runtime pack format.
 
-pub use cubacadabra_morphs::{MAX_MORPH_PACK_BYTES, MORPH_PACK_MAGIC, MORPH_PACK_SCHEMA_VERSION};
+pub use cubacadabra_morphs::{
+    MAX_MORPH_PACK_BYTES, MORPH_PACK_MAGIC, MORPH_PACK_SCHEMA_VERSION,
+    MORPH_PACK_SKINNED_SCHEMA_VERSION, MorphPackVertexSkin,
+};
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +21,7 @@ const MAX_NODE_NAME_BYTES: usize = 96;
 #[serde(rename_all = "kebab-case")]
 pub enum MorphAttachmentMode {
     Rigid,
+    Skinned,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -49,6 +53,16 @@ pub struct MorphSourceManifest {
     pub asset: MorphAssetDefinition,
     pub geometry: MorphGeometrySource,
     pub attachment: MorphAttachment,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<MorphSkinContract>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MorphSkinContract {
+    pub skeleton: String,
+    pub joint_order: Vec<String>,
+    pub max_influences: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +96,7 @@ pub struct MorphGlbPreviewMesh {
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub base_color: Option<[f32; 4]>,
+    pub skinning: Option<Vec<MorphPackVertexSkin>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,7 +120,7 @@ pub struct MorphPackSummary {
 impl MorphSourceManifest {
     pub fn validate(&self) -> Vec<MorphDiagnostic> {
         let mut diagnostics = Vec::new();
-        if self.schema_version != MORPH_SOURCE_SCHEMA_VERSION {
+        if !matches!(self.schema_version, MORPH_SOURCE_SCHEMA_VERSION | 2) {
             diagnostics.push(error(
                 "MORPH_SOURCE_UNSUPPORTED_SCHEMA",
                 "schemaVersion",
@@ -113,15 +128,36 @@ impl MorphSourceManifest {
             ));
         }
         diagnostics.extend(self.asset.validate());
-        if self.asset.kind == MorphAssetKind::Base {
+        if self.asset.kind == MorphAssetKind::Base
+            && self.attachment.mode != MorphAttachmentMode::Skinned
+        {
             diagnostics.push(error(
                 "MORPH_SOURCE_BASE_NOT_ACCESSORY",
                 "asset.kind",
-                "the rigid accessory importer does not accept base assets",
+                "base assets must use a skinned attachment",
             ));
         }
         validate_geometry(&self.geometry, &mut diagnostics);
         validate_attachment(&self.attachment, &mut diagnostics);
+        if self.attachment.mode == MorphAttachmentMode::Skinned {
+            match &self.skin {
+                Some(skin)
+                    if skin.skeleton.len() <= MAX_NODE_NAME_BYTES
+                        && !skin.skeleton.is_empty()
+                        && skin.joint_order.len() == 15
+                        && skin.max_influences == 4 => {}
+                Some(_) => diagnostics.push(error(
+                    "MORPH_SOURCE_INVALID_SKIN_CONTRACT",
+                    "skin",
+                    "skinned assets need a skeleton, exactly 15 joints, and maxInfluences 4",
+                )),
+                None => diagnostics.push(error(
+                    "MORPH_SOURCE_MISSING_SKIN_CONTRACT",
+                    "skin",
+                    "skinned assets must declare their 15-joint skin contract",
+                )),
+            }
+        }
         if let Some(source) = &self.asset.source {
             if source.geometry != self.geometry.file {
                 diagnostics.push(error(
@@ -783,6 +819,47 @@ pub fn decode_glb_preview_node(
         })?)
             .collect()
     };
+    let skinning = if let Some(attributes) = primitive.get("attributes") {
+        let joints_accessor = attributes
+            .get("JOINTS_0")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok());
+        let weights_accessor = attributes
+            .get("WEIGHTS_0")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok());
+        match (joints_accessor, weights_accessor) {
+            (Some(joints_accessor), Some(weights_accessor)) => Some(decode_skinning(
+                accessors.get(joints_accessor).ok_or_else(|| {
+                    vec![error(
+                        "MORPH_GLB_INVALID_ACCESSOR",
+                        "meshes[0].primitives[0].attributes.JOINTS_0",
+                        "JOINTS_0 accessor is out of range",
+                    )]
+                })?,
+                accessors.get(weights_accessor).ok_or_else(|| {
+                    vec![error(
+                        "MORPH_GLB_INVALID_ACCESSOR",
+                        "meshes[0].primitives[0].attributes.WEIGHTS_0",
+                        "WEIGHTS_0 accessor is out of range",
+                    )]
+                })?,
+                buffer_views,
+                &bin,
+                vertices.len(),
+            )?),
+            (None, None) => None,
+            _ => {
+                return Err(vec![error(
+                    "MORPH_GLB_INCOMPLETE_SKINNING",
+                    "meshes[0].primitives[0].attributes",
+                    "JOINTS_0 and WEIGHTS_0 must be provided together",
+                )]);
+            }
+        }
+    } else {
+        None
+    };
     if indices
         .iter()
         .any(|index| usize::try_from(*index).map_or(true, |index| index >= vertices.len()))
@@ -798,6 +875,7 @@ pub fn decode_glb_preview_node(
         vertices,
         indices,
         base_color,
+        skinning,
     })
 }
 
@@ -824,7 +902,15 @@ pub fn compile_morph_pack(
     }
     let mut pack = Vec::with_capacity(manifest_json.len() + 64);
     pack.extend_from_slice(MORPH_PACK_MAGIC);
-    write_u16(&mut pack, MORPH_PACK_SCHEMA_VERSION);
+    let skinned = manifest.attachment.mode == MorphAttachmentMode::Skinned;
+    write_u16(
+        &mut pack,
+        if skinned {
+            MORPH_PACK_SKINNED_SCHEMA_VERSION
+        } else {
+            MORPH_PACK_SCHEMA_VERSION
+        },
+    );
     write_u16(&mut pack, 0);
     write_u32(
         &mut pack,
@@ -874,6 +960,23 @@ pub fn compile_morph_pack(
         for vertex in mesh.vertices {
             for value in vertex {
                 pack.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        if skinned {
+            let Some(skinning) = mesh.skinning else {
+                return Err(vec![error(
+                    "MORPH_GLB_MISSING_SKINNING",
+                    &format!("geometry.lodNodes.{level}"),
+                    "skinned assets need JOINTS_0 and WEIGHTS_0 attributes",
+                )]);
+            };
+            for skin in skinning {
+                for joint in skin.joints {
+                    pack.extend_from_slice(&joint.to_le_bytes());
+                }
+                for weight in skin.weights {
+                    pack.extend_from_slice(&weight.to_le_bytes());
+                }
             }
         }
         for index in mesh.indices {
@@ -1001,6 +1104,102 @@ fn decode_indices(
     Ok(indices)
 }
 
+fn decode_skinning(
+    joints_accessor: &serde_json::Value,
+    weights_accessor: &serde_json::Value,
+    buffer_views: &[serde_json::Value],
+    bin: &[u8],
+    vertex_count: usize,
+) -> Result<Vec<MorphPackVertexSkin>, Vec<MorphDiagnostic>> {
+    let joints_count = bounded_count(joints_accessor, "JOINTS_0")?;
+    let weights_count = bounded_count(weights_accessor, "WEIGHTS_0")?;
+    if joints_count != vertex_count || weights_count != vertex_count {
+        return Err(vec![error(
+            "MORPH_GLB_SKINNING_COUNT_MISMATCH",
+            "meshes[0].primitives[0].attributes",
+            "JOINTS_0 and WEIGHTS_0 counts must match POSITION",
+        )]);
+    }
+    if joints_accessor
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        != Some("VEC4")
+        || !matches!(
+            joints_accessor
+                .get("componentType")
+                .and_then(serde_json::Value::as_u64),
+            Some(5121) | Some(5123)
+        )
+    {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_SKIN_JOINTS",
+            "meshes[0].primitives[0].attributes.JOINTS_0",
+            "JOINTS_0 must be an unsigned byte or short VEC4 accessor",
+        )]);
+    }
+    if weights_accessor
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        != Some("VEC4")
+        || weights_accessor
+            .get("componentType")
+            .and_then(serde_json::Value::as_u64)
+            != Some(5126)
+    {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_SKIN_WEIGHTS",
+            "meshes[0].primitives[0].attributes.WEIGHTS_0",
+            "WEIGHTS_0 must be a float VEC4 accessor",
+        )]);
+    }
+    let joints_component_type = joints_accessor
+        .get("componentType")
+        .and_then(serde_json::Value::as_u64)
+        .expect("validated JOINTS_0 component type");
+    let joints_component_size = if joints_component_type == 5121 { 1 } else { 2 };
+    let joints_layout = accessor_layout(
+        joints_accessor,
+        buffer_views,
+        bin,
+        joints_component_size * 4,
+        "JOINTS_0",
+    )?;
+    let weights_layout = accessor_layout(weights_accessor, buffer_views, bin, 16, "WEIGHTS_0")?;
+    let mut skinning = Vec::with_capacity(vertex_count);
+    for index in 0..vertex_count {
+        let joints_start = joints_layout.start + index * joints_layout.stride;
+        let Some(joints) = read_joints(bin, joints_start, joints_component_type) else {
+            return Err(vec![error(
+                "MORPH_GLB_TRUNCATED_SKIN_JOINTS",
+                "meshes[0].primitives[0].attributes.JOINTS_0",
+                "JOINTS_0 data is truncated",
+            )]);
+        };
+        let weights_start = weights_layout.start + index * weights_layout.stride;
+        let Some(weights) = read_vec4(bin, weights_start) else {
+            return Err(vec![error(
+                "MORPH_GLB_TRUNCATED_SKIN_WEIGHTS",
+                "meshes[0].primitives[0].attributes.WEIGHTS_0",
+                "WEIGHTS_0 data is truncated",
+            )]);
+        };
+        if joints.iter().any(|joint| *joint >= 15)
+            || weights
+                .iter()
+                .any(|weight| !weight.is_finite() || !(0.0..=1.0).contains(weight))
+            || (weights.iter().sum::<f32>() - 1.0).abs() > 0.01
+        {
+            return Err(vec![error(
+                "MORPH_GLB_INVALID_SKIN",
+                &format!("meshes[0].primitives[0].attributes[{index}]"),
+                "skin joints must reference the 15-joint rig and weights must be finite, normalized, and within 0..=1",
+            )]);
+        }
+        skinning.push(MorphPackVertexSkin { joints, weights });
+    }
+    Ok(skinning)
+}
+
 struct AccessorLayout {
     start: usize,
     stride: usize,
@@ -1102,6 +1301,33 @@ fn read_vec3(bytes: &[u8], start: usize) -> Option<[f32; 3]> {
     let y = f32::from_le_bytes(bytes.get(start + 4..start + 8)?.try_into().ok()?);
     let z = f32::from_le_bytes(bytes.get(start + 8..start + 12)?.try_into().ok()?);
     Some([x, y, z])
+}
+
+fn read_vec4(bytes: &[u8], start: usize) -> Option<[f32; 4]> {
+    Some([
+        f32::from_le_bytes(bytes.get(start..start + 4)?.try_into().ok()?),
+        f32::from_le_bytes(bytes.get(start + 4..start + 8)?.try_into().ok()?),
+        f32::from_le_bytes(bytes.get(start + 8..start + 12)?.try_into().ok()?),
+        f32::from_le_bytes(bytes.get(start + 12..start + 16)?.try_into().ok()?),
+    ])
+}
+
+fn read_joints(bytes: &[u8], start: usize, component_type: u64) -> Option<[u16; 4]> {
+    match component_type {
+        5121 => Some([
+            u16::from(*bytes.get(start)?),
+            u16::from(*bytes.get(start + 1)?),
+            u16::from(*bytes.get(start + 2)?),
+            u16::from(*bytes.get(start + 3)?),
+        ]),
+        5123 => Some([
+            u16::from_le_bytes(bytes.get(start..start + 2)?.try_into().ok()?),
+            u16::from_le_bytes(bytes.get(start + 2..start + 4)?.try_into().ok()?),
+            u16::from_le_bytes(bytes.get(start + 4..start + 6)?.try_into().ok()?),
+            u16::from_le_bytes(bytes.get(start + 6..start + 8)?.try_into().ok()?),
+        ]),
+        _ => None,
+    }
 }
 
 fn read_index(bytes: &[u8], start: usize, component_type: u64) -> Option<u32> {
@@ -1519,6 +1745,7 @@ mod tests {
                 rotation: [0.0, 0.0, 0.0, 1.0],
                 scale: [1.0; 3],
             },
+            skin: None,
         }
     }
 

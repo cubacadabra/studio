@@ -272,6 +272,7 @@ pub(crate) fn build_source_manifest_json(
         asset,
         geometry,
         attachment,
+        skin: None,
     };
     let diagnostics = manifest.validate();
     if !diagnostics.is_empty() {
@@ -670,6 +671,7 @@ mod tests {
             vertices: vec![[-1.5, -0.525, -1.5], [1.5, 1.945, 1.5]],
             indices: vec![0, 1, 1],
             base_color: None,
+            skinning: None,
         };
         let attachment = fit_rigid_headwear_to_person(&preview, "head").unwrap();
         assert!((attachment.scale[0] - 0.451).abs() < 0.002);
@@ -717,6 +719,7 @@ mod tests {
             vertices: vec![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             indices: vec![0, 1, 2],
             base_color: Some([0.2, 0.4, 0.8, 1.0]),
+            skinning: None,
         };
         let png = encode_morph_thumbnail_png(&preview).expect("thumbnail PNG");
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));

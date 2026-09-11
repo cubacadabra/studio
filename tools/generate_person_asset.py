@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Generate a small Blender-compatible skinned Person GLB fixture.
 
-This is intentionally a source fixture for the Phase 5 importer. It contains
-the canonical 15-joint hierarchy, four-weight skin attributes, and three
-separate LOD meshes. Runtime pack compilation remains a separate step until
-the shared skinned-pack format is enabled.
+This is intentionally a small source fixture for the Phase 5 importer. It
+contains the canonical 15-joint hierarchy, four-weight skin attributes, and
+three separate LOD meshes. Studio compiles it into the shared schema 2 runtime
+pack; a Blender-authored export can use the same sidecar contract.
 """
 
 import json
@@ -175,7 +175,7 @@ def main():
     sidecar.write_text(json.dumps({
         "schemaVersion": 2,
         "asset": {
-            "id": "cuba:base/person-authored.v1",
+            "id": "cuba:base/person.v1",
             "kind": "base",
             "displayName": "Person Authored",
             "rigProfile": "cuba:rig/biped15.v1",

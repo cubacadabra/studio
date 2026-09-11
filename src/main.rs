@@ -106,6 +106,7 @@ struct StudioApp {
     mobile_sprint: bool,
     morph_equipment: BTreeMap<String, String>,
     morph_loadout: cubacadabra_morphs::MorphLoadout,
+    morph_base_asset: Option<cubacadabra_morphs::MorphAssetId>,
     climb: bool,
     joystick_input: (f32, f32),
     pointer_position: Option<(f32, f32)>,
@@ -156,6 +157,7 @@ impl StudioApp {
             mobile_sprint: false,
             morph_equipment: BTreeMap::new(),
             morph_loadout: default_morph_loadout(),
+            morph_base_asset: None,
             climb: false,
             joystick_input: (0.0, 0.0),
             pointer_position: None,
@@ -704,7 +706,10 @@ impl StudioApp {
             shell.upsert_morph_asset(decoded.asset.clone());
         }
         let mut loadout = self.morph_loadout.clone();
-        if !loadout.parts.iter().any(|part| part == &decoded.asset.id) {
+        if decoded.asset.kind == cubacadabra_morphs::MorphAssetKind::Base {
+            self.morph_base_asset = Some(decoded.asset.id.clone());
+            loadout.base = decoded.asset.id.clone();
+        } else if !loadout.parts.iter().any(|part| part == &decoded.asset.id) {
             loadout.parts.push(decoded.asset.id.clone());
         }
         self.apply_morph_loadout(loadout)?;
@@ -787,6 +792,8 @@ impl StudioApp {
         let capabilities = cubacadabra_morphs::CapabilitySet::new([
             cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
                 .expect("built-in morph capability must be valid"),
+            cubacadabra_morphs::CapabilityId::parse("skin.biped15-linear.v1")
+                .expect("built-in morph capability must be valid"),
             cubacadabra_morphs::CapabilityId::parse("face.analytic.v1")
                 .expect("built-in morph capability must be valid"),
             cubacadabra_morphs::CapabilityId::parse("secondary.chain.v1")
@@ -796,8 +803,13 @@ impl StudioApp {
         ]);
         cubacadabra_morphs::resolve_loadout(&catalog, &loadout, &capabilities)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
-        let legacy = cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout)
+        let mut legacy = cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+        if self.morph_base_asset.as_ref() == Some(&loadout.base) {
+            legacy
+                .equipment
+                .insert("base".to_owned(), loadout.base.to_string());
+        }
         let appearance = serde_json::to_string(&legacy)
             .map_err(|error| format!("Could not encode morph loadout: {error}"))?;
         if self
