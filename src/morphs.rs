@@ -671,6 +671,7 @@ mod tests {
             vertices: vec![[-1.5, -0.525, -1.5], [1.5, 1.945, 1.5]],
             indices: vec![0, 1, 1],
             base_color: None,
+            use_avatar_tint: false,
             skinning: None,
         };
         let attachment = fit_rigid_headwear_to_person(&preview, "head").unwrap();
@@ -719,6 +720,7 @@ mod tests {
             vertices: vec![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             indices: vec![0, 1, 2],
             base_color: Some([0.2, 0.4, 0.8, 1.0]),
+            use_avatar_tint: false,
             skinning: None,
         };
         let png = encode_morph_thumbnail_png(&preview).expect("thumbnail PNG");

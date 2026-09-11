@@ -23,7 +23,7 @@ ASSETS = {
         "slots": ["shirt"],
         "coverage": ["torso", "arms"],
         "color": [0.10, 0.52, 0.46, 1.0],
-        "string_color": [0.92, 0.84, 0.68, 1.0],
+        "string_color": [0.97, 0.97, 0.95, 1.0],
         "pieces": [
             (1, (0.0, 0.0, 0.0), (1.10, 1.04, 0.73), "torso"),
             (3, (0.0, -0.40, 0.0), (0.46, 1.13, 0.49), "sleeve"),
@@ -57,69 +57,95 @@ ASSETS = {
 }
 
 
-def hood_shell(vertices, indices, joints, weights, detail):
-    """Add an open, face-safe hood shell skinned to the head joint.
+def folded_hood(vertices, indices, joints, weights, detail):
+    """Add a soft folded hood behind the neck instead of a head shell.
 
-    The front opening leaves the analytic face unobstructed. The two angular
-    patches meet around the back and sides of the head, giving the top a
-    recognizable hood silhouette without adding a second bone hierarchy.
+    The hood is torso-skinned and sits behind the upper back. It may overlap
+    the lower rear hair slightly, like cloth resting against it, but never
+    surrounds the face or forms the rigid cylinder produced by the old shell.
     """
-    radial, rows = {3: (16, 7), 2: (12, 5), 1: (8, 3)}[detail]
-    for start_angle, end_angle in [(0.0, math.pi * 1.27), (math.pi * 1.70, math.tau)]:
-        start = len(vertices)
-        for row in range(rows + 1):
-            t = row / rows
-            y = -0.30 + 0.86 * t
-            crown = math.sin(math.pi * min(1.0, t * 0.94))
-            radius_x = 0.53 * (0.82 + 0.18 * crown)
-            radius_z = 0.56 * (0.82 + 0.18 * crown)
-            for column in range(radial + 1):
-                angle = start_angle + (end_angle - start_angle) * column / radial
-                vertices.append((
-                    radius_x * math.cos(angle),
-                    y,
-                    0.055 + radius_z * math.sin(angle),
-                ))
-                joints.append([2, 0, 0, 0])
-                weights.append([1.0, 0.0, 0.0, 0.0])
-                if row < rows and column < radial:
-                    a = start + row * (radial + 1) + column
-                    b = a + radial + 1
-                    indices.extend([a, b, a + 1, a + 1, b, b + 1])
+    person.profile_piece(
+        vertices,
+        indices,
+        joints,
+        weights,
+        (0.0, 0.51, 0.30),
+        (0.78, 0.34, 0.38),
+        1,
+        detail,
+        "pebble",
+    )
 
 
-def clothing_lod_geometry(pieces, detail):
-    vertices, indices, joints, weights = [], [], [], []
+def normalize(vector):
+    length = math.sqrt(sum(value * value for value in vector))
+    return tuple(value / length for value in vector)
+
+
+def cross(a, b):
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def curved_cord(vertices, indices, joints, weights, side, detail):
+    """Sweep a slim capped tube from the neckline to a short aglet."""
+    radial = {3: 10, 2: 8, 1: 6}[detail]
+    points = [
+        (side * 0.105, 0.505, -0.375),
+        (side * 0.135, 0.435, -0.402),
+        (side * 0.155, 0.315, -0.414),
+        (side * 0.145, 0.175, -0.416),
+        (side * 0.135, 0.055, -0.413),
+        (side * 0.135, 0.010, -0.410),
+    ]
+    start = len(vertices)
+    for row, point in enumerate(points):
+        previous = points[max(0, row - 1)]
+        following = points[min(len(points) - 1, row + 1)]
+        tangent = normalize(tuple(following[axis] - previous[axis] for axis in range(3)))
+        basis_x = normalize(cross(tangent, (0.0, 0.0, 1.0)))
+        basis_z = cross(tangent, basis_x)
+        radius = 0.015 if row < len(points) - 2 else 0.020
+        for column in range(radial + 1):
+            angle = column / radial * math.tau
+            vertices.append(tuple(
+                point[axis]
+                + basis_x[axis] * math.cos(angle) * radius
+                + basis_z[axis] * math.sin(angle) * radius
+                for axis in range(3)
+            ))
+            joints.append([1, 0, 0, 0])
+            weights.append([1.0, 0.0, 0.0, 0.0])
+            if row < len(points) - 1 and column < radial:
+                a = start + row * (radial + 1) + column
+                b = a + radial + 1
+                indices.extend([a, b, a + 1, a + 1, b, b + 1])
+    for row, top in [(0, False), (len(points) - 1, True)]:
+        ring = start + row * (radial + 1)
+        cap = len(vertices)
+        vertices.append(points[row])
+        joints.append([1, 0, 0, 0])
+        weights.append([1.0, 0.0, 0.0, 0.0])
+        for column in range(radial):
+            a = ring + column
+            indices.extend([cap, a + 1, a] if top else [cap, a, a + 1])
+
+
+def clothing_lod_surfaces(pieces, detail):
+    cloth = ([], [], [], [])
+    vertices, indices, joints, weights = cloth
     for joint, center, size, shape in pieces:
         person.profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
     if pieces and pieces[0][3] == "torso":
-        hood_shell(vertices, indices, joints, weights, detail)
-        # Two cords hang over the front of the hoodie. Their small center
-        # position and forward z offset keep them visible on the torso.
-        for x in (-0.12, 0.12):
-            person.profile_piece(
-                vertices,
-                indices,
-                joints,
-                weights,
-                (x, 0.16, -0.39),
-                (0.038, 0.34, 0.038),
-                1,
-                detail,
-                "string",
-            )
-            person.profile_piece(
-                vertices,
-                indices,
-                joints,
-                weights,
-                (x, -0.025, -0.39),
-                (0.070, 0.085, 0.070),
-                1,
-                detail,
-                "pebble",
-            )
-    return vertices, indices, joints, weights
+        folded_hood(vertices, indices, joints, weights, detail)
+        cords = ([], [], [], [])
+        for side in (-1.0, 1.0):
+            curved_cord(*cords, side, detail)
+        return [cloth, cords]
+    return [cloth]
 
 
 def make_glb(output, asset):
@@ -139,34 +165,37 @@ def make_glb(output, asset):
 
     triangle_counts = {}
     for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
-        positions, indices, joints, weights = clothing_lod_geometry(asset["pieces"], detail)
-        triangle_counts[level.lower()] = len(indices) // 3
-        blobs = [
-            b"".join(struct.pack("<3f", *value) for value in positions),
-            b"".join(struct.pack("<I", value) for value in indices),
-            b"".join(struct.pack("<4H", *value) for value in joints),
-            b"".join(struct.pack("<4f", *value) for value in weights),
-        ]
-        pos_view, idx_view, joint_view, weight_view = [
-            add_blob(blob, 34962 if index != 1 else 34963)
-            for index, blob in enumerate(blobs)
-        ]
-        pos_accessor = len(accessors)
-        accessors.append({"bufferView": pos_view, "componentType": 5126, "count": len(positions), "type": "VEC3"})
-        idx_accessor = len(accessors)
-        accessors.append({"bufferView": idx_view, "componentType": 5125, "count": len(indices), "type": "SCALAR"})
-        joint_accessor = len(accessors)
-        accessors.append({"bufferView": joint_view, "componentType": 5123, "count": len(joints), "type": "VEC4"})
-        weight_accessor = len(accessors)
-        accessors.append({"bufferView": weight_view, "componentType": 5126, "count": len(weights), "type": "VEC4"})
-        meshes.append({
-            "name": f"Person{asset['kind'].title()}_{level}",
-            "primitives": [{
+        surfaces = clothing_lod_surfaces(asset["pieces"], detail)
+        triangle_counts[level.lower()] = sum(len(surface[1]) // 3 for surface in surfaces)
+        primitives = []
+        for material, (positions, indices, joints, weights) in enumerate(surfaces):
+            blobs = [
+                b"".join(struct.pack("<3f", *value) for value in positions),
+                b"".join(struct.pack("<I", value) for value in indices),
+                b"".join(struct.pack("<4H", *value) for value in joints),
+                b"".join(struct.pack("<4f", *value) for value in weights),
+            ]
+            pos_view, idx_view, joint_view, weight_view = [
+                add_blob(blob, 34962 if index != 1 else 34963)
+                for index, blob in enumerate(blobs)
+            ]
+            pos_accessor = len(accessors)
+            accessors.append({"bufferView": pos_view, "componentType": 5126, "count": len(positions), "type": "VEC3"})
+            idx_accessor = len(accessors)
+            accessors.append({"bufferView": idx_view, "componentType": 5125, "count": len(indices), "type": "SCALAR"})
+            joint_accessor = len(accessors)
+            accessors.append({"bufferView": joint_view, "componentType": 5123, "count": len(joints), "type": "VEC4"})
+            weight_accessor = len(accessors)
+            accessors.append({"bufferView": weight_view, "componentType": 5126, "count": len(weights), "type": "VEC4"})
+            primitives.append({
                 "attributes": {"POSITION": pos_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
                 "indices": idx_accessor,
-                "material": 0,
+                "material": material,
                 "mode": 4,
-            }],
+            })
+        meshes.append({
+            "name": f"Person{asset['kind'].title()}_{level}",
+            "primitives": primitives,
         })
 
     nodes = []
@@ -190,6 +219,25 @@ def make_glb(output, asset):
     inverse_view = add_blob(inverse_bind)
     inverse_accessor = len(accessors)
     accessors.append({"bufferView": inverse_view, "componentType": 5126, "count": len(person.JOINTS), "type": "MAT4"})
+    materials = [{
+        "name": asset["name"],
+        "extras": {"cubaUseAvatarTint": True},
+        "pbrMetallicRoughness": {
+            "baseColorFactor": asset["color"],
+            "roughnessFactor": 0.82,
+            "metallicFactor": 0.0,
+        },
+    }]
+    if "string_color" in asset:
+        materials.append({
+            "name": "White Drawstring",
+            "extras": {"cubaUseAvatarTint": False},
+            "pbrMetallicRoughness": {
+                "baseColorFactor": asset["string_color"],
+                "roughnessFactor": 0.68,
+                "metallicFactor": 0.0,
+            },
+        })
     document = {
         "asset": {"version": "2.0", "generator": "Cubacadabra Phase 5 clothing fixture"},
         "scene": 0,
@@ -197,7 +245,7 @@ def make_glb(output, asset):
         "nodes": nodes,
         "meshes": meshes,
         "skins": [{"name": "Person_Skin", "joints": list(range(len(person.JOINTS))), "inverseBindMatrices": inverse_accessor, "skeleton": 0}],
-        "materials": [{"name": asset["name"], "pbrMetallicRoughness": {"baseColorFactor": asset["color"], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "materials": materials,
         "accessors": accessors,
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
@@ -228,7 +276,7 @@ def write_sidecar(glb_path, asset):
             "occupiedSlots": asset["slots"],
             "coverage": asset["coverage"],
             "conflicts": [],
-            "materials": [asset["kind"]],
+            "materials": [asset["kind"]] + (["drawstring"] if "string_color" in asset else []),
             "lod": asset["lod"],
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
             "source": {"geometry": glb_path.name},

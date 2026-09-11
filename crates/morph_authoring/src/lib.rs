@@ -5,7 +5,8 @@
 //! the Studio preview, and compiles the shared runtime pack format.
 
 pub use cubacadabra_morphs::{
-    MAX_MORPH_PACK_BYTES, MORPH_PACK_MAGIC, MORPH_PACK_SCHEMA_VERSION,
+    MAX_MORPH_PACK_BYTES, MAX_MORPH_PACK_SURFACES, MORPH_PACK_MAGIC,
+    MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION, MORPH_PACK_SCHEMA_VERSION,
     MORPH_PACK_SKINNED_SCHEMA_VERSION, MorphPackVertexSkin,
 };
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
@@ -96,6 +97,7 @@ pub struct MorphGlbPreviewMesh {
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub base_color: Option<[f32; 4]>,
+    pub use_avatar_tint: bool,
     pub skinning: Option<Vec<MorphPackVertexSkin>>,
 }
 
@@ -347,11 +349,13 @@ pub fn inspect_glb_bytes(
             ));
             continue;
         };
-        if primitives.len() != 1 {
+        if primitives.is_empty() || primitives.len() > MAX_MORPH_PACK_SURFACES {
             diagnostics.push(error(
                 "MORPH_GLB_LOD_PRIMITIVE_COUNT",
                 &format!("geometry.lodNodes.{level}"),
-                "rigid LOD meshes must contain exactly one triangle-list primitive",
+                format!(
+                    "LOD meshes must contain 1..={MAX_MORPH_PACK_SURFACES} triangle-list primitives"
+                ),
             ));
             continue;
         }
@@ -654,6 +658,14 @@ pub fn decode_glb_preview_node(
     bytes: &[u8],
     node_name: Option<&str>,
 ) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
+    decode_glb_preview_node_primitive(bytes, node_name, 0)
+}
+
+fn decode_glb_preview_node_primitive(
+    bytes: &[u8],
+    node_name: Option<&str>,
+    primitive_index: usize,
+) -> Result<MorphGlbPreviewMesh, Vec<MorphDiagnostic>> {
     if bytes.len() > MAX_SOURCE_GLB_BYTES {
         return Err(vec![error(
             "MORPH_GLB_TOO_LARGE",
@@ -717,19 +729,20 @@ pub fn decode_glb_preview_node(
     let primitive = mesh
         .get("primitives")
         .and_then(serde_json::Value::as_array)
-        .and_then(|primitives| primitives.first())
+        .and_then(|primitives| primitives.get(primitive_index))
         .ok_or_else(|| {
             vec![error(
                 "MORPH_GLB_MISSING_PRIMITIVES",
-                "meshes[0]",
-                "mesh must contain a primitive",
+                &format!("meshes[{mesh_index}].primitives[{primitive_index}]"),
+                "mesh does not contain the requested primitive",
             )]
         })?;
-    let base_color = primitive
+    let material = primitive
         .get("material")
         .and_then(serde_json::Value::as_u64)
         .and_then(|index| usize::try_from(index).ok())
-        .and_then(|index| document.get("materials")?.as_array()?.get(index))
+        .and_then(|index| document.get("materials")?.as_array()?.get(index));
+    let base_color = material
         .and_then(|material| material.get("pbrMetallicRoughness"))
         .and_then(|pbr| pbr.get("baseColorFactor"))
         .and_then(serde_json::Value::as_array)
@@ -750,6 +763,11 @@ pub fn decode_glb_preview_node(
                 ]
             })
         });
+    let use_avatar_tint = material
+        .and_then(|material| material.get("extras"))
+        .and_then(|extras| extras.get("cubaUseAvatarTint"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let position_accessor = primitive
         .get("attributes")
         .and_then(|attributes| attributes.get("POSITION"))
@@ -875,6 +893,7 @@ pub fn decode_glb_preview_node(
         vertices,
         indices,
         base_color,
+        use_avatar_tint,
         skinning,
     })
 }
@@ -897,15 +916,26 @@ pub fn compile_morph_pack(
     let mut meshes = Vec::new();
     for level in ["near", "mid", "far"] {
         let node = manifest.geometry.lod_nodes[level].as_str();
-        let mesh = decode_glb_preview_node(glb, Some(node))?;
-        meshes.push((level, mesh));
+        let primitive_count = inspection.lods[level].primitive_count;
+        let mut primitives = Vec::with_capacity(primitive_count);
+        for primitive_index in 0..primitive_count {
+            primitives.push(decode_glb_preview_node_primitive(
+                glb,
+                Some(node),
+                primitive_index,
+            )?);
+        }
+        meshes.push((level, primitives));
     }
     let mut pack = Vec::with_capacity(manifest_json.len() + 64);
     pack.extend_from_slice(MORPH_PACK_MAGIC);
     let skinned = manifest.attachment.mode == MorphAttachmentMode::Skinned;
+    let multi_surface = meshes.iter().any(|(_, primitives)| primitives.len() > 1);
     write_u16(
         &mut pack,
-        if skinned {
+        if multi_surface {
+            MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION
+        } else if skinned {
             MORPH_PACK_SKINNED_SCHEMA_VERSION
         } else {
             MORPH_PACK_SCHEMA_VERSION
@@ -924,13 +954,21 @@ pub fn compile_morph_pack(
     );
     pack.extend_from_slice(&manifest_json);
     let mut lod_triangle_counts = BTreeMap::new();
-    for (level, mesh) in meshes {
+    for (level, primitives) in meshes {
         let triangle_count = inspection.lods[level].triangle_count;
         lod_triangle_counts.insert(level.to_owned(), triangle_count);
+        let vertex_count = primitives
+            .iter()
+            .map(|mesh| mesh.vertices.len())
+            .sum::<usize>();
+        let index_count = primitives
+            .iter()
+            .map(|mesh| mesh.indices.len())
+            .sum::<usize>();
         write_u32(&mut pack, triangle_count);
         write_u32(
             &mut pack,
-            u32::try_from(mesh.vertices.len()).map_err(|_| {
+            u32::try_from(vertex_count).map_err(|_| {
                 vec![error(
                     "MORPH_PACK_LIMIT",
                     "geometry",
@@ -940,7 +978,7 @@ pub fn compile_morph_pack(
         );
         write_u32(
             &mut pack,
-            u32::try_from(mesh.indices.len()).map_err(|_| {
+            u32::try_from(index_count).map_err(|_| {
                 vec![error(
                     "MORPH_PACK_LIMIT",
                     "geometry",
@@ -948,39 +986,115 @@ pub fn compile_morph_pack(
                 )]
             })?,
         );
-        match mesh.base_color {
-            Some(color) => {
-                pack.push(1);
-                for value in color {
+        if multi_surface {
+            write_u16(
+                &mut pack,
+                u16::try_from(primitives.len()).map_err(|_| {
+                    vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "geometry",
+                        "surface count is too large for a morph pack",
+                    )]
+                })?,
+            );
+            let mut index_start = 0u32;
+            for mesh in &primitives {
+                let surface_index_count = u32::try_from(mesh.indices.len()).map_err(|_| {
+                    vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "geometry",
+                        "surface index count is too large for a morph pack",
+                    )]
+                })?;
+                write_u32(&mut pack, index_start);
+                write_u32(&mut pack, surface_index_count);
+                let mut flags = 0u8;
+                if mesh.base_color.is_some() {
+                    flags |= 1;
+                }
+                if mesh.use_avatar_tint {
+                    flags |= 2;
+                }
+                pack.push(flags);
+                if let Some(color) = mesh.base_color {
+                    for value in color {
+                        pack.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                index_start = index_start
+                    .checked_add(surface_index_count)
+                    .ok_or_else(|| {
+                        vec![error(
+                            "MORPH_PACK_LIMIT",
+                            "geometry",
+                            "surface index ranges overflow the morph pack",
+                        )]
+                    })?;
+            }
+        } else {
+            match primitives[0].base_color {
+                Some(color) => {
+                    pack.push(1);
+                    for value in color {
+                        pack.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                None => pack.push(0),
+            }
+        }
+        for mesh in &primitives {
+            for vertex in &mesh.vertices {
+                for value in vertex {
                     pack.extend_from_slice(&value.to_le_bytes());
                 }
             }
-            None => pack.push(0),
-        }
-        for vertex in mesh.vertices {
-            for value in vertex {
-                pack.extend_from_slice(&value.to_le_bytes());
-            }
         }
         if skinned {
-            let Some(skinning) = mesh.skinning else {
-                return Err(vec![error(
-                    "MORPH_GLB_MISSING_SKINNING",
-                    &format!("geometry.lodNodes.{level}"),
-                    "skinned assets need JOINTS_0 and WEIGHTS_0 attributes",
-                )]);
-            };
-            for skin in skinning {
-                for joint in skin.joints {
-                    pack.extend_from_slice(&joint.to_le_bytes());
-                }
-                for weight in skin.weights {
-                    pack.extend_from_slice(&weight.to_le_bytes());
+            for mesh in &primitives {
+                let Some(skinning) = &mesh.skinning else {
+                    return Err(vec![error(
+                        "MORPH_GLB_MISSING_SKINNING",
+                        &format!("geometry.lodNodes.{level}"),
+                        "skinned assets need JOINTS_0 and WEIGHTS_0 attributes",
+                    )]);
+                };
+                for skin in skinning {
+                    for joint in skin.joints {
+                        pack.extend_from_slice(&joint.to_le_bytes());
+                    }
+                    for weight in skin.weights {
+                        pack.extend_from_slice(&weight.to_le_bytes());
+                    }
                 }
             }
         }
-        for index in mesh.indices {
-            pack.extend_from_slice(&index.to_le_bytes());
+        let mut vertex_start = 0u32;
+        for mesh in primitives {
+            for index in mesh.indices {
+                let index = index.checked_add(vertex_start).ok_or_else(|| {
+                    vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "geometry",
+                        "flattened vertex index overflows the morph pack",
+                    )]
+                })?;
+                pack.extend_from_slice(&index.to_le_bytes());
+            }
+            vertex_start = vertex_start
+                .checked_add(u32::try_from(mesh.vertices.len()).map_err(|_| {
+                    vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "geometry",
+                        "vertex count is too large for a morph pack",
+                    )]
+                })?)
+                .ok_or_else(|| {
+                    vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "geometry",
+                        "flattened vertex ranges overflow the morph pack",
+                    )]
+                })?;
         }
         if pack.len() > MAX_MORPH_PACK_BYTES {
             return Err(vec![error(
