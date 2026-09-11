@@ -557,8 +557,8 @@ mod tests {
     #[test]
     fn studio_can_inspect_the_shared_catalog_without_engine_internals() {
         let catalog = inspect_catalog(COMPATIBILITY_CATALOG).expect("compatibility catalog");
-        assert_eq!(catalog.presets.len(), 3);
-        assert_eq!(catalog.assets.len(), 34);
+        assert_eq!(catalog.presets.len(), 2);
+        assert_eq!(catalog.assets.len(), 29);
     }
 
     #[test]
@@ -576,11 +576,13 @@ mod tests {
     #[test]
     fn studio_uses_shared_catalog_resolution() {
         let catalog = inspect_catalog(COMPATIBILITY_CATALOG).expect("compatibility catalog");
-        let preset_id = MorphAssetId::parse("cuba:preset/person-boy.v1").unwrap();
+        let preset_id = MorphAssetId::parse("cuba:preset/person-01.v1").unwrap();
         let capabilities = CapabilitySet::new([
             cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1").unwrap(),
             cubacadabra_morphs::CapabilityId::parse("face.analytic.v1").unwrap(),
             cubacadabra_morphs::CapabilityId::parse("secondary.chain.v1").unwrap(),
+            cubacadabra_morphs::CapabilityId::parse("skin.biped15-linear.v1").unwrap(),
+            cubacadabra_morphs::CapabilityId::parse("material.cuba-pbr.v1").unwrap(),
         ]);
         let resolved = resolve_catalog_preset(&catalog, &preset_id, &capabilities).unwrap();
         assert_eq!(resolved.base.as_str(), "cuba:base/person.v1");

@@ -37,6 +37,27 @@ HEAD_PROFILE = [
     (0.45, 0.49, 0.49), (0.72, 0.48, 0.48), (0.91, 0.36, 0.36),
     (1.00, 0.025, 0.025),
 ]
+
+PERSON_VARIANTS = {
+    "person-01": {
+        "id": "cuba:base/person.v1",
+        "display_name": "Person 1",
+        "skin_color": [0.91, 0.55, 0.39, 1.0],
+        "head_profile": HEAD_PROFILE,
+    },
+    "person-02": {
+        "id": "cuba:base/person-02.v1",
+        "display_name": "Person 2",
+        "skin_color": [0.38, 0.20, 0.12, 1.0],
+        # A slightly broader cheek and jaw profile. These are individual
+        # appearance dimensions, not a claim that facial shape defines race.
+        "head_profile": [
+            (0.00, 0.20, 0.23), (0.06, 0.35, 0.35), (0.22, 0.49, 0.47),
+            (0.45, 0.52, 0.50), (0.72, 0.50, 0.50), (0.91, 0.39, 0.37),
+            (1.00, 0.03, 0.025),
+        ],
+    },
+}
 TORSO_PROFILE = [
     (0.00, 0.37, 0.36), (0.09, 0.44, 0.44), (0.25, 0.48, 0.47),
     (0.55, 0.47, 0.45), (0.74, 0.48, 0.40), (0.91, 0.40, 0.31),
@@ -84,10 +105,10 @@ def signed_power(value, exponent):
     return math.copysign(abs(value) ** exponent, value)
 
 
-def surface(shape, t, angle):
+def surface(shape, t, angle, head_profile):
     sin_angle, cos_angle = math.sin(angle), math.cos(angle)
     if shape == "head":
-        radius_x, radius_z = profile(HEAD_PROFILE, t)
+        radius_x, radius_z = profile(head_profile, t)
         exponent = 0.58
     elif shape == "torso":
         radius_x, radius_z = profile(TORSO_PROFILE, t)
@@ -117,14 +138,25 @@ def surface(shape, t, angle):
     return x, y, z
 
 
-def profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape):
+def profile_piece(
+    vertices,
+    indices,
+    joints,
+    weights,
+    center,
+    size,
+    joint,
+    detail,
+    shape,
+    head_profile=HEAD_PROFILE,
+):
     radial, rows = {3: (20, 10), 2: (12, 6), 1: (6, 3)}[detail]
     start = len(vertices)
     for row in range(rows + 1):
         t = row / rows
         for column in range(radial + 1):
             angle = column / radial * math.tau
-            point = surface(shape, t, angle)
+            point = surface(shape, t, angle, head_profile)
             vertices.append(tuple(center[axis] + point[axis] * size[axis] for axis in range(3)))
             joints.append([joint, 0, 0, 0])
             weights.append([1.0, 0.0, 0.0, 0.0])
@@ -164,7 +196,7 @@ def cube(vertices, indices, joints, weights, center, size, joint, detail):
         indices.extend([start + a, start + b, start + c])
 
 
-def lod_geometry(detail):
+def lod_geometry(detail, head_profile=HEAD_PROFILE):
     vertices, indices, joints, weights = [], [], [], []
     # Covered regions are a fitted underlayer; exposed regions match the
     # established Person profile so the analytic face remains correctly
@@ -188,7 +220,7 @@ def lod_geometry(detail):
         (13, (0, -0.25, 0), (0.28, 0.76, 0.30), "limb"),
         (14, (0, 0.13, -0.08), (0.44, 0.24, 0.68), "shoe"),
     ]:
-        profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
+        profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape, head_profile)
     return vertices, indices, joints, weights
 
 
@@ -201,7 +233,7 @@ def accessor(buffer_view, component_type, count, kind, minimum=None, maximum=Non
     return value
 
 
-def make_glb(output):
+def make_glb(output, variant):
     binary = bytearray()
     views, accessors, meshes = [], [], []
 
@@ -217,7 +249,7 @@ def make_glb(output):
         return len(views) - 1
 
     for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
-        positions, indices, joints, weights = lod_geometry(detail)
+        positions, indices, joints, weights = lod_geometry(detail, variant["head_profile"])
         pos_blob = b"".join(struct.pack("<3f", *v) for v in positions)
         idx_blob = b"".join(struct.pack("<I", v) for v in indices)
         joint_blob = b"".join(struct.pack("<4H", *v) for v in joints)
@@ -269,7 +301,7 @@ def make_glb(output):
         "nodes": nodes,
         "meshes": meshes,
         "skins": [{"name": "Person_Skin", "joints": list(range(len(JOINTS))), "inverseBindMatrices": inverse_accessor, "skeleton": 0}],
-        "materials": [{"name": "Person_Skin", "pbrMetallicRoughness": {"baseColorFactor": [0.91, 0.55, 0.39, 1.0], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "materials": [{"name": "Person_Skin", "pbrMetallicRoughness": {"baseColorFactor": variant["skin_color"], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
         "accessors": accessors,
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
@@ -285,16 +317,24 @@ def make_glb(output):
 
 
 def main():
-    target = Path(sys.argv[1] if len(sys.argv) > 1 else "/Users/aa/Downloads/person_skinned.glb")
+    args = [argument for argument in sys.argv[1:] if not argument.startswith("--variant=")]
+    variant_name = next(
+        (argument.split("=", 1)[1] for argument in sys.argv[1:] if argument.startswith("--variant=")),
+        "person-01",
+    )
+    if variant_name not in PERSON_VARIANTS:
+        raise SystemExit(f"unknown person variant: {variant_name}")
+    variant = PERSON_VARIANTS[variant_name]
+    target = Path(args[0] if args else "/Users/aa/Downloads/person_skinned.glb")
     target.parent.mkdir(parents=True, exist_ok=True)
-    make_glb(target)
+    make_glb(target, variant)
     sidecar = target.with_suffix(".morph.json")
     sidecar.write_text(json.dumps({
         "schemaVersion": 2,
         "asset": {
-            "id": "cuba:base/person.v1",
+            "id": variant["id"],
             "kind": "base",
-            "displayName": "Person Authored",
+            "displayName": variant["display_name"],
             "rigProfile": "cuba:rig/biped15.v1",
             "fitProfiles": ["cuba:fit/person-standard.v1"],
             "occupiedSlots": ["base"],
@@ -304,7 +344,7 @@ def main():
             "lod": {"near": 7500, "mid": 2900, "far": 820},
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
             "source": {"geometry": target.name},
-            "provenance": {"source": "Cubacadabra generated Blender-compatible Phase 5 fixture", "license": "Cubacadabra official"},
+            "provenance": {"source": f"Cubacadabra generated skinned {variant_name} source", "license": "Cubacadabra official"},
         },
         "geometry": {"file": target.name, "lodNodes": {"near": "Person_Near", "mid": "Person_Mid", "far": "Person_Far"}},
         "attachment": {"mode": "skinned", "joint": "root", "translation": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
