@@ -86,10 +86,11 @@ ASSETS = {
         "coverage": ["torso", "upper-arms"],
         "materials": [
             material("shirt", "Royal Blue Polo", [0.08, 0.29, 0.58, 1.0], roughness=0.78),
-            material("collar-placket", "Folded Blue Collar", [0.065, 0.22, 0.46, 1.0], roughness=0.72),
+            material("collar-placket", "Folded Blue Collar", [0.095, 0.31, 0.57, 1.0], roughness=0.72),
             material("sleeve-cuffs", "Navy Polo Trim", [0.025, 0.09, 0.23, 1.0], roughness=0.70),
             material("buttons", "Slate Buttons", [0.27, 0.35, 0.47, 1.0], roughness=0.42),
             material("logo", "Cubacadabra Logo", [1.0, 1.0, 1.0, 1.0], roughness=0.72, texture="logo.png"),
+            material("collar-underside", "Collar Fold Shadow", [0.025, 0.085, 0.18, 1.0], roughness=0.88),
         ],
         "pieces": [
             (1, (0.0, 0.0, 0.0), (1.05, 0.98, 0.69), "torso"),
@@ -370,7 +371,7 @@ def collared_surfaces(asset, detail):
         for column in range(radial + 1):
             angle = column / radial * math.tau
             # Open V below the throat; taper it into the last two shoulder rows.
-            dip = max(0.0, -math.sin(angle)) ** 18 * max(0, row - 5) * 0.063
+            dip = max(0.0, -math.sin(angle)) ** 14 * max(0, row - 5) * 0.075
             ring.append((rx * person.signed_power(math.cos(angle), 0.72),
                          y - dip, rz * person.signed_power(math.sin(angle), 0.72)))
         rings.append(ring)
@@ -394,6 +395,24 @@ def collared_surfaces(asset, detail):
         if not hits:
             raise ValueError(f"Polo detail outside torso: {x}, {y}")
         return (x, y, min(hits) - lift)
+
+    def torso_radius(angle, y):
+        """Intersect the torso along a horizontal ray for collar clearance."""
+        direction = (math.cos(angle), math.sin(angle))
+        hits = []
+        vertices, indices = torso
+        for offset in range(0, len(indices), 3):
+            points = [vertices[i] for i in indices[offset:offset + 3]]
+            a, b, c = [(p[0] * -direction[1] + p[2] * direction[0], p[1]) for p in points]
+            det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+            if abs(det) < 1e-10:
+                continue
+            u = ((b[1] - c[1]) * -c[0] + (c[0] - b[0]) * (y - c[1])) / det
+            v = ((c[1] - a[1]) * -c[0] + (a[0] - c[0]) * (y - c[1])) / det
+            if min(u, v, 1 - u - v) >= -1e-6:
+                hits.append(sum(weight * (p[0] * direction[0] + p[2] * direction[1])
+                                for weight, p in zip((u, v, 1 - u - v), points)))
+        return max(hits, default=0.0)
 
     trim = ([], [], [], [])
     for joint in (3, 6):
@@ -420,35 +439,47 @@ def collared_surfaces(asset, detail):
     for row, (rx, rz, y) in enumerate(sections):
         ring = []
         for column in range(radial + 1):
-            angle = -math.pi / 2 + 0.40 + column / radial * (math.tau - 0.80)
+            angle = -math.pi / 2 + 0.52 + column / radial * (math.tau - 1.04)
             front = max(0., -math.sin(angle)) ** 8
             fall = row / (len(sections) - 1)
-            ring.append((rx * math.cos(angle), y - front * fall * 0.12,
-                         rz * math.sin(angle) - front * fall * 0.085))
+            x, height, z = (rx * math.cos(angle), y - front * fall * 0.15,
+                            rz * math.sin(angle) - front * fall * 0.085)
+            if row >= 2:
+                # Both sides of the thick fall must clear the torso. Its
+                # underside sits close enough to read as a contact shadow.
+                ray = math.atan2(z, x)
+                radius = max(math.hypot(x, z), torso_radius(ray, height) + 0.012,
+                             torso_radius(ray, height - 0.028) + 0.012)
+                x, z = radius * math.cos(ray), radius * math.sin(ray)
+            ring.append((x, height, z))
         collar_rings.append(ring)
-    # Closed cloth thickness: front and back faces have opposing winding.
+    # A separate shaded underside makes the folded fabric thickness readable
+    # without introducing a shadow pass in the shared/mobile renderer. Keep
+    # edge vertices separate so smoothing cannot erase the cloth's rim.
+    underside = ([], [], [], [])
     append_grid(collar, collar_rings, 1, reverse=True)
-    inner = [[(x, y - 0.012, z) for x, y, z in ring] for ring in collar_rings]
-    append_grid(collar, inner, 1)
+    inner = [[(x, y - 0.028, z + 0.003) for x, y, z in ring] for ring in collar_rings]
+    append_grid(underside, inner, 1)
     for edge in (0, -1):
-        append_grid(collar, [collar_rings[edge], inner[edge]], 1, reverse=edge == 0)
-        append_grid(collar, [[ring[edge] for ring in collar_rings],
-                            [ring[edge] for ring in inner]], 1, reverse=edge == -1)
+        append_grid(underside, [collar_rings[edge], inner[edge]], 1, reverse=edge == -1)
+        append_grid(underside, [[ring[edge] for ring in collar_rings],
+                            [ring[edge] for ring in inner]], 1, reverse=edge == 0)
 
-    # Two small buttons on a short inset placket, rather than bright red beads.
-    placket = [[chest(x, y) for x in (-0.041, 0.041)]
-               for y in (0.09, 0.15, 0.22, 0.29, 0.345)]
+    # One fastened button beneath the open throat. The placket ends at the
+    # opening instead of visually buttoning the shirt all the way to the neck.
+    placket = [[chest(x, y) for x in (-width, width)]
+               for y, width in ((0.18, 0.034), (0.23, 0.034), (0.28, 0.034),
+                                (0.32, 0.04), (0.337, 0.046))]
     append_grid(trim, placket, 1)
     buttons = ([], [], [], [])
-    for y in (0.17, 0.285):
-        add_front_disc(buttons, chest(0.0, y, 0.010), 0.015, detail)
+    add_front_disc(buttons, chest(0.0, 0.23, 0.010), 0.017, detail)
 
     logo = ([], [], [], [], [])
     logo_grid = [[chest(-0.32 + column * 0.03, 0.08 + row * 0.03, 0.008)
                   for column in range(5)] for row in range(5)]
     append_grid(logo[:4], logo_grid, 1)
     logo[4].extend([(column / 4, 1 - row / 4) for row in range(5) for column in range(5)])
-    return [shirt, collar, trim, buttons, logo]
+    return [shirt, collar, trim, buttons, logo, underside]
 
 
 def oval_rings(profile, radial):
