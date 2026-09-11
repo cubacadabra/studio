@@ -339,14 +339,22 @@ struct RemoteMorphCatalog {
 
 #[derive(Deserialize)]
 struct RemoteMorphAsset {
+    #[serde(default)]
     id: String,
-    kind: MorphAssetKind,
+    #[serde(default)]
+    kind: Option<MorphAssetKind>,
+    #[serde(default)]
     name: String,
-    pack: String,
+    #[serde(default)]
+    pack: Option<String>,
+    #[serde(default)]
     base: String,
+    #[serde(default)]
     slots: Vec<String>,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default)]
+    definition: Option<cubacadabra_morphs::MorphAssetDefinition>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -387,6 +395,7 @@ pub(crate) struct StudioShell {
     remote_morph_pack_urls: BTreeMap<MorphAssetId, String>,
     morph_remote_pack_requested: Option<(String, String)>,
     morph_toggle_requested: Option<MorphAssetId>,
+    morph_asset_requested: Option<MorphAssetId>,
     active_morphs: BTreeSet<String>,
     selected_morph: MorphAssetId,
     morph_import_requested: bool,
@@ -461,6 +470,7 @@ impl StudioShell {
             remote_morph_pack_urls: BTreeMap::new(),
             morph_remote_pack_requested: None,
             morph_toggle_requested: None,
+            morph_asset_requested: None,
             active_morphs: BTreeSet::new(),
             selected_morph: MorphAssetId::parse("cuba:base/person.v1")
                 .expect("built-in morph ID must be valid"),
@@ -520,41 +530,52 @@ impl StudioShell {
         let mut definitions = Vec::with_capacity(remote.assets.len());
         let mut pack_urls = BTreeMap::new();
         for asset in remote.assets {
-            let id = MorphAssetId::parse(asset.id.clone())
-                .map_err(|error| format!("Invalid morph catalog asset {}: {error:?}", asset.id))?;
-            let base = MorphAssetId::parse(asset.base.clone())
-                .map_err(|error| format!("Invalid morph base {}: {error:?}", asset.base))?;
-            let rig =
-                MorphAssetId::parse("cuba:rig/biped15.v1").expect("bundled rig ID must be valid");
-            let fit = MorphAssetId::parse("cuba:fit/person-standard.v1")
-                .expect("bundled fit ID must be valid");
-            let capability = cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
-                .expect("bundled morph capability must be valid");
+            let definition = if let Some(definition) = asset.definition {
+                definition
+            } else {
+                let id = MorphAssetId::parse(asset.id.clone()).map_err(|error| {
+                    format!("Invalid morph catalog asset {}: {error:?}", asset.id)
+                })?;
+                let base = MorphAssetId::parse(asset.base.clone())
+                    .map_err(|error| format!("Invalid morph base {}: {error:?}", asset.base))?;
+                let rig = MorphAssetId::parse("cuba:rig/biped15.v1")
+                    .expect("bundled rig ID must be valid");
+                let fit = MorphAssetId::parse("cuba:fit/person-standard.v1")
+                    .expect("bundled fit ID must be valid");
+                let capability = cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
+                    .expect("bundled morph capability must be valid");
+                cubacadabra_morphs::MorphAssetDefinition {
+                    id,
+                    kind: asset
+                        .kind
+                        .ok_or_else(|| "Morph catalog row is missing kind".to_owned())?,
+                    display_name: asset.name,
+                    rig_profile: Some(rig),
+                    fit_profiles: vec![fit],
+                    supported_bases: vec![base],
+                    occupied_slots: asset.slots,
+                    coverage: asset.tags,
+                    conflicts: Vec::new(),
+                    materials: vec!["catalog".to_owned()],
+                    lod: cubacadabra_morphs::MorphLodBudget {
+                        near: 128,
+                        mid: 64,
+                        far: 24,
+                    },
+                    required_capabilities: vec![capability],
+                    source: None,
+                    provenance: cubacadabra_morphs::MorphProvenance {
+                        source: "D1/R2 catalog".to_owned(),
+                        license: "Catalog managed".to_owned(),
+                    },
+                }
+            };
+            let id = definition.id.clone();
             remote_ids.push(id.clone());
-            pack_urls.insert(id.clone(), asset.pack);
-            definitions.push(cubacadabra_morphs::MorphAssetDefinition {
-                id,
-                kind: asset.kind,
-                display_name: asset.name,
-                rig_profile: Some(rig),
-                fit_profiles: vec![fit],
-                supported_bases: vec![base],
-                occupied_slots: asset.slots,
-                coverage: asset.tags,
-                conflicts: Vec::new(),
-                materials: vec!["catalog".to_owned()],
-                lod: cubacadabra_morphs::MorphLodBudget {
-                    near: 128,
-                    mid: 64,
-                    far: 24,
-                },
-                required_capabilities: vec![capability],
-                source: None,
-                provenance: cubacadabra_morphs::MorphProvenance {
-                    source: "D1/R2 catalog".to_owned(),
-                    license: "Catalog managed".to_owned(),
-                },
-            });
+            if let Some(pack) = asset.pack {
+                pack_urls.insert(id, pack);
+            }
+            definitions.push(definition);
         }
         self.morph_catalog
             .assets
@@ -564,12 +585,37 @@ impl StudioShell {
         Ok(remote_ids.len())
     }
 
+    pub(crate) fn upsert_morph_asset(
+        &mut self,
+        definition: cubacadabra_morphs::MorphAssetDefinition,
+    ) {
+        self.morph_catalog
+            .assets
+            .retain(|asset| asset.id != definition.id);
+        self.morph_catalog.assets.push(definition);
+    }
+
+    pub(crate) fn morph_catalog(&self) -> &MorphCatalog {
+        &self.morph_catalog
+    }
+
+    pub(crate) fn morph_asset(
+        &self,
+        id: &MorphAssetId,
+    ) -> Option<&cubacadabra_morphs::MorphAssetDefinition> {
+        self.morph_catalog.asset(id)
+    }
+
     pub(crate) fn take_remote_morph_pack_request(&mut self) -> Option<(String, String)> {
         self.morph_remote_pack_requested.take()
     }
 
     pub(crate) fn take_morph_toggle_request(&mut self) -> Option<MorphAssetId> {
         self.morph_toggle_requested.take()
+    }
+
+    pub(crate) fn take_morph_asset_request(&mut self) -> Option<MorphAssetId> {
+        self.morph_asset_requested.take()
     }
 
     pub(crate) fn set_active_morphs<I>(&mut self, ids: I)
@@ -1530,6 +1576,8 @@ impl StudioShell {
                                     self.notice = format!("Selected {name}");
                                     if kind == MorphAssetKind::Headwear {
                                         self.morph_toggle_requested = Some(id.clone());
+                                    } else {
+                                        self.morph_asset_requested = Some(id.clone());
                                     }
                                     if let Some(url) = self.remote_morph_pack_urls.get(id) {
                                         self.morph_remote_pack_requested =
