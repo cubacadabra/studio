@@ -362,6 +362,7 @@ pub(crate) enum StudioCommand {
     OpenProject,
     Save,
     RevealProject,
+    Copy,
     Preferences,
     MaximizeViewport,
     ResetLayout,
@@ -1141,6 +1142,9 @@ impl StudioShell {
             }
             StudioCommand::RevealProject => {
                 self.notice = "Reveal Project is not connected yet".to_owned();
+            }
+            StudioCommand::Copy => {
+                self.state.egui_input_mut().events.push(egui::Event::Copy);
             }
             StudioCommand::Preferences => {
                 self.notice = "Preferences are coming later".to_owned();

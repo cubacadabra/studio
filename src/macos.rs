@@ -20,6 +20,7 @@ const REVEAL_PROJECT_TAG: isize = 3;
 const PREFERENCES_TAG: isize = 4;
 const MAXIMIZE_VIEWPORT_TAG: isize = 5;
 const RESET_LAYOUT_TAG: isize = 6;
+const COPY_TAG: isize = 7;
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -119,7 +120,7 @@ pub(crate) fn install_native_menu() {
 
         configure_application_menu(&application_menu, main_thread, target);
         install_file_menu(&main_menu, main_thread, target);
-        install_edit_menu(&main_menu, main_thread);
+        install_edit_menu(&main_menu, main_thread, target);
         let window_menu = install_window_menu(&main_menu, main_thread, target);
         application.setWindowsMenu(Some(&window_menu));
     });
@@ -197,7 +198,7 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
     add_top_level_menu(main_menu, main_thread, ns_string!("File"), &menu);
 }
 
-fn install_edit_menu(main_menu: &NSMenu, main_thread: MainThreadMarker) {
+fn install_edit_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: &AnyObject) {
     let menu = NSMenu::new(main_thread);
     menu.setTitle(ns_string!("Edit"));
     menu.addItem(&standard_menu_item(
@@ -215,9 +216,22 @@ fn install_edit_menu(main_menu: &NSMenu, main_thread: MainThreadMarker) {
         Some(NSEventModifierFlags::Command | NSEventModifierFlags::Shift),
     ));
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
+    menu.addItem(&standard_menu_item(
+        main_thread,
+        ns_string!("Cut"),
+        sel!(cut:),
+        ns_string!("x"),
+        None,
+    ));
+    menu.addItem(&studio_menu_item(
+        main_thread,
+        target,
+        ns_string!("Copy"),
+        ns_string!("c"),
+        COPY_TAG,
+        None,
+    ));
     for (title, action, key) in [
-        (ns_string!("Cut"), sel!(cut:), ns_string!("x")),
-        (ns_string!("Copy"), sel!(copy:), ns_string!("c")),
         (ns_string!("Paste"), sel!(paste:), ns_string!("v")),
         (ns_string!("Select All"), sel!(selectAll:), ns_string!("a")),
     ] {
@@ -348,6 +362,7 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         OPEN_PROJECT_TAG => Some(StudioCommand::OpenProject),
         SAVE_TAG => Some(StudioCommand::Save),
         REVEAL_PROJECT_TAG => Some(StudioCommand::RevealProject),
+        COPY_TAG => Some(StudioCommand::Copy),
         PREFERENCES_TAG => Some(StudioCommand::Preferences),
         MAXIMIZE_VIEWPORT_TAG => Some(StudioCommand::MaximizeViewport),
         RESET_LAYOUT_TAG => Some(StudioCommand::ResetLayout),
