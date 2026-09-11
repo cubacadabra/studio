@@ -22,6 +22,10 @@ pub enum BackendEvent {
     Connected,
     Disconnected,
     Message(String),
+    MorphCatalog(String),
+    MorphCatalogError(String),
+    MorphPack { asset_id: String, bytes: Vec<u8> },
+    MorphPackError { asset_id: String, message: String },
 }
 
 #[derive(Debug)]
@@ -39,6 +43,8 @@ enum Command {
     SetWorld(String),
     Send(String),
     Move(MoveCommand),
+    FetchMorphCatalog,
+    FetchMorphPack { asset_id: String, url: String },
     Shutdown,
 }
 
@@ -97,6 +103,16 @@ impl BackendClient {
             sprinting,
             respawn_event_id,
         }));
+    }
+
+    pub fn request_morph_catalog(&self) {
+        let _ = self.commands.send(Command::FetchMorphCatalog);
+    }
+
+    pub fn request_morph_pack(&self, asset_id: String, url: String) {
+        let _ = self
+            .commands
+            .send(Command::FetchMorphPack { asset_id, url });
     }
 
     pub fn try_recv(&self) -> Option<BackendEvent> {
@@ -199,6 +215,24 @@ fn run_worker(
                 }
                 Ok(Command::Send(message)) => pending_messages.push_back(message),
                 Ok(Command::Move(movement)) => latest_move = Some(movement),
+                Ok(Command::FetchMorphCatalog) => {
+                    match fetch_http_text(&backend_url, "/morphs/catalog") {
+                        Ok(source) => {
+                            let _ = events.send(BackendEvent::MorphCatalog(source));
+                        }
+                        Err(message) => {
+                            let _ = events.send(BackendEvent::MorphCatalogError(message));
+                        }
+                    }
+                }
+                Ok(Command::FetchMorphPack { asset_id, url }) => match fetch_http_bytes(&url) {
+                    Ok(bytes) => {
+                        let _ = events.send(BackendEvent::MorphPack { asset_id, bytes });
+                    }
+                    Err(message) => {
+                        let _ = events.send(BackendEvent::MorphPackError { asset_id, message });
+                    }
+                },
                 Ok(Command::Shutdown) | Err(TryRecvError::Disconnected) => {
                     running = false;
                     break;
@@ -329,6 +363,43 @@ fn run_worker(
     }
 
     disconnect(&mut socket, &mut connected_world_id, &events);
+}
+
+fn http_url(base_url: &Url, path: &str) -> Result<Url, String> {
+    let mut url = base_url.clone();
+    let scheme = match url.scheme() {
+        "ws" => "http",
+        "wss" => "https",
+        "http" => "http",
+        "https" => "https",
+        scheme => return Err(format!("unsupported backend URL scheme: {scheme}")),
+    };
+    url.set_scheme(scheme)
+        .map_err(|()| "could not set HTTP scheme".to_owned())?;
+    url.set_path(path);
+    url.set_query(None);
+    Ok(url)
+}
+
+fn fetch_http_text(base_url: &Url, path: &str) -> Result<String, String> {
+    let url = http_url(base_url, path)?;
+    let mut response = ureq::get(url.as_str())
+        .call()
+        .map_err(|error| format!("morph catalog request failed: {error}"))?;
+    response
+        .body_mut()
+        .read_to_string()
+        .map_err(|error| format!("morph catalog response failed: {error}"))
+}
+
+fn fetch_http_bytes(raw_url: &str) -> Result<Vec<u8>, String> {
+    let mut response = ureq::get(raw_url)
+        .call()
+        .map_err(|error| format!("morph pack request failed: {error}"))?;
+    response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|error| format!("morph pack response failed: {error}"))
 }
 
 fn disconnect(

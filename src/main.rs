@@ -96,6 +96,7 @@ impl StudioApp {
         let game_root = sources.root;
         let client = ClientSession::load(&manifest_source, &script_source)?;
         let network = BackendClient::new(client.game_id()).map_err(StudioError)?;
+        network.request_morph_catalog();
 
         Ok(Self {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
@@ -225,6 +226,13 @@ impl StudioApp {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
         };
+        if let Some((asset_id, url)) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_remote_morph_pack_request)
+        {
+            self.network.request_morph_pack(asset_id, url);
+        }
         let import_requested = self
             .shell
             .as_mut()
@@ -338,6 +346,11 @@ impl StudioApp {
         }
 
         if let Some(renderer) = &mut self.renderer {
+            renderer.set_avatar_preview_mode(
+                self.shell
+                    .as_ref()
+                    .is_some_and(StudioShell::is_morphs_workspace),
+            );
             renderer.sync(self.client.engine());
             match (&mut self.shell, prepared_shell) {
                 (Some(shell), Some(prepared)) => {
@@ -770,6 +783,31 @@ impl StudioApp {
                 BackendEvent::Disconnected => self.client.transport_disconnected(),
                 BackendEvent::Message(source) => {
                     let _ = self.client.receive_text(&source);
+                }
+                BackendEvent::MorphCatalog(source) => {
+                    if let Some(shell) = &mut self.shell {
+                        match shell.set_remote_morph_catalog(&source) {
+                            Ok(count) => shell
+                                .set_notice(format!("Loaded {count} published morphs from D1/R2")),
+                            Err(message) => shell.set_notice(message),
+                        }
+                    }
+                }
+                BackendEvent::MorphCatalogError(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_notice(format!("Morph catalog unavailable: {message}"));
+                    }
+                }
+                BackendEvent::MorphPack { asset_id: _, bytes } => {
+                    let result = self.activate_morph_pack(&bytes);
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_morph_runtime_result(result);
+                    }
+                }
+                BackendEvent::MorphPackError { asset_id, message } => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_notice(format!("Could not load {asset_id}: {message}"));
+                    }
                 }
             }
         }

@@ -14,9 +14,10 @@ use egui::{
 };
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor, wgpu};
 use egui_winit::State as EguiState;
+use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
-use std::{fs, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fs, sync::Arc, time::Duration};
 use winit::{event::WindowEvent, window::Window};
 
 #[cfg(test)]
@@ -326,6 +327,23 @@ const MORPH_LIBRARY_KINDS: [MorphAssetKind; 17] = [
     MorphAssetKind::HeldItem,
 ];
 
+#[derive(Deserialize)]
+struct RemoteMorphCatalog {
+    assets: Vec<RemoteMorphAsset>,
+}
+
+#[derive(Deserialize)]
+struct RemoteMorphAsset {
+    id: String,
+    kind: MorphAssetKind,
+    name: String,
+    pack: String,
+    base: String,
+    slots: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StudioCommand {
     OpenProject,
@@ -361,6 +379,8 @@ pub(crate) struct StudioShell {
     search_query: String,
     morph_query: String,
     morph_catalog: MorphCatalog,
+    remote_morph_pack_urls: BTreeMap<MorphAssetId, String>,
+    morph_remote_pack_requested: Option<(String, String)>,
     selected_morph: MorphAssetId,
     morph_import_requested: bool,
     morph_sidecar_import_requested: bool,
@@ -381,7 +401,6 @@ pub(crate) struct StudioShell {
     morph_pack_import_requested: bool,
     morph_publish_requested: bool,
     morph_thumbnail_requested: bool,
-    morph_wireframe: bool,
     morph_import_error: Option<String>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
@@ -415,7 +434,7 @@ impl StudioShell {
             context,
             state,
             renderer,
-            workspace: Workspace::World,
+            workspace: Workspace::Morphs,
             runtime_viewport: Rect::NOTHING,
             selected_scene: "Tree 014",
             selected_asset: "forest-grass",
@@ -432,6 +451,8 @@ impl StudioShell {
                 "../../rust/assets/characters/morph_catalog.json"
             ))
             .expect("bundled morph catalog must be valid"),
+            remote_morph_pack_urls: BTreeMap::new(),
+            morph_remote_pack_requested: None,
             selected_morph: MorphAssetId::parse("cuba:base/person.v1")
                 .expect("built-in morph ID must be valid"),
             morph_import_requested: false,
@@ -453,7 +474,6 @@ impl StudioShell {
             morph_pack_import_requested: false,
             morph_publish_requested: false,
             morph_thumbnail_requested: false,
-            morph_wireframe: true,
             morph_import_error: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
@@ -474,6 +494,69 @@ impl StudioShell {
 
     pub(crate) fn is_playing(&self) -> bool {
         self.playing
+    }
+
+    pub(crate) fn is_morphs_workspace(&self) -> bool {
+        self.workspace == Workspace::Morphs
+    }
+
+    pub(crate) fn set_notice(&mut self, notice: String) {
+        self.notice = notice;
+    }
+
+    pub(crate) fn set_remote_morph_catalog(&mut self, source: &str) -> Result<usize, String> {
+        let remote: RemoteMorphCatalog = serde_json::from_str(source)
+            .map_err(|error| format!("The morph catalog response was invalid: {error}"))?;
+        let mut remote_ids = Vec::with_capacity(remote.assets.len());
+        let mut definitions = Vec::with_capacity(remote.assets.len());
+        let mut pack_urls = BTreeMap::new();
+        for asset in remote.assets {
+            let id = MorphAssetId::parse(asset.id.clone())
+                .map_err(|error| format!("Invalid morph catalog asset {}: {error:?}", asset.id))?;
+            let base = MorphAssetId::parse(asset.base.clone())
+                .map_err(|error| format!("Invalid morph base {}: {error:?}", asset.base))?;
+            let rig =
+                MorphAssetId::parse("cuba:rig/biped15.v1").expect("bundled rig ID must be valid");
+            let fit = MorphAssetId::parse("cuba:fit/person-standard.v1")
+                .expect("bundled fit ID must be valid");
+            let capability = cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
+                .expect("bundled morph capability must be valid");
+            remote_ids.push(id.clone());
+            pack_urls.insert(id.clone(), asset.pack);
+            definitions.push(cubacadabra_morphs::MorphAssetDefinition {
+                id,
+                kind: asset.kind,
+                display_name: asset.name,
+                rig_profile: Some(rig),
+                fit_profiles: vec![fit],
+                supported_bases: vec![base],
+                occupied_slots: asset.slots,
+                coverage: asset.tags,
+                conflicts: Vec::new(),
+                materials: vec!["catalog".to_owned()],
+                lod: cubacadabra_morphs::MorphLodBudget {
+                    near: 128,
+                    mid: 64,
+                    far: 24,
+                },
+                required_capabilities: vec![capability],
+                source: None,
+                provenance: cubacadabra_morphs::MorphProvenance {
+                    source: "D1/R2 catalog".to_owned(),
+                    license: "Catalog managed".to_owned(),
+                },
+            });
+        }
+        self.morph_catalog
+            .assets
+            .retain(|asset| !remote_ids.contains(&asset.id));
+        self.morph_catalog.assets.extend(definitions);
+        self.remote_morph_pack_urls = pack_urls;
+        Ok(remote_ids.len())
+    }
+
+    pub(crate) fn take_remote_morph_pack_request(&mut self) -> Option<(String, String)> {
+        self.morph_remote_pack_requested.take()
     }
 
     pub(crate) fn take_morph_import_request(&mut self) -> bool {
@@ -1421,6 +1504,10 @@ impl StudioShell {
                                 {
                                     self.selected_morph = id.clone();
                                     self.notice = format!("Selected {name}");
+                                    if let Some(url) = self.remote_morph_pack_urls.get(id) {
+                                        self.morph_remote_pack_requested =
+                                            Some((id.to_string(), url.clone()));
+                                    }
                                 }
                             }
                         });
@@ -1727,59 +1814,17 @@ impl StudioShell {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         icon_button(ui, Icon::More, "Preview options", false);
                         icon_button(ui, Icon::Camera, "Camera view", false);
-                        icon_button(ui, Icon::Grid, "Toggle grid", true);
-                        if icon_button(ui, Icon::Object, "Toggle wireframe", self.morph_wireframe)
-                            .clicked()
-                        {
-                            self.morph_wireframe = !self.morph_wireframe;
-                        }
                     });
                 });
-                let mode_rect = ui
-                    .allocate_exact_size(
-                        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
-                        Sense::hover(),
-                    )
-                    .0;
-                ui.painter()
-                    .rect_filled(mode_rect, 0.0, colors.panel_header);
-                let mut mode_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(mode_rect.shrink2(egui::vec2(UI.inset, 0.0)))
-                        .layout(Layout::left_to_right(Align::Center)),
-                );
-                mode_ui.set_clip_rect(ui.clip_rect().intersect(mode_rect));
-                mode_ui.spacing_mut().item_spacing.x = 2.0;
-                for (level, label) in [
-                    (None, "Source"),
-                    (Some(0), "Near"),
-                    (Some(1), "Mid"),
-                    (Some(2), "Far"),
-                ] {
-                    let enabled = level.is_none()
-                        || self
-                            .morph_lod_previews
-                            .get(level.unwrap_or_default())
-                            .is_some_and(Option::is_some);
-                    if mode_ui
-                        .add_enabled(
-                            enabled,
-                            egui::Button::new(label).selected(self.morph_preview_lod == level),
-                        )
-                        .clicked()
-                    {
-                        self.select_morph_preview_lod(level);
-                    }
-                }
                 let preview_rect = Rect::from_min_max(
                     egui::pos2(
                         available.min.x + 1.0,
-                        available.min.y + EDITOR_HEADER_HEIGHT + CONTROL_HEIGHT + 2.0,
+                        available.min.y + EDITOR_HEADER_HEIGHT + 2.0,
                     ),
                     egui::pos2(available.max.x - 1.0, available.max.y - 1.0),
                 );
-                ui.painter()
-                    .rect_filled(preview_rect, 0.0, colors.surface_deep);
+                self.runtime_viewport = preview_rect;
+                ui.allocate_rect(preview_rect, Sense::hover());
                 ui.painter().rect_stroke(
                     available,
                     0.0,
@@ -1787,65 +1832,13 @@ impl StudioShell {
                     StrokeKind::Inside,
                 );
 
-                let grid_color = colors.border.linear_multiply(0.55);
-                let grid_step = 32.0;
-                let mut x = preview_rect.left();
-                while x <= preview_rect.right() {
-                    ui.painter().line_segment(
-                        [
-                            egui::pos2(x, preview_rect.top()),
-                            egui::pos2(x, preview_rect.bottom()),
-                        ],
-                        Stroke::new(1.0, grid_color),
-                    );
-                    x += grid_step;
-                }
-                let mut y = preview_rect.top();
-                while y <= preview_rect.bottom() {
-                    ui.painter().line_segment(
-                        [
-                            egui::pos2(preview_rect.left(), y),
-                            egui::pos2(preview_rect.right(), y),
-                        ],
-                        Stroke::new(1.0, grid_color),
-                    );
-                    y += grid_step;
-                }
-
-                if let Some(preview) = &self.morph_preview {
-                    let attachment = self.morph_attachment();
-                    paint_morph_head_reference(ui, preview_rect, preview, &attachment, colors);
-                    paint_morph_surface(ui, preview_rect, preview, &attachment, colors.accent);
-                    if self.morph_wireframe {
-                        paint_morph_wireframe(
-                            ui,
-                            preview_rect,
-                            preview,
-                            &attachment,
-                            colors.accent,
-                        );
-                    }
-                    ui.painter().text(
-                        preview_rect.left_top() + egui::vec2(10.0, 10.0),
-                        Align2::LEFT_TOP,
-                        format!(
-                            "{} · {} vertices · {:.3}× attachment",
-                            preview.name,
-                            preview.vertices.len(),
-                            attachment.scale[0]
-                        ),
-                        FontId::proportional(TYPE.meta),
-                        colors.secondary_text,
-                    );
-                } else {
-                    ui.painter().text(
-                        preview_rect.center(),
-                        Align2::CENTER_CENTER,
-                        "Import a GLB to preview its mesh",
-                        FontId::proportional(TYPE.secondary),
-                        colors.muted,
-                    );
-                }
+                ui.painter().text(
+                    preview_rect.left_top() + egui::vec2(10.0, 10.0),
+                    Align2::LEFT_TOP,
+                    "Shared character preview · live equipment renderer",
+                    FontId::proportional(TYPE.meta),
+                    colors.secondary_text,
+                );
             });
     }
 
