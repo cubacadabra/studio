@@ -415,13 +415,32 @@ fn http_url(base_url: &Url, path: &str) -> Result<Url, String> {
     };
     url.set_scheme(scheme)
         .map_err(|()| "could not set HTTP scheme".to_owned())?;
-    url.set_path(path);
+    let base_path = url.path().trim_end_matches('/');
+    let request_path = if path.starts_with('/') {
+        format!("{base_path}{path}")
+    } else if base_path.is_empty() {
+        format!("/{path}")
+    } else {
+        format!("{base_path}/{path}")
+    };
+
+    // Parse the complete URL instead of passing an already-percent-encoded
+    // path through Url::set_path, which would encode `%3A` as `%253A` and
+    // make morph asset IDs fail to resolve in the backend.
+    url.set_path("");
     url.set_query(None);
-    Ok(url)
+    url.set_fragment(None);
+    Url::parse(&format!(
+        "{}{}",
+        url.as_str().trim_end_matches('/'),
+        request_path
+    ))
+    .map_err(|error| format!("could not build HTTP URL: {error}"))
 }
 
 fn fetch_http_text(base_url: &Url, path: &str) -> Result<String, String> {
     let url = http_url(base_url, path)?;
+    debug!("resolved morph catalog URL: {}", url);
     let mut response = ureq::get(url.as_str())
         .call()
         .map_err(|error| format!("morph catalog request failed: {error}"))?;
@@ -437,6 +456,7 @@ fn fetch_http_bytes(base_url: &Url, raw_url: &str) -> Result<Vec<u8>, String> {
     } else {
         Url::parse(raw_url).map_err(|error| format!("morph pack URL is invalid: {error}"))?
     };
+    debug!("resolved morph pack URL: {}", url);
     let mut response = ureq::get(url.as_str())
         .call()
         .map_err(|error| format!("morph pack request failed: {error}"))?;
@@ -459,7 +479,7 @@ fn disconnect(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_backend_url, socket_url};
+    use super::{http_url, parse_backend_url, socket_url};
 
     #[test]
     fn backend_http_url_becomes_local_websocket_url() {
@@ -468,6 +488,20 @@ mod tests {
         assert_eq!(
             socket.as_str(),
             "ws://127.0.0.1:8787/world/lobby?client=web&game=survival-101"
+        );
+    }
+
+    #[test]
+    fn http_url_preserves_encoded_morph_asset_path_and_version_query() {
+        let base = parse_backend_url("http://127.0.0.1:8787").expect("valid backend URL");
+        let url = http_url(
+            &base,
+            "/morphs/assets/cuba%3Aheadwear%2Fheadphones.v1?v=9db38c0adca688564d80db45c02427f3de440f8c59a1ab56356942c48ce47244",
+        )
+        .expect("valid morph URL");
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:8787/morphs/assets/cuba%3Aheadwear%2Fheadphones.v1?v=9db38c0adca688564d80db45c02427f3de440f8c59a1ab56356942c48ce47244"
         );
     }
 
