@@ -107,7 +107,6 @@ struct StudioApp {
     mobile_sprint: bool,
     morph_equipment: BTreeMap<String, String>,
     morph_loadout: cubacadabra_morphs::MorphLoadout,
-    morph_base_asset: Option<cubacadabra_morphs::MorphAssetId>,
     climb: bool,
     joystick_input: (f32, f32),
     pointer_position: Option<(f32, f32)>,
@@ -164,7 +163,6 @@ impl StudioApp {
             mobile_sprint: false,
             morph_equipment: BTreeMap::new(),
             morph_loadout: default_morph_loadout(),
-            morph_base_asset: None,
             climb: false,
             joystick_input: (0.0, 0.0),
             pointer_position: None,
@@ -726,15 +724,10 @@ impl StudioApp {
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
         debug!("morph pack registered with renderer: asset_id={}", asset_id);
         if let Some(shell) = &mut self.shell {
-            let mut definition = decoded.asset.clone();
-            if definition.id.as_str() == "cuba:base/person.v1" {
-                definition.display_name = "Person".to_owned();
-            }
-            shell.upsert_morph_asset(definition);
+            shell.upsert_morph_asset(decoded.asset.clone());
         }
         let mut loadout = self.morph_loadout.clone();
         if decoded.asset.kind == cubacadabra_morphs::MorphAssetKind::Base {
-            self.morph_base_asset = Some(decoded.asset.id.clone());
             loadout.base = decoded.asset.id.clone();
         } else {
             let is_clothing = matches!(
@@ -912,17 +905,12 @@ impl StudioApp {
                 message
             },
         )?;
-        let mut legacy =
+        let legacy =
             cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout).map_err(|diagnostics| {
                 let message = Self::format_morph_diagnostics(&diagnostics);
                 warn!("morph loadout projection failed: {}", message);
                 message
             })?;
-        if self.morph_base_asset.as_ref() == Some(&loadout.base) {
-            legacy
-                .equipment
-                .insert("base".to_owned(), loadout.base.to_string());
-        }
         let appearance = serde_json::to_string(&legacy)
             .map_err(|error| format!("Could not encode morph loadout: {error}"))?;
         debug!(
