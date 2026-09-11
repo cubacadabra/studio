@@ -40,6 +40,31 @@ const DEFAULT_WINDOW_HEIGHT: f64 = 800.0;
 const MAX_ATLAS_DIMENSION: u32 = 2048;
 const MAX_ATLAS_IMAGE_DIMENSION: u32 = 1020;
 const ATLAS_PADDING: u32 = 2;
+const STANDALONE_PREVIEW_ROOT: &str = "Morph Preview";
+const STANDALONE_PREVIEW_MANIFEST: &str = r#"{
+  "id": "studio-morph-preview",
+  "version": "0.0.0",
+  "sdkVersion": "0.3.0",
+  "package": {
+    "formatVersion": 3,
+    "entry": "game.luau"
+  },
+  "displayName": "Morph Preview",
+  "lobby": false,
+  "startWorld": "lobby",
+  "launch": {
+    "destinationWorld": "lobby",
+    "authoritative": false
+  },
+  "world": {
+    "groundSize": 12,
+    "gridSize": 0,
+    "gridDivisions": 0,
+    "spawn": [0, 0, 0],
+    "showSpawnPad": false
+  }
+}"#;
+const STANDALONE_PREVIEW_SCRIPT: &str = "return {}";
 
 #[derive(Debug)]
 struct StudioError(String);
@@ -64,10 +89,12 @@ struct GameSources {
     root: PathBuf,
     manifest_source: String,
     script_source: String,
+    standalone_preview: bool,
 }
 
 struct StudioApp {
     game_root: PathBuf,
+    standalone_preview: bool,
     network: BackendClient,
     client: ClientSession,
     image_atlas: Option<ImageAtlas>,
@@ -89,11 +116,12 @@ struct StudioApp {
 }
 
 impl StudioApp {
-    fn load(game_root: PathBuf) -> Result<Self, Box<dyn Error>> {
+    fn load(game_root: Option<PathBuf>) -> Result<Self, Box<dyn Error>> {
         let sources = load_game_sources(game_root)?;
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
+        let standalone_preview = sources.standalone_preview;
         let client = ClientSession::load(&manifest_source, &script_source)?;
         let network = BackendClient::new(client.game_id()).map_err(StudioError)?;
         network.request_morph_catalog();
@@ -101,6 +129,7 @@ impl StudioApp {
         Ok(Self {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             game_root,
+            standalone_preview,
             network,
             client,
             window: None,
@@ -333,7 +362,9 @@ impl StudioApp {
         self.client.step(delta);
         self.drain_ui_events();
         self.dispatch_client_actions();
-        if let Some(movement) = self.client.local_movement(length > 0.01, playing && sprint) {
+        if !self.standalone_preview
+            && let Some(movement) = self.client.local_movement(length > 0.01, playing && sprint)
+        {
             self.network.send_move(
                 movement.position[0],
                 movement.position[1],
@@ -815,6 +846,9 @@ impl StudioApp {
 
     fn dispatch_client_actions(&mut self) {
         for action in self.client.poll_actions() {
+            if self.standalone_preview {
+                continue;
+            }
             match action {
                 ClientAction::SetWorld(world_id) => self.network.set_world(world_id),
                 ClientAction::SendText(source) => self.network.send(source),
@@ -823,7 +857,15 @@ impl StudioApp {
     }
 }
 
-fn load_game_sources(game_root: PathBuf) -> Result<GameSources, Box<dyn Error>> {
+fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn Error>> {
+    let Some(game_root) = game_root else {
+        return Ok(GameSources {
+            root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
+            manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
+            script_source: STANDALONE_PREVIEW_SCRIPT.to_owned(),
+            standalone_preview: true,
+        });
+    };
     let manifest_path = game_root.join("manifest.json");
     let manifest_source = read_utf8_file(&manifest_path, "manifest")?;
 
@@ -854,6 +896,7 @@ fn load_game_sources(game_root: PathBuf) -> Result<GameSources, Box<dyn Error>> 
         root: game_root,
         manifest_source,
         script_source,
+        standalone_preview: false,
     })
 }
 
@@ -1281,14 +1324,16 @@ fn next_power_of_two(value: u32) -> u32 {
     value.next_power_of_two().min(MAX_ATLAS_DIMENSION)
 }
 
-fn parse_game_path() -> Result<PathBuf, Box<dyn Error>> {
+fn parse_game_path() -> Result<Option<PathBuf>, Box<dyn Error>> {
     let mut args = env::args_os().skip(1);
     let mut path = None;
     while let Some(argument) = args.next() {
         if argument == "--help" || argument == "-h" {
-            println!("Usage: studio --path <game-directory>");
+            println!("Usage: studio [--path <game-directory>]");
             println!();
-            println!("Open a local Cubacadabra game package in a desktop window.");
+            println!(
+                "Open a local Cubacadabra game package, or launch the standalone morph preview."
+            );
             std::process::exit(0);
         }
         if argument == "--path" {
@@ -1303,7 +1348,9 @@ fn parse_game_path() -> Result<PathBuf, Box<dyn Error>> {
             ))));
         }
     }
-    let path = path.ok_or_else(|| StudioError("missing required --path".to_owned()))?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
     let path = PathBuf::from(path).canonicalize()?;
     if !path.is_dir() {
         return Err(Box::new(StudioError(format!(
@@ -1311,12 +1358,25 @@ fn parse_game_path() -> Result<PathBuf, Box<dyn Error>> {
             path.display()
         ))));
     }
-    Ok(path)
+    Ok(Some(path))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::should_forward_gameplay_keyboard;
+    use super::{load_game_sources, should_forward_gameplay_keyboard};
+
+    #[test]
+    fn standalone_sources_load_as_a_default_person_preview() {
+        let sources = load_game_sources(None).expect("standalone sources");
+        assert!(sources.standalone_preview);
+        let client = cubacadabra_client::ClientSession::load(
+            &sources.manifest_source,
+            &sources.script_source,
+        )
+        .expect("standalone client");
+        assert_eq!(client.game_id(), "studio-morph-preview");
+        assert_eq!(client.engine().active_world_id(), Some("lobby"));
+    }
 
     #[test]
     fn play_mode_bypasses_stale_shell_keyboard_capture() {
