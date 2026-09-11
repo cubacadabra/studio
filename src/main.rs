@@ -703,7 +703,11 @@ impl StudioApp {
             .register_morph_pack(pack)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
         if let Some(shell) = &mut self.shell {
-            shell.upsert_morph_asset(decoded.asset.clone());
+            let mut definition = decoded.asset.clone();
+            if definition.id.as_str() == "cuba:base/person.v1" {
+                definition.display_name = "Person".to_owned();
+            }
+            shell.upsert_morph_asset(definition);
         }
         let mut loadout = self.morph_loadout.clone();
         if decoded.asset.kind == cubacadabra_morphs::MorphAssetKind::Base {

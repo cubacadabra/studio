@@ -1544,7 +1544,7 @@ impl StudioShell {
                     ui.add_space(6.0);
                     let query = self.morph_query.trim().to_ascii_lowercase();
                     for kind in MORPH_LIBRARY_KINDS {
-                        let assets = self
+                        let mut assets = self
                             .morph_catalog
                             .assets
                             .iter()
@@ -1556,6 +1556,13 @@ impl StudioShell {
                             })
                             .map(|asset| (asset.id.clone(), asset.display_name.clone()))
                             .collect::<Vec<_>>();
+                        assets.sort_by(|first, second| {
+                            first
+                                .1
+                                .to_ascii_lowercase()
+                                .cmp(&second.1.to_ascii_lowercase())
+                                .then_with(|| first.0.cmp(&second.0))
+                        });
                         if assets.is_empty() {
                             continue;
                         }
