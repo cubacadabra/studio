@@ -8,6 +8,7 @@ pack; a Blender-authored export can use the same sidecar contract.
 """
 
 import json
+import math
 import struct
 import sys
 from pathlib import Path
@@ -15,21 +16,125 @@ from pathlib import Path
 
 JOINTS = [
     ("root", None, (0.0, 0.0, 0.0)),
-    ("torso", 0, (0.0, 1.72, 0.0)),
-    ("head", 1, (0.0, 1.04, 0.0)),
-    ("left-upper-arm", 1, (-0.66, 0.05, 0.0)),
+    ("torso", 0, (0.0, 1.68, 0.0)),
+    ("head", 1, (0.0, 1.02, 0.0)),
+    ("left-upper-arm", 1, (-0.59, -0.01, 0.0)),
     ("left-lower-arm", 3, (0.0, -0.58, 0.0)),
     ("left-hand", 4, (0.0, -0.48, -0.01)),
-    ("right-upper-arm", 1, (0.66, 0.05, 0.0)),
+    ("right-upper-arm", 1, (0.59, -0.01, 0.0)),
     ("right-lower-arm", 6, (0.0, -0.58, 0.0)),
     ("right-hand", 7, (0.0, -0.48, -0.01)),
-    ("left-upper-leg", 1, (-0.28, -0.88, 0.0)),
-    ("left-lower-leg", 9, (0.0, -0.62, 0.0)),
-    ("left-foot", 10, (0.0, -0.52, -0.12)),
-    ("right-upper-leg", 1, (0.28, -0.88, 0.0)),
-    ("right-lower-leg", 12, (0.0, -0.62, 0.0)),
-    ("right-foot", 13, (0.0, -0.52, -0.12)),
+    ("left-upper-leg", 0, (-0.22, 0.87, 0.0)),
+    ("left-lower-leg", 9, (0.0, -0.53, 0.0)),
+    ("left-foot", 10, (0.0, -0.29, -0.13)),
+    ("right-upper-leg", 0, (0.22, 0.87, 0.0)),
+    ("right-lower-leg", 12, (0.0, -0.53, 0.0)),
+    ("right-foot", 13, (0.0, -0.29, -0.13)),
 ]
+
+HEAD_PROFILE = [
+    (0.00, 0.18, 0.22), (0.06, 0.33, 0.34), (0.22, 0.46, 0.46),
+    (0.45, 0.49, 0.49), (0.72, 0.48, 0.48), (0.91, 0.36, 0.36),
+    (1.00, 0.025, 0.025),
+]
+TORSO_PROFILE = [
+    (0.00, 0.37, 0.36), (0.09, 0.44, 0.44), (0.25, 0.48, 0.47),
+    (0.55, 0.47, 0.45), (0.74, 0.48, 0.40), (0.91, 0.40, 0.31),
+    (1.00, 0.19, 0.23),
+]
+SLEEVE_PROFILE = [
+    (0.00, 0.31, 0.32), (0.12, 0.37, 0.38), (0.35, 0.40, 0.41),
+    (0.57, 0.43, 0.43), (0.80, 0.42, 0.42), (0.93, 0.35, 0.35),
+    (1.00, 0.12, 0.14),
+]
+SHOE_PROFILE = [
+    (0.00, 0.43, 0.46), (0.12, 0.49, 0.49), (0.38, 0.48, 0.48),
+    (0.65, 0.41, 0.40), (0.85, 0.31, 0.29), (1.00, 0.22, 0.22),
+]
+
+
+def profile(points, t):
+    upper = next(index for index in range(1, len(points)) if t <= points[index][0])
+    lower = upper - 1
+    a, b = points[lower], points[upper]
+    span = b[0] - a[0]
+    f = max(0.0, min(1.0, (t - a[0]) / span))
+
+    def slope(index, axis):
+        lo = max(0, index - 1)
+        hi = min(len(points) - 1, index + 1)
+        return (points[hi][axis] - points[lo][axis]) / (points[hi][0] - points[lo][0])
+
+    def interpolate(axis):
+        return (
+            (2 * f**3 - 3 * f**2 + 1) * a[axis]
+            + (f**3 - 2 * f**2 + f) * span * slope(lower, axis)
+            + (-2 * f**3 + 3 * f**2) * b[axis]
+            + (f**3 - f**2) * span * slope(upper, axis)
+        )
+
+    return interpolate(1), interpolate(2)
+
+
+def signed_power(value, exponent):
+    return math.copysign(abs(value) ** exponent, value)
+
+
+def surface(shape, t, angle):
+    sin_angle, cos_angle = math.sin(angle), math.cos(angle)
+    if shape == "head":
+        radius_x, radius_z = profile(HEAD_PROFILE, t)
+        exponent = 0.58
+    elif shape == "torso":
+        radius_x, radius_z = profile(TORSO_PROFILE, t)
+        exponent = 0.66
+    elif shape == "sleeve":
+        radius_x, radius_z = profile(SLEEVE_PROFILE, t)
+        exponent = 0.90
+    elif shape == "shoe":
+        radius_x, radius_z = profile(SHOE_PROFILE, t)
+        exponent = 0.65
+    elif shape == "shorts":
+        radius_x, radius_z, exponent = 0.40 + 0.07 * math.sin(t * math.pi), 0.43, 0.65
+    elif shape == "limb":
+        radius_x, radius_z, exponent = 0.34 + 0.10 * math.sin(t * math.pi), 0.40, 0.86
+    else:
+        radius_x = radius_z = math.sqrt(max(0.001, 1.0 - (t * 2.0 - 1.0) ** 2)) * 0.49
+        exponent = 0.95
+    x = radius_x * signed_power(cos_angle, exponent)
+    y = t - 0.5
+    z = radius_z * signed_power(sin_angle, exponent)
+    if shape == "shoe":
+        z = (z + t * 0.14 - 0.03) * 0.95
+        y -= max(-sin_angle, 0.0) * t * 0.15
+    return x, y, z
+
+
+def profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape):
+    radial, rows = {3: (20, 10), 2: (12, 6), 1: (6, 3)}[detail]
+    start = len(vertices)
+    for row in range(rows + 1):
+        t = row / rows
+        for column in range(radial + 1):
+            angle = column / radial * math.tau
+            point = surface(shape, t, angle)
+            vertices.append(tuple(center[axis] + point[axis] * size[axis] for axis in range(3)))
+            joints.append([joint, 0, 0, 0])
+            weights.append([1.0, 0.0, 0.0, 0.0])
+            if row < rows and column < radial:
+                a = start + row * (radial + 1) + column
+                b = a + radial + 1
+                indices.extend([a, b, a + 1, a + 1, b, b + 1])
+    for row, top in [(0, False), (rows, True)]:
+        ring = start + row * (radial + 1)
+        cap = len(vertices)
+        points = vertices[ring:ring + radial]
+        vertices.append(tuple(sum(point[axis] for point in points) / radial for axis in range(3)))
+        joints.append([joint, 0, 0, 0])
+        weights.append([1.0, 0.0, 0.0, 0.0])
+        for column in range(radial):
+            a = ring + column
+            indices.extend([cap, a + 1, a] if top else [cap, a, a + 1])
 
 
 def cube(vertices, indices, joints, weights, center, size, joint, detail):
@@ -54,24 +159,29 @@ def cube(vertices, indices, joints, weights, center, size, joint, detail):
 
 def lod_geometry(detail):
     vertices, indices, joints, weights = [], [], [], []
-    # Bind-space centers relative to the owning joint.
-    cube(vertices, indices, joints, weights, (0, 0, 0), (0.95, 1.75, 0.52), 1, detail)
-    cube(vertices, indices, joints, weights, (0, 0.0, 0), (0.78, 0.86, 0.78), 2, detail)
-    for joint, center, size in [
-        (3, (0, 0, 0), (0.30, 1.05, 0.30)),
-        (4, (0, 0, 0), (0.24, 0.86, 0.24)),
-        (5, (0, 0, 0), (0.28, 0.28, 0.28)),
-        (6, (0, 0, 0), (0.30, 1.05, 0.30)),
-        (7, (0, 0, 0), (0.24, 0.86, 0.24)),
-        (8, (0, 0, 0), (0.28, 0.28, 0.28)),
-        (9, (0, 0, 0), (0.36, 0.90, 0.36)),
-        (10, (0, 0, 0), (0.30, 0.78, 0.30)),
-        (11, (0, 0, 0), (0.42, 0.24, 0.70)),
-        (12, (0, 0, 0), (0.36, 0.90, 0.36)),
-        (13, (0, 0, 0), (0.30, 0.78, 0.30)),
-        (14, (0, 0, 0), (0.42, 0.24, 0.70)),
+    # Covered regions are a fitted underlayer; exposed regions match the
+    # established Person profile so the analytic face remains correctly
+    # seated on the authored head.
+    for joint, center, size, shape in [
+        (1, (0, 0, 0), (0.82, 0.98, 0.58), "torso"),
+        (1, (0, 0.56, 0), (0.29, 0.34, 0.30), "limb"),
+        (2, (0, 0, 0), (1.02, 0.94, 0.85), "head"),
+        (3, (0, -0.20, 0), (0.25, 0.52, 0.32), "limb"),
+        (4, (0, -0.18, 0), (0.24, 0.46, 0.30), "limb"),
+        (5, (0, -0.055, -0.025), (0.26, 0.32, 0.23), "pebble"),
+        (5, (0.125, 0.025, -0.04), (0.13, 0.20, 0.14), "pebble"),
+        (6, (0, -0.20, 0), (0.25, 0.52, 0.32), "limb"),
+        (7, (0, -0.18, 0), (0.24, 0.46, 0.30), "limb"),
+        (8, (0, -0.055, -0.025), (0.26, 0.32, 0.23), "pebble"),
+        (8, (-0.125, 0.025, -0.04), (0.13, 0.20, 0.14), "pebble"),
+        (9, (0, -0.12, 0), (0.36, 0.56, 0.38), "limb"),
+        (10, (0, -0.25, 0), (0.28, 0.76, 0.30), "limb"),
+        (11, (0, 0.13, -0.08), (0.44, 0.24, 0.68), "shoe"),
+        (12, (0, -0.12, 0), (0.36, 0.56, 0.38), "limb"),
+        (13, (0, -0.25, 0), (0.28, 0.76, 0.30), "limb"),
+        (14, (0, 0.13, -0.08), (0.44, 0.24, 0.68), "shoe"),
     ]:
-        cube(vertices, indices, joints, weights, center, size, joint, detail)
+        profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
     return vertices, indices, joints, weights
 
 
@@ -152,7 +262,7 @@ def make_glb(output):
         "nodes": nodes,
         "meshes": meshes,
         "skins": [{"name": "Person_Skin", "joints": list(range(len(JOINTS))), "inverseBindMatrices": inverse_accessor, "skeleton": 0}],
-        "materials": [{"name": "Person_Skin", "pbrMetallicRoughness": {"baseColorFactor": [0.55, 0.72, 0.68, 1.0], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "materials": [{"name": "Person_Skin", "pbrMetallicRoughness": {"baseColorFactor": [0.91, 0.55, 0.39, 1.0], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
         "accessors": accessors,
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
@@ -184,7 +294,7 @@ def main():
             "coverage": ["body"],
             "conflicts": [],
             "materials": ["skin", "face"],
-            "lod": {"near": 180, "mid": 180, "far": 180},
+            "lod": {"near": 7500, "mid": 2900, "far": 820},
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
             "source": {"geometry": target.name},
             "provenance": {"source": "Cubacadabra generated Blender-compatible Phase 5 fixture", "license": "Cubacadabra official"},

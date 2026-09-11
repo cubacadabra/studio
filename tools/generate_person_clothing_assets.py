@@ -23,11 +23,9 @@ ASSETS = {
         "coverage": ["torso", "arms"],
         "color": [0.10, 0.52, 0.46, 1.0],
         "pieces": [
-            (1, (0.0, 0.0, 0.0), (1.08, 1.82, 0.62)),
-            (3, (0.0, 0.0, 0.0), (0.36, 1.10, 0.40)),
-            (4, (0.0, 0.0, 0.0), (0.30, 0.88, 0.34)),
-            (6, (0.0, 0.0, 0.0), (0.36, 1.10, 0.40)),
-            (7, (0.0, 0.0, 0.0), (0.30, 0.88, 0.34)),
+            (1, (0.0, 0.0, 0.0), (1.10, 1.04, 0.73), "torso"),
+            (3, (0.0, -0.40, 0.0), (0.46, 1.13, 0.49), "sleeve"),
+            (6, (0.0, -0.40, 0.0), (0.46, 1.13, 0.49), "sleeve"),
         ],
     },
     "bottom": {
@@ -38,10 +36,8 @@ ASSETS = {
         "coverage": ["legs"],
         "color": [0.20, 0.28, 0.66, 1.0],
         "pieces": [
-            (9, (0.0, 0.0, 0.0), (0.42, 0.94, 0.42)),
-            (10, (0.0, 0.0, 0.0), (0.36, 0.80, 0.36)),
-            (12, (0.0, 0.0, 0.0), (0.42, 0.94, 0.42)),
-            (13, (0.0, 0.0, 0.0), (0.36, 0.80, 0.36)),
+            (9, (0.0, -0.15, 0.0), (0.46, 0.66, 0.47), "shorts"),
+            (12, (0.0, -0.15, 0.0), (0.46, 0.66, 0.47), "shorts"),
         ],
     },
     "shoes": {
@@ -52,17 +48,17 @@ ASSETS = {
         "coverage": ["feet"],
         "color": [0.08, 0.08, 0.12, 1.0],
         "pieces": [
-            (11, (0.0, 0.06, -0.08), (0.48, 0.25, 0.74)),
-            (14, (0.0, 0.06, -0.08), (0.48, 0.25, 0.74)),
+            (11, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
+            (14, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
         ],
     },
 }
 
 
-def clothing_lod_geometry(pieces):
+def clothing_lod_geometry(pieces, detail):
     vertices, indices, joints, weights = [], [], [], []
-    for joint, center, size in pieces:
-        person.cube(vertices, indices, joints, weights, center, size, joint, 3)
+    for joint, center, size, shape in pieces:
+        person.profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
     return vertices, indices, joints, weights
 
 
@@ -81,8 +77,10 @@ def make_glb(output, asset):
         views.append(view)
         return len(views) - 1
 
-    for level in ["Near", "Mid", "Far"]:
-        positions, indices, joints, weights = clothing_lod_geometry(asset["pieces"])
+    triangle_counts = {}
+    for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
+        positions, indices, joints, weights = clothing_lod_geometry(asset["pieces"], detail)
+        triangle_counts[level.lower()] = len(indices) // 3
         blobs = [
             b"".join(struct.pack("<3f", *value) for value in positions),
             b"".join(struct.pack("<I", value) for value in indices),
@@ -154,6 +152,7 @@ def make_glb(output, asset):
         stream.write(json_blob)
         stream.write(struct.pack("<II", len(binary), 0x004E4942))
         stream.write(binary)
+    return triangle_counts
 
 
 def write_sidecar(glb_path, asset):
@@ -170,7 +169,7 @@ def write_sidecar(glb_path, asset):
             "coverage": asset["coverage"],
             "conflicts": [],
             "materials": [asset["kind"]],
-            "lod": {"near": 120, "mid": 120, "far": 120},
+            "lod": asset["lod"],
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
             "source": {"geometry": glb_path.name},
             "provenance": {"source": "Cubacadabra generated Blender-compatible Phase 5 clothing fixture", "license": "Cubacadabra official"},
@@ -190,7 +189,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     for key, asset in ASSETS.items():
         glb_path = output_dir / f"person_{key}.glb"
-        make_glb(glb_path, asset)
+        asset["lod"] = make_glb(glb_path, asset)
         write_sidecar(glb_path, asset)
         print(glb_path)
 
