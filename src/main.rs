@@ -109,6 +109,9 @@ struct StudioApp {
     joystick_input: (f32, f32),
     pointer_position: Option<(f32, f32)>,
     pointer_active: bool,
+    camera_pointer_active: bool,
+    movement_pointer_active: bool,
+    movement_pointer_origin: Option<(f32, f32)>,
     ui_pointer_active: bool,
     look_delta: (f32, f32),
     zoom_delta: f32,
@@ -122,7 +125,19 @@ impl StudioApp {
         let script_source = sources.script_source;
         let game_root = sources.root;
         let standalone_preview = sources.standalone_preview;
-        let client = ClientSession::load(&manifest_source, &script_source)?;
+        let mut client = ClientSession::load(&manifest_source, &script_source)?;
+        if standalone_preview {
+            let position = client
+                .engine()
+                .snapshot()
+                .get(..3)
+                .and_then(|values| values.try_into().ok());
+            if let Some(position) = position {
+                client
+                    .engine_mut()
+                    .reconcile_player(position, std::f32::consts::PI);
+            }
+        }
         let network = BackendClient::new(client.game_id()).map_err(StudioError)?;
         network.request_morph_catalog();
 
@@ -143,6 +158,9 @@ impl StudioApp {
             joystick_input: (0.0, 0.0),
             pointer_position: None,
             pointer_active: false,
+            camera_pointer_active: false,
+            movement_pointer_active: false,
+            movement_pointer_origin: None,
             ui_pointer_active: false,
             look_delta: (0.0, 0.0),
             zoom_delta: 0.0,
@@ -807,10 +825,19 @@ impl StudioApp {
         let scale = self.window.as_ref().map_or(1.0, Window::scale_factor) as f32;
         let logical = (x as f32 / scale, y as f32 / scale);
         if let Some(previous) = self.pointer_position {
-            if self.pointer_active && !self.ui_pointer_active {
+            if (self.pointer_active || self.camera_pointer_active) && !self.ui_pointer_active {
                 self.look_delta.0 += logical.0 - previous.0;
                 self.look_delta.1 += logical.1 - previous.1;
             }
+        }
+        if self.movement_pointer_active
+            && let Some(origin) = self.movement_pointer_origin
+        {
+            const JOYSTICK_RADIUS: f32 = 72.0;
+            self.joystick_input = (
+                ((logical.0 - origin.0) / JOYSTICK_RADIUS).clamp(-1.0, 1.0),
+                ((logical.1 - origin.1) / JOYSTICK_RADIUS).clamp(-1.0, 1.0),
+            );
         }
         self.pointer_position = Some(logical);
         if self.ui_pointer_active {
@@ -829,29 +856,56 @@ impl StudioApp {
     }
 
     fn handle_mouse_button(&mut self, state: ElementState, button: MouseButton) {
-        if button != MouseButton::Left {
-            return;
-        }
         let Some((x, y)) = self.pointer_position else {
             return;
         };
+        let morph_preview = self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::is_morphs_workspace);
         match state {
             ElementState::Pressed => {
                 let Some((local_x, local_y)) = self.runtime_pointer(x, y, true) else {
                     return;
                 };
-                self.ui_pointer_active = self.pointer_event(0, local_x, local_y);
-                self.pointer_active = !self.ui_pointer_active;
-            }
-            ElementState::Released => {
-                if self.ui_pointer_active {
-                    if let Some((local_x, local_y)) = self.runtime_pointer(x, y, false) {
-                        self.pointer_event(2, local_x, local_y);
+                match button {
+                    MouseButton::Left if morph_preview => {
+                        let _ = (local_x, local_y);
+                        self.movement_pointer_active = true;
+                        self.movement_pointer_origin = Some((x, y));
+                        self.joystick_input = (0.0, 0.0);
+                        self.pointer_active = false;
+                        self.ui_pointer_active = false;
                     }
+                    MouseButton::Left => {
+                        self.ui_pointer_active = self.pointer_event(0, local_x, local_y);
+                        self.pointer_active = !self.ui_pointer_active;
+                    }
+                    MouseButton::Right => {
+                        self.camera_pointer_active = true;
+                        self.pointer_active = false;
+                    }
+                    _ => {}
                 }
-                self.ui_pointer_active = false;
-                self.pointer_active = false;
             }
+            ElementState::Released => match button {
+                MouseButton::Left if self.movement_pointer_active => {
+                    self.movement_pointer_active = false;
+                    self.movement_pointer_origin = None;
+                    self.joystick_input = (0.0, 0.0);
+                }
+                MouseButton::Left => {
+                    if self.ui_pointer_active {
+                        if let Some((local_x, local_y)) = self.runtime_pointer(x, y, false) {
+                            self.pointer_event(2, local_x, local_y);
+                        }
+                    }
+                    self.ui_pointer_active = false;
+                    self.pointer_active = false;
+                }
+                MouseButton::Right => self.camera_pointer_active = false,
+                _ => {}
+            },
         }
     }
 
@@ -1214,6 +1268,10 @@ impl ApplicationHandler for StudioApp {
             WindowEvent::Focused(false) => {
                 self.pressed_keys.clear();
                 self.pointer_active = false;
+                self.camera_pointer_active = false;
+                self.movement_pointer_active = false;
+                self.movement_pointer_origin = None;
+                self.joystick_input = (0.0, 0.0);
                 if self.ui_pointer_active {
                     self.pointer_event(3, 0.0, 0.0);
                 }
