@@ -713,8 +713,25 @@ impl StudioApp {
         if decoded.asset.kind == cubacadabra_morphs::MorphAssetKind::Base {
             self.morph_base_asset = Some(decoded.asset.id.clone());
             loadout.base = decoded.asset.id.clone();
-        } else if !loadout.parts.iter().any(|part| part == &decoded.asset.id) {
-            loadout.parts.push(decoded.asset.id.clone());
+        } else {
+            let is_clothing = matches!(
+                decoded.asset.kind,
+                cubacadabra_morphs::MorphAssetKind::Top
+                    | cubacadabra_morphs::MorphAssetKind::Outerwear
+                    | cubacadabra_morphs::MorphAssetKind::Bottom
+                    | cubacadabra_morphs::MorphAssetKind::Footwear
+            );
+            if is_clothing {
+                loadout.parts.retain(|part_id| {
+                    self.shell
+                        .as_ref()
+                        .and_then(|shell| shell.morph_asset(part_id))
+                        .is_none_or(|part| part.kind != cubacadabra_morphs::MorphAssetKind::Outfit)
+                });
+            }
+            if !loadout.parts.iter().any(|part| part == &decoded.asset.id) {
+                loadout.parts.push(decoded.asset.id.clone());
+            }
         }
         self.apply_morph_loadout(loadout)?;
         Ok((asset_id, pack.len()))
@@ -761,7 +778,35 @@ impl StudioApp {
                     self.shell
                         .as_ref()
                         .and_then(|shell| shell.morph_asset(part_id))
-                        .is_none_or(|part| part.kind != definition.kind)
+                        .is_none_or(|part| {
+                            part.kind != definition.kind
+                                && !(definition.kind == cubacadabra_morphs::MorphAssetKind::Outfit
+                                    && matches!(
+                                        part.kind,
+                                        cubacadabra_morphs::MorphAssetKind::Top
+                                            | cubacadabra_morphs::MorphAssetKind::Outerwear
+                                            | cubacadabra_morphs::MorphAssetKind::Bottom
+                                            | cubacadabra_morphs::MorphAssetKind::Footwear
+                                    ))
+                        })
+                });
+                loadout.parts.push(definition.id.clone());
+            }
+            cubacadabra_morphs::MorphAssetKind::Top
+            | cubacadabra_morphs::MorphAssetKind::Outerwear
+            | cubacadabra_morphs::MorphAssetKind::Bottom
+            | cubacadabra_morphs::MorphAssetKind::Footwear => {
+                loadout.parts.retain(|part_id| {
+                    self.shell
+                        .as_ref()
+                        .and_then(|shell| shell.morph_asset(part_id))
+                        .is_none_or(|part| {
+                            part.kind != cubacadabra_morphs::MorphAssetKind::Outfit
+                                && part
+                                    .occupied_slots
+                                    .iter()
+                                    .all(|slot| !definition.occupied_slots.contains(slot))
+                        })
                 });
                 loadout.parts.push(definition.id.clone());
             }
