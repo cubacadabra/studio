@@ -7,6 +7,7 @@ the files through the same schema 2 path as a Blender export.
 """
 
 import json
+import math
 import struct
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ ASSETS = {
         "slots": ["shirt"],
         "coverage": ["torso", "arms"],
         "color": [0.10, 0.52, 0.46, 1.0],
+        "string_color": [0.92, 0.84, 0.68, 1.0],
         "pieces": [
             (1, (0.0, 0.0, 0.0), (1.10, 1.04, 0.73), "torso"),
             (3, (0.0, -0.40, 0.0), (0.46, 1.13, 0.49), "sleeve"),
@@ -55,10 +57,68 @@ ASSETS = {
 }
 
 
+def hood_shell(vertices, indices, joints, weights, detail):
+    """Add an open, face-safe hood shell skinned to the head joint.
+
+    The front opening leaves the analytic face unobstructed. The two angular
+    patches meet around the back and sides of the head, giving the top a
+    recognizable hood silhouette without adding a second bone hierarchy.
+    """
+    radial, rows = {3: (16, 7), 2: (12, 5), 1: (8, 3)}[detail]
+    for start_angle, end_angle in [(0.0, math.pi * 1.27), (math.pi * 1.70, math.tau)]:
+        start = len(vertices)
+        for row in range(rows + 1):
+            t = row / rows
+            y = -0.30 + 0.86 * t
+            crown = math.sin(math.pi * min(1.0, t * 0.94))
+            radius_x = 0.53 * (0.82 + 0.18 * crown)
+            radius_z = 0.56 * (0.82 + 0.18 * crown)
+            for column in range(radial + 1):
+                angle = start_angle + (end_angle - start_angle) * column / radial
+                vertices.append((
+                    radius_x * math.cos(angle),
+                    y,
+                    0.055 + radius_z * math.sin(angle),
+                ))
+                joints.append([2, 0, 0, 0])
+                weights.append([1.0, 0.0, 0.0, 0.0])
+                if row < rows and column < radial:
+                    a = start + row * (radial + 1) + column
+                    b = a + radial + 1
+                    indices.extend([a, b, a + 1, a + 1, b, b + 1])
+
+
 def clothing_lod_geometry(pieces, detail):
     vertices, indices, joints, weights = [], [], [], []
     for joint, center, size, shape in pieces:
         person.profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
+    if pieces and pieces[0][3] == "torso":
+        hood_shell(vertices, indices, joints, weights, detail)
+        # Two cords hang over the front of the hoodie. Their small center
+        # position and forward z offset keep them visible on the torso.
+        for x in (-0.12, 0.12):
+            person.profile_piece(
+                vertices,
+                indices,
+                joints,
+                weights,
+                (x, 0.16, -0.39),
+                (0.038, 0.34, 0.038),
+                1,
+                detail,
+                "string",
+            )
+            person.profile_piece(
+                vertices,
+                indices,
+                joints,
+                weights,
+                (x, -0.025, -0.39),
+                (0.070, 0.085, 0.070),
+                1,
+                detail,
+                "pebble",
+            )
     return vertices, indices, joints, weights
 
 
