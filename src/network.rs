@@ -492,16 +492,16 @@ mod tests {
     }
 
     #[test]
-    fn http_url_preserves_encoded_morph_asset_path_and_version_query() {
+    fn http_url_preserves_hash_addressed_morph_pack_path() {
         let base = parse_backend_url("http://127.0.0.1:8787").expect("valid backend URL");
         let url = http_url(
             &base,
-            "/morphs/assets/cuba%3Aheadwear%2Fheadphones.v1?v=9db38c0adca688564d80db45c02427f3de440f8c59a1ab56356942c48ce47244",
+            "/morphs/packs/sha256/9d/9db38c0adca688564d80db45c02427f3de440f8c59a1ab56356942c48ce47244.morphpack",
         )
         .expect("valid morph URL");
         assert_eq!(
             url.as_str(),
-            "http://127.0.0.1:8787/morphs/assets/cuba%3Aheadwear%2Fheadphones.v1?v=9db38c0adca688564d80db45c02427f3de440f8c59a1ab56356942c48ce47244"
+            "http://127.0.0.1:8787/morphs/packs/sha256/9d/9db38c0adca688564d80db45c02427f3de440f8c59a1ab56356942c48ce47244.morphpack"
         );
     }
 

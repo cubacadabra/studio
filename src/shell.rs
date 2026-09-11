@@ -347,7 +347,7 @@ struct RemoteMorphAsset {
     #[serde(default)]
     name: String,
     #[serde(default)]
-    pack: Option<String>,
+    artifact: Option<RemoteMorphArtifact>,
     #[serde(default)]
     base: String,
     #[serde(default)]
@@ -356,6 +356,11 @@ struct RemoteMorphAsset {
     tags: Vec<String>,
     #[serde(default)]
     definition: Option<cubacadabra_morphs::MorphAssetDefinition>,
+}
+
+#[derive(Deserialize)]
+struct RemoteMorphArtifact {
+    url: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -579,8 +584,8 @@ impl StudioShell {
             };
             let id = definition.id.clone();
             remote_ids.push(id.clone());
-            if let Some(pack) = asset.pack {
-                pack_urls.insert(id, pack);
+            if let Some(artifact) = asset.artifact {
+                pack_urls.insert(id.clone(), artifact.url);
             }
             definitions.push(definition);
         }
