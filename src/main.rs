@@ -868,7 +868,20 @@ impl StudioApp {
                 let Some((local_x, local_y)) = self.runtime_pointer(x, y, true) else {
                     return;
                 };
+                let camera_side = morph_preview
+                    && self
+                        .shell
+                        .as_ref()
+                        .is_some_and(|shell| local_x >= shell.runtime_viewport().width() * 0.5);
                 match button {
+                    MouseButton::Left if morph_preview && camera_side => {
+                        self.camera_pointer_active = true;
+                        self.pointer_active = false;
+                        self.movement_pointer_active = false;
+                        self.movement_pointer_origin = None;
+                        self.joystick_input = (0.0, 0.0);
+                        self.ui_pointer_active = false;
+                    }
                     MouseButton::Left if morph_preview => {
                         self.movement_pointer_active = true;
                         self.movement_pointer_origin = Some((x, y));
@@ -892,6 +905,9 @@ impl StudioApp {
                     self.movement_pointer_active = false;
                     self.movement_pointer_origin = None;
                     self.joystick_input = (0.0, 0.0);
+                }
+                MouseButton::Left if morph_preview && self.camera_pointer_active => {
+                    self.camera_pointer_active = false;
                 }
                 MouseButton::Left => {
                     if self.ui_pointer_active {
