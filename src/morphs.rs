@@ -673,6 +673,8 @@ mod tests {
             base_color: None,
             use_avatar_tint: false,
             skinning: None,
+            uvs: vec![[0.0, 0.0]; 2],
+            texture: None,
         };
         let attachment = fit_rigid_headwear_to_person(&preview, "head").unwrap();
         assert!((attachment.scale[0] - 0.451).abs() < 0.002);
@@ -722,6 +724,8 @@ mod tests {
             base_color: Some([0.2, 0.4, 0.8, 1.0]),
             use_avatar_tint: false,
             skinning: None,
+            uvs: vec![[0.0, 0.0]; 3],
+            texture: None,
         };
         let png = encode_morph_thumbnail_png(&preview).expect("thumbnail PNG");
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));

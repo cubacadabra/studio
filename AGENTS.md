@@ -32,10 +32,16 @@ for file in ../foo/runtime/morphs/sha256/*/*.morphpack; do
   key="${file#../foo/}"
   npx wrangler r2 object put "prod/$key" --file "$file" --local
 done
+
+for file in ../foo/source/morphs/images/sha256/*/*; do
+  key="${file#../foo/}"
+  npx wrangler r2 object put "prod/$key" --file "$file" --local
+done
 ```
 
 Keep the `runtime/morphs/sha256/<prefix>/<hash>.morphpack` key unchanged. Do
-not add `--remote`; that uploads to the local R2 emulator used by
+the same for source-image keys under `source/morphs/images/sha256`. Do not add
+`--remote`; that uploads to the local R2 emulator used by
 `http://127.0.0.1:8787`. Updating a D1 catalog row is a separate step; apply
 the migration locally with `npx wrangler d1 migrations apply prod --local`,
 then restart the local backend if needed.

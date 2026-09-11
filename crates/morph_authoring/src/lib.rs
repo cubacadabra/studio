@@ -5,18 +5,22 @@
 //! the Studio preview, and compiles the shared runtime pack format.
 
 pub use cubacadabra_morphs::{
-    MAX_MORPH_PACK_BYTES, MAX_MORPH_PACK_SURFACES, MORPH_PACK_MAGIC,
-    MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION, MORPH_PACK_SCHEMA_VERSION,
-    MORPH_PACK_SKINNED_SCHEMA_VERSION, MorphPackVertexSkin,
+    MAX_MORPH_PACK_BYTES, MAX_MORPH_PACK_SURFACES, MAX_MORPH_PACK_TEXTURES,
+    MAX_MORPH_TEXTURE_DIMENSION, MORPH_PACK_MAGIC, MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION,
+    MORPH_PACK_SCHEMA_VERSION, MORPH_PACK_SKINNED_SCHEMA_VERSION,
+    MORPH_PACK_TEXTURED_SCHEMA_VERSION, MorphPackVertexSkin,
 };
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Cursor as IoCursor;
 
 pub const MORPH_SOURCE_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SOURCE_MANIFEST_BYTES: usize = 256 * 1024;
 pub const MAX_SOURCE_GLB_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NODE_NAME_BYTES: usize = 96;
+const COMPILED_TEXTURE_DIMENSION: u32 = 256;
+const MAX_SOURCE_TEXTURE_DIMENSION: u32 = 2048;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -99,6 +103,15 @@ pub struct MorphGlbPreviewMesh {
     pub base_color: Option<[f32; 4]>,
     pub use_avatar_tint: bool,
     pub skinning: Option<Vec<MorphPackVertexSkin>>,
+    pub uvs: Vec<[f32; 2]>,
+    pub texture: Option<MorphGlbTexture>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MorphGlbTexture {
+    pub width: u16,
+    pub height: u16,
+    pub pixels: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -811,6 +824,35 @@ fn decode_glb_preview_node_primitive(
         buffer_views,
         &bin,
     )?;
+    let texture = decode_material_texture(material, &document, buffer_views, &bin)?;
+    let uvs = if let Some(uv_accessor) = primitive
+        .get("attributes")
+        .and_then(|attributes| attributes.get("TEXCOORD_0"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+    {
+        decode_uvs(
+            accessors.get(uv_accessor).ok_or_else(|| {
+                vec![error(
+                    "MORPH_GLB_INVALID_ACCESSOR",
+                    "meshes[0].primitives[0].attributes.TEXCOORD_0",
+                    "TEXCOORD_0 accessor is out of range",
+                )]
+            })?,
+            buffer_views,
+            &bin,
+            vertices.len(),
+        )?
+    } else {
+        if texture.is_some() {
+            return Err(vec![error(
+                "MORPH_GLB_MISSING_TEXCOORD",
+                "meshes[0].primitives[0].attributes.TEXCOORD_0",
+                "textured materials require TEXCOORD_0",
+            )]);
+        }
+        vec![[0.0, 0.0]; vertices.len()]
+    };
     let indices = if let Some(index_accessor) = primitive
         .get("indices")
         .and_then(serde_json::Value::as_u64)
@@ -895,6 +937,8 @@ fn decode_glb_preview_node_primitive(
         base_color,
         use_avatar_tint,
         skinning,
+        uvs,
+        texture,
     })
 }
 
@@ -931,9 +975,29 @@ pub fn compile_morph_pack(
     pack.extend_from_slice(MORPH_PACK_MAGIC);
     let skinned = manifest.attachment.mode == MorphAttachmentMode::Skinned;
     let multi_surface = meshes.iter().any(|(_, primitives)| primitives.len() > 1);
+    let mut textures = Vec::<MorphGlbTexture>::new();
+    for (_, primitives) in &meshes {
+        for mesh in primitives {
+            if let Some(texture) = &mesh.texture
+                && !textures.contains(texture)
+            {
+                textures.push(texture.clone());
+            }
+        }
+    }
+    if textures.len() > MAX_MORPH_PACK_TEXTURES {
+        return Err(vec![error(
+            "MORPH_PACK_LIMIT",
+            "textures",
+            format!("at most {MAX_MORPH_PACK_TEXTURES} textures are supported"),
+        )]);
+    }
+    let textured = !textures.is_empty();
     write_u16(
         &mut pack,
-        if multi_surface {
+        if textured {
+            MORPH_PACK_TEXTURED_SCHEMA_VERSION
+        } else if multi_surface {
             MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION
         } else if skinned {
             MORPH_PACK_SKINNED_SCHEMA_VERSION
@@ -953,6 +1017,27 @@ pub fn compile_morph_pack(
         })?,
     );
     pack.extend_from_slice(&manifest_json);
+    if textured {
+        pack.push(
+            u8::try_from(textures.len())
+                .map_err(|_| vec![error("MORPH_PACK_LIMIT", "textures", "too many textures")])?,
+        );
+        for texture in &textures {
+            write_u16(&mut pack, texture.width);
+            write_u16(&mut pack, texture.height);
+            write_u32(
+                &mut pack,
+                u32::try_from(texture.pixels.len()).map_err(|_| {
+                    vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "textures",
+                        "texture payload is too large",
+                    )]
+                })?,
+            );
+            pack.extend_from_slice(&texture.pixels);
+        }
+    }
     let mut lod_triangle_counts = BTreeMap::new();
     for (level, primitives) in meshes {
         let triangle_count = inspection.lods[level].triangle_count;
@@ -986,7 +1071,7 @@ pub fn compile_morph_pack(
                 )]
             })?,
         );
-        if multi_surface {
+        if multi_surface || textured {
             write_u16(
                 &mut pack,
                 u16::try_from(primitives.len()).map_err(|_| {
@@ -1015,11 +1100,23 @@ pub fn compile_morph_pack(
                 if mesh.use_avatar_tint {
                     flags |= 2;
                 }
+                let texture_index = mesh.texture.as_ref().and_then(|texture| {
+                    textures
+                        .iter()
+                        .position(|candidate| candidate == texture)
+                        .and_then(|index| u8::try_from(index).ok())
+                });
+                if texture_index.is_some() {
+                    flags |= 4;
+                }
                 pack.push(flags);
                 if let Some(color) = mesh.base_color {
                     for value in color {
                         pack.extend_from_slice(&value.to_le_bytes());
                     }
+                }
+                if let Some(texture_index) = texture_index {
+                    pack.push(texture_index);
                 }
                 index_start = index_start
                     .checked_add(surface_index_count)
@@ -1046,6 +1143,22 @@ pub fn compile_morph_pack(
             for vertex in &mesh.vertices {
                 for value in vertex {
                     pack.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        if textured {
+            for mesh in &primitives {
+                if mesh.uvs.len() != mesh.vertices.len() {
+                    return Err(vec![error(
+                        "MORPH_PACK_LIMIT",
+                        "geometry",
+                        "texture coordinate count must match vertex count",
+                    )]);
+                }
+                for uv in &mesh.uvs {
+                    for value in uv {
+                        pack.extend_from_slice(&value.to_le_bytes());
+                    }
                 }
             }
         }
@@ -1165,6 +1278,271 @@ fn decode_positions(
         vertices.push(values);
     }
     Ok(vertices)
+}
+
+fn decode_uvs(
+    accessor: &serde_json::Value,
+    buffer_views: &[serde_json::Value],
+    bin: &[u8],
+    vertex_count: usize,
+) -> Result<Vec<[f32; 2]>, Vec<MorphDiagnostic>> {
+    let count = bounded_count(accessor, "TEXCOORD_0")?;
+    if count != vertex_count
+        || accessor.get("type").and_then(serde_json::Value::as_str) != Some("VEC2")
+        || accessor
+            .get("componentType")
+            .and_then(serde_json::Value::as_u64)
+            != Some(5126)
+    {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_TEXCOORD",
+            "meshes[0].primitives[0].attributes.TEXCOORD_0",
+            "TEXCOORD_0 must be a float VEC2 matching POSITION count",
+        )]);
+    }
+    let layout = accessor_layout(accessor, buffer_views, bin, 8, "TEXCOORD_0")?;
+    let mut uvs = Vec::with_capacity(count);
+    for index in 0..count {
+        let start = layout.start + index * layout.stride;
+        let Some(x) = bin
+            .get(start..start + 4)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(f32::from_le_bytes)
+        else {
+            return Err(vec![error(
+                "MORPH_GLB_TRUNCATED_TEXCOORD",
+                "meshes[0].primitives[0].attributes.TEXCOORD_0",
+                "TEXCOORD_0 data is truncated",
+            )]);
+        };
+        let Some(y) = bin
+            .get(start + 4..start + 8)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(f32::from_le_bytes)
+        else {
+            return Err(vec![error(
+                "MORPH_GLB_TRUNCATED_TEXCOORD",
+                "meshes[0].primitives[0].attributes.TEXCOORD_0",
+                "TEXCOORD_0 data is truncated",
+            )]);
+        };
+        if !x.is_finite() || !y.is_finite() {
+            return Err(vec![error(
+                "MORPH_GLB_NONFINITE_TEXCOORD",
+                "meshes[0].primitives[0].attributes.TEXCOORD_0",
+                "texture coordinates must be finite",
+            )]);
+        }
+        uvs.push([x, y]);
+    }
+    Ok(uvs)
+}
+
+fn decode_material_texture(
+    material: Option<&serde_json::Value>,
+    document: &serde_json::Value,
+    buffer_views: &[serde_json::Value],
+    bin: &[u8],
+) -> Result<Option<MorphGlbTexture>, Vec<MorphDiagnostic>> {
+    let Some(reference) = material
+        .and_then(|material| material.get("pbrMetallicRoughness"))
+        .and_then(|pbr| pbr.get("baseColorTexture"))
+    else {
+        return Ok(None);
+    };
+    if reference
+        .get("texCoord")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        != 0
+    {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_TEXCOORD_SET",
+            "materials.pbrMetallicRoughness.baseColorTexture.texCoord",
+            "only TEXCOORD_0 is supported",
+        )]);
+    }
+    let texture_index = reference
+        .get("index")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_TEXTURE",
+                "materials.pbrMetallicRoughness.baseColorTexture.index",
+                "texture index is missing or invalid",
+            )]
+        })?;
+    let texture = document
+        .get("textures")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|textures| textures.get(texture_index))
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_TEXTURE",
+                "textures",
+                "material references a missing texture",
+            )]
+        })?;
+    let image_index = texture
+        .get("source")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_TEXTURE",
+                "textures.source",
+                "texture source is missing or invalid",
+            )]
+        })?;
+    let image = document
+        .get("images")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|images| images.get(image_index))
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_TEXTURE",
+                "images",
+                "texture references a missing image",
+            )]
+        })?;
+    if image.get("mimeType").and_then(serde_json::Value::as_str) != Some("image/png") {
+        return Err(vec![error(
+            "MORPH_GLB_UNSUPPORTED_TEXTURE",
+            "images.mimeType",
+            "base-color textures must be embedded PNG images",
+        )]);
+    }
+    let view_index = image
+        .get("bufferView")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_TEXTURE",
+                "images.bufferView",
+                "embedded texture needs a buffer view",
+            )]
+        })?;
+    let view = buffer_views.get(view_index).ok_or_else(|| {
+        vec![error(
+            "MORPH_GLB_INVALID_TEXTURE",
+            "images.bufferView",
+            "embedded texture buffer view is out of range",
+        )]
+    })?;
+    let offset = view
+        .get("byteOffset")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let length = view
+        .get("byteLength")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_INVALID_TEXTURE",
+                "images.bufferView.byteLength",
+                "embedded texture byte length is missing",
+            )]
+        })?;
+    let start = usize::try_from(offset).ok();
+    let length = usize::try_from(length).ok();
+    let bytes = start
+        .zip(length)
+        .and_then(|(start, length)| start.checked_add(length).map(|end| (start, end)))
+        .and_then(|(start, end)| bin.get(start..end))
+        .ok_or_else(|| {
+            vec![error(
+                "MORPH_GLB_TRUNCATED_TEXTURE",
+                "images.bufferView",
+                "embedded texture data is truncated",
+            )]
+        })?;
+    decode_png_texture(bytes).map(Some)
+}
+
+fn decode_png_texture(bytes: &[u8]) -> Result<MorphGlbTexture, Vec<MorphDiagnostic>> {
+    let mut decoder = png::Decoder::new(IoCursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().map_err(|decode_error| {
+        vec![error(
+            "MORPH_GLB_INVALID_TEXTURE",
+            "images",
+            format!("PNG header is invalid: {decode_error}"),
+        )]
+    })?;
+    let source = reader.info();
+    if source.width == 0
+        || source.height == 0
+        || source.width > MAX_SOURCE_TEXTURE_DIMENSION
+        || source.height > MAX_SOURCE_TEXTURE_DIMENSION
+    {
+        return Err(vec![error(
+            "MORPH_GLB_TEXTURE_LIMIT",
+            "images",
+            format!("source texture dimensions must be within 1..={MAX_SOURCE_TEXTURE_DIMENSION}"),
+        )]);
+    }
+    let mut decoded = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut decoded).map_err(|decode_error| {
+        vec![error(
+            "MORPH_GLB_INVALID_TEXTURE",
+            "images",
+            format!("PNG pixels are invalid: {decode_error}"),
+        )]
+    })?;
+    decoded.truncate(info.buffer_size());
+    let pixels = match info.color_type {
+        png::ColorType::Rgba => decoded,
+        png::ColorType::Rgb => decoded
+            .chunks_exact(3)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => decoded
+            .chunks_exact(2)
+            .flat_map(|pixel| [pixel[0], pixel[0], pixel[0], pixel[1]])
+            .collect(),
+        png::ColorType::Grayscale => decoded
+            .into_iter()
+            .flat_map(|value| [value, value, value, 255])
+            .collect(),
+        png::ColorType::Indexed => unreachable!("EXPAND converts indexed PNG data"),
+    };
+    let (width, height, pixels) = resize_rgba(
+        info.width,
+        info.height,
+        pixels,
+        COMPILED_TEXTURE_DIMENSION.min(MAX_MORPH_TEXTURE_DIMENSION as u32),
+    );
+    Ok(MorphGlbTexture {
+        width: width as u16,
+        height: height as u16,
+        pixels,
+    })
+}
+
+fn resize_rgba(width: u32, height: u32, pixels: Vec<u8>, maximum: u32) -> (u32, u32, Vec<u8>) {
+    if width <= maximum && height <= maximum {
+        return (width, height, pixels);
+    }
+    let scale = (maximum as f32 / width as f32).min(maximum as f32 / height as f32);
+    let output_width = (width as f32 * scale).round().max(1.0) as u32;
+    let output_height = (height as f32 * scale).round().max(1.0) as u32;
+    let mut output = vec![0; output_width as usize * output_height as usize * 4];
+    for y in 0..output_height {
+        let source_y = ((y as f32 + 0.5) * height as f32 / output_height as f32)
+            .floor()
+            .min((height - 1) as f32) as u32;
+        for x in 0..output_width {
+            let source_x = ((x as f32 + 0.5) * width as f32 / output_width as f32)
+                .floor()
+                .min((width - 1) as f32) as u32;
+            let source = (source_y as usize * width as usize + source_x as usize) * 4;
+            let target = (y as usize * output_width as usize + x as usize) * 4;
+            output[target..target + 4].copy_from_slice(&pixels[source..source + 4]);
+        }
+    }
+    (output_width, output_height, output)
 }
 
 fn decode_indices(

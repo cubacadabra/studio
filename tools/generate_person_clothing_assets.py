@@ -15,17 +15,29 @@ from pathlib import Path
 import generate_person_asset as person
 
 
+def material(material_id, name, color, avatar_tint=False, roughness=0.82, texture=None):
+    return {
+        "id": material_id,
+        "name": name,
+        "color": color,
+        "avatar_tint": avatar_tint,
+        "roughness": roughness,
+        "texture": texture,
+    }
+
+
 ASSETS = {
     "top": {
         "id": "cuba:top/person-top.v1",
         "kind": "top",
-        "name": "Person Top",
+        "name": "Hoodie",
+        "style": "hoodie",
         "slots": ["shirt"],
         "coverage": ["torso", "arms"],
         "materials": [
-            ("top", "Person Top", [0.10, 0.52, 0.46, 1.0], True, 0.82),
-            ("drawstring", "White Drawstring", [0.97, 0.97, 0.95, 1.0], False, 0.68),
-            ("pocket-opening", "Pocket Opening", [0.055, 0.25, 0.23, 1.0], False, 0.76),
+            material("top", "Hoodie", [0.10, 0.52, 0.46, 1.0], True),
+            material("drawstring", "White Drawstring", [0.97, 0.97, 0.95, 1.0], roughness=0.68),
+            material("pocket-opening", "Pocket Opening", [0.055, 0.25, 0.23, 1.0], roughness=0.76),
         ],
         "pieces": [
             (1, (0.0, 0.0, 0.0), (1.10, 1.04, 0.73), "torso"),
@@ -36,11 +48,12 @@ ASSETS = {
     "bottom": {
         "id": "cuba:bottom/person-bottom.v1",
         "kind": "bottom",
-        "name": "Person Bottom",
+        "name": "Jeans",
+        "style": "jeans",
         "slots": ["pants"],
         "coverage": ["legs"],
         "materials": [
-            ("bottom", "Person Bottom", [0.20, 0.28, 0.66, 1.0], True, 0.82),
+            material("bottom", "Jeans", [0.20, 0.28, 0.66, 1.0], True),
         ],
         "pieces": [
             (9, (0.0, -0.15, 0.0), (0.46, 0.66, 0.47), "shorts"),
@@ -50,13 +63,68 @@ ASSETS = {
     "shoes": {
         "id": "cuba:footwear/person-shoes.v1",
         "kind": "footwear",
-        "name": "Person Shoes",
+        "name": "Sneakers",
+        "style": "sneakers",
         "slots": ["shoes"],
         "coverage": ["feet"],
         "materials": [
-            ("footwear", "Navy Upper", [0.08, 0.11, 0.16, 1.0], False, 0.72),
-            ("sole", "Ivory Sole", [0.96, 0.93, 0.84, 1.0], False, 0.76),
-            ("laces", "Ivory Laces", [0.98, 0.97, 0.94, 1.0], False, 0.66),
+            material("footwear", "Navy Upper", [0.08, 0.11, 0.16, 1.0], roughness=0.72),
+            material("sole", "Ivory Sole", [0.96, 0.93, 0.84, 1.0], roughness=0.76),
+            material("laces", "Ivory Laces", [0.98, 0.97, 0.94, 1.0], roughness=0.66),
+        ],
+        "pieces": [
+            (11, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
+            (14, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
+        ],
+    },
+    "short_sleeve_collared": {
+        "id": "cuba:top/short-sleeve-collared.v1",
+        "kind": "top",
+        "name": "Short Sleeve Collared",
+        "style": "short-sleeve-collared",
+        "slots": ["shirt"],
+        "coverage": ["torso", "upper-arms"],
+        "materials": [
+            material("shirt", "Collared Shirt", [0.16, 0.38, 0.72, 1.0], True, 0.78),
+            material("collar", "Ivory Collar", [0.96, 0.94, 0.88, 1.0], roughness=0.70),
+            material("logo", "Cubacadabra Logo", [1.0, 1.0, 1.0, 1.0], roughness=0.72, texture="logo.png"),
+        ],
+        "pieces": [
+            (1, (0.0, 0.0, 0.0), (1.08, 1.00, 0.71), "torso"),
+            (3, (0.0, -0.08, 0.0), (0.48, 0.48, 0.50), "sleeve"),
+            (6, (0.0, -0.08, 0.0), (0.48, 0.48, 0.50), "sleeve"),
+        ],
+    },
+    "slacks": {
+        "id": "cuba:bottom/slacks.v1",
+        "kind": "bottom",
+        "name": "Slacks",
+        "style": "slacks",
+        "slots": ["pants"],
+        "coverage": ["legs"],
+        "materials": [
+            material("slacks", "Charcoal Slacks", [0.105, 0.12, 0.17, 1.0], roughness=0.74),
+            material("seams", "Pressed Seams", [0.24, 0.27, 0.34, 1.0], roughness=0.62),
+        ],
+        "pieces": [
+            (9, (0.0, -0.15, 0.0), (0.48, 0.72, 0.49), "shorts"),
+            (10, (0.0, -0.22, 0.0), (0.35, 0.78, 0.37), "limb"),
+            (12, (0.0, -0.15, 0.0), (0.48, 0.72, 0.49), "shorts"),
+            (13, (0.0, -0.22, 0.0), (0.35, 0.78, 0.37), "limb"),
+        ],
+    },
+    "sparkles": {
+        "id": "cuba:footwear/sparkles.v1",
+        "kind": "footwear",
+        "name": "Sparkles",
+        "style": "sparkles",
+        "slots": ["shoes"],
+        "coverage": ["feet"],
+        "materials": [
+            material("sparkle-satin", "Amethyst Satin", [0.34, 0.08, 0.50, 1.0], roughness=0.28),
+            material("gold-sole", "Gold Sole", [0.95, 0.62, 0.16, 1.0], roughness=0.24),
+            material("gold-laces", "Gold Laces", [1.0, 0.78, 0.25, 1.0], roughness=0.20),
+            material("sequins", "Iridescent Sequins", [0.98, 0.50, 0.88, 1.0], roughness=0.14),
         ],
         "pieces": [
             (11, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
@@ -179,7 +247,7 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
             indices.extend([cap, a + 1, a] if top else [cap, a, a + 1])
 
 
-def detail_tube(vertices, indices, joints, weights, points, radius, detail):
+def detail_tube(vertices, indices, joints, weights, points, radius, detail, joint=1):
     """Sweep a small capped tube for modeled pocket openings and stitches."""
     radial = {3: 8, 2: 6, 1: 5}[detail]
     start = len(vertices)
@@ -197,7 +265,7 @@ def detail_tube(vertices, indices, joints, weights, points, radius, detail):
                 + forward[axis] * math.sin(angle) * radius
                 for axis in range(3)
             ))
-            joints.append([1, 0, 0, 0])
+            joints.append([joint, 0, 0, 0])
             weights.append([1.0, 0.0, 0.0, 0.0])
             if row < len(points) - 1 and column < radial:
                 a = start + row * (radial + 1) + column
@@ -207,7 +275,7 @@ def detail_tube(vertices, indices, joints, weights, points, radius, detail):
         ring = start + row * (radial + 1)
         cap = len(vertices)
         vertices.append(points[row])
-        joints.append([1, 0, 0, 0])
+        joints.append([joint, 0, 0, 0])
         weights.append([1.0, 0.0, 0.0, 0.0])
         for column in range(radial):
             a = ring + column
@@ -264,13 +332,94 @@ def shoe_detail_surfaces(detail):
     return soles, laces
 
 
+def add_front_triangle(surface, points, joint=1):
+    vertices, indices, joints, weights = surface
+    start = len(vertices)
+    vertices.extend(points)
+    joints.extend([[joint, 0, 0, 0]] * 3)
+    weights.extend([[1.0, 0.0, 0.0, 0.0]] * 3)
+    indices.extend([start, start + 2, start + 1])
+
+
+def logo_decal_surface():
+    vertices = [
+        (-0.39, 0.045, -0.386),
+        (-0.21, 0.045, -0.386),
+        (-0.21, 0.225, -0.373),
+        (-0.39, 0.225, -0.373),
+    ]
+    return (
+        vertices,
+        [0, 2, 1, 0, 3, 2],
+        [[1, 0, 0, 0]] * 4,
+        [[1.0, 0.0, 0.0, 0.0]] * 4,
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+    )
+
+
+def collared_surfaces(asset, detail):
+    shirt = ([], [], [], [])
+    for joint, center, size, shape in asset["pieces"]:
+        person.profile_piece(*shirt, center, size, joint, detail, shape)
+    collar = ([], [], [], [])
+    add_front_triangle(
+        collar,
+        [(-0.015, 0.48, -0.360), (-0.30, 0.40, -0.348), (-0.12, 0.18, -0.374)],
+    )
+    add_front_triangle(
+        collar,
+        [(0.015, 0.48, -0.360), (0.12, 0.18, -0.374), (0.30, 0.40, -0.348)],
+    )
+    for y in (0.13, -0.01, -0.15):
+        person.profile_piece(*collar, (0.0, y, -0.374), (0.045, 0.045, 0.025), 1, 1, "pebble")
+    return [shirt, collar, logo_decal_surface()]
+
+
+def slacks_surfaces(asset, detail):
+    fabric = ([], [], [], [])
+    for joint, center, size, shape in asset["pieces"]:
+        person.profile_piece(*fabric, center, size, joint, detail, shape)
+    seams = ([], [], [], [])
+    for joint in (9, 12):
+        detail_tube(*seams, [(0.0, 0.14, -0.225), (0.0, -0.48, -0.225)], 0.009, detail, joint)
+        for side in (-1.0, 1.0):
+            detail_tube(
+                *seams,
+                [(side * 0.09, 0.16, -0.218), (side * 0.045, -0.04, -0.225)],
+                0.010,
+                detail,
+                joint,
+            )
+    for joint in (10, 13):
+        detail_tube(*seams, [(0.0, 0.13, -0.180), (0.0, -0.54, -0.180)], 0.008, detail, joint)
+    return [fabric, seams]
+
+
+def sparkle_surfaces(asset, detail):
+    uppers = ([], [], [], [])
+    for joint, center, size, shape in asset["pieces"]:
+        person.profile_piece(*uppers, center, size, joint, detail, shape)
+    soles, laces = shoe_detail_surfaces(detail)
+    sequins = ([], [], [], [])
+    positions = [
+        (-0.15, 0.245, -0.31), (0.0, 0.275, -0.34), (0.15, 0.245, -0.31),
+        (-0.21, 0.205, -0.23), (0.0, 0.245, -0.25), (0.21, 0.205, -0.23),
+        (-0.14, 0.165, -0.14), (0.14, 0.165, -0.14), (0.0, 0.205, -0.10),
+    ]
+    keep = {3: 9, 2: 5, 1: 2}[detail]
+    for joint in (11, 14):
+        for center in positions[:keep]:
+            person.profile_piece(*sequins, center, (0.052, 0.028, 0.032), joint, 1, "pebble")
+    return [uppers, soles, laces, sequins]
+
+
 def clothing_lod_surfaces(asset, detail):
     pieces = asset["pieces"]
     cloth = ([], [], [], [])
     vertices, indices, joints, weights = cloth
     for joint, center, size, shape in pieces:
         person.profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
-    if pieces and pieces[0][3] == "torso":
+    if asset["style"] == "hoodie":
         folded_hood(vertices, indices, joints, weights, detail)
         hoodie_pocket(vertices, indices, joints, weights, detail)
         cords = ([], [], [], [])
@@ -279,7 +428,13 @@ def clothing_lod_surfaces(asset, detail):
         openings = ([], [], [], [])
         pocket_details(cords, openings, detail)
         return [cloth, cords, openings]
-    if pieces and pieces[0][3] == "shoe":
+    if asset["style"] == "short-sleeve-collared":
+        return collared_surfaces(asset, detail)
+    if asset["style"] == "slacks":
+        return slacks_surfaces(asset, detail)
+    if asset["style"] == "sparkles":
+        return sparkle_surfaces(asset, detail)
+    if asset["style"] == "sneakers":
         return [cloth, *shoe_detail_surfaces(detail)]
     return [cloth]
 
@@ -306,7 +461,9 @@ def make_glb(output, asset):
             raise ValueError(f"surface/material mismatch for {asset['id']}")
         triangle_counts[level.lower()] = sum(len(surface[1]) // 3 for surface in surfaces)
         primitives = []
-        for material, (positions, indices, joints, weights) in enumerate(surfaces):
+        for material_index, surface in enumerate(surfaces):
+            positions, indices, joints, weights = surface[:4]
+            uvs = surface[4] if len(surface) == 5 else None
             blobs = [
                 b"".join(struct.pack("<3f", *value) for value in positions),
                 b"".join(struct.pack("<I", value) for value in indices),
@@ -325,10 +482,17 @@ def make_glb(output, asset):
             accessors.append({"bufferView": joint_view, "componentType": 5123, "count": len(joints), "type": "VEC4"})
             weight_accessor = len(accessors)
             accessors.append({"bufferView": weight_view, "componentType": 5126, "count": len(weights), "type": "VEC4"})
+            attributes = {"POSITION": pos_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor}
+            if uvs is not None:
+                uv_blob = b"".join(struct.pack("<2f", *value) for value in uvs)
+                uv_view = add_blob(uv_blob, 34962)
+                uv_accessor = len(accessors)
+                accessors.append({"bufferView": uv_view, "componentType": 5126, "count": len(uvs), "type": "VEC2"})
+                attributes["TEXCOORD_0"] = uv_accessor
             primitives.append({
-                "attributes": {"POSITION": pos_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
+                "attributes": attributes,
                 "indices": idx_accessor,
-                "material": material,
+                "material": material_index,
                 "mode": 4,
             })
         meshes.append({
@@ -357,15 +521,29 @@ def make_glb(output, asset):
     inverse_view = add_blob(inverse_bind)
     inverse_accessor = len(accessors)
     accessors.append({"bufferView": inverse_view, "componentType": 5126, "count": len(person.JOINTS), "type": "MAT4"})
-    materials = []
-    for _, name, color, use_avatar_tint, roughness in asset["materials"]:
+    materials, images, textures = [], [], []
+    texture_indices = {}
+    asset_root = Path(__file__).resolve().parent.parent / "assets"
+    for source in asset["materials"]:
+        pbr = {
+            "baseColorFactor": source["color"],
+            "roughnessFactor": source["roughness"],
+            "metallicFactor": 0.0,
+        }
+        if source["texture"] is not None:
+            texture_name = source["texture"]
+            if texture_name not in texture_indices:
+                image_view = add_blob((asset_root / texture_name).read_bytes())
+                image_index = len(images)
+                images.append({"name": texture_name, "bufferView": image_view, "mimeType": "image/png"})
+                texture_indices[texture_name] = len(textures)
+                textures.append({"name": texture_name, "source": image_index})
+            pbr["baseColorTexture"] = {"index": texture_indices[texture_name], "texCoord": 0}
         materials.append({
-            "name": name,
-            "extras": {"cubaUseAvatarTint": use_avatar_tint},
+            "name": source["name"],
+            "extras": {"cubaUseAvatarTint": source["avatar_tint"]},
             "pbrMetallicRoughness": {
-                "baseColorFactor": color,
-                "roughnessFactor": roughness,
-                "metallicFactor": 0.0,
+                **pbr,
             },
         })
     document = {
@@ -380,6 +558,9 @@ def make_glb(output, asset):
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
     }
+    if images:
+        document["images"] = images
+        document["textures"] = textures
     json_blob = json.dumps(document, separators=(",", ":")).encode("utf-8")
     json_blob += b" " * ((4 - len(json_blob) % 4) % 4)
     binary += b"\0" * ((4 - len(binary) % 4) % 4)
@@ -406,9 +587,10 @@ def write_sidecar(glb_path, asset):
             "occupiedSlots": asset["slots"],
             "coverage": asset["coverage"],
             "conflicts": [],
-            "materials": [material[0] for material in asset["materials"]],
+            "materials": [material["id"] for material in asset["materials"]],
             "lod": asset["lod"],
-            "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
+            "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"]
+            + (["material.base-color-texture.v1"] if any(material["texture"] for material in asset["materials"]) else []),
             "source": {"geometry": glb_path.name},
             "provenance": {"source": "Cubacadabra generated Blender-compatible Phase 5 clothing fixture", "license": "Cubacadabra official"},
         },
