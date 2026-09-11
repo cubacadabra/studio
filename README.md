@@ -85,3 +85,10 @@ CUBACADABRA_BACKEND_URL=https://api.cubacadabra.com \
 
 The configured HTTP or HTTPS URL is converted to `ws://` or `wss://` for the
 game session. Studio reconnects in the background if the Worker is unavailable.
+
+### Licensing
+
+Copyright (C) 2026 Andrew Arrow
+
+Licensed under the GNU General Public License v3.0 or later.
+See [LICENSE](LICENSE).

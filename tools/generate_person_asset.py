@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Generate a small Blender-compatible skinned Person GLB fixture.
+
+This is intentionally a source fixture for the Phase 5 importer. It contains
+the canonical 15-joint hierarchy, four-weight skin attributes, and three
+separate LOD meshes. Runtime pack compilation remains a separate step until
+the shared skinned-pack format is enabled.
+"""
+
+import json
+import struct
+import sys
+from pathlib import Path
+
+
+JOINTS = [
+    ("root", None, (0.0, 0.0, 0.0)),
+    ("torso", 0, (0.0, 1.72, 0.0)),
+    ("head", 1, (0.0, 1.04, 0.0)),
+    ("left-upper-arm", 1, (-0.66, 0.05, 0.0)),
+    ("left-lower-arm", 3, (0.0, -0.58, 0.0)),
+    ("left-hand", 4, (0.0, -0.48, -0.01)),
+    ("right-upper-arm", 1, (0.66, 0.05, 0.0)),
+    ("right-lower-arm", 6, (0.0, -0.58, 0.0)),
+    ("right-hand", 7, (0.0, -0.48, -0.01)),
+    ("left-upper-leg", 1, (-0.28, -0.88, 0.0)),
+    ("left-lower-leg", 9, (0.0, -0.62, 0.0)),
+    ("left-foot", 10, (0.0, -0.52, -0.12)),
+    ("right-upper-leg", 1, (0.28, -0.88, 0.0)),
+    ("right-lower-leg", 12, (0.0, -0.62, 0.0)),
+    ("right-foot", 13, (0.0, -0.52, -0.12)),
+]
+
+
+def cube(vertices, indices, joints, weights, center, size, joint, detail):
+    cx, cy, cz = center
+    sx, sy, sz = (value * 0.5 for value in size)
+    corners = [
+        (-sx, -sy, -sz), (sx, -sy, -sz), (sx, sy, -sz), (-sx, sy, -sz),
+        (-sx, -sy, sz), (sx, -sy, sz), (sx, sy, sz), (-sx, sy, sz),
+    ]
+    start = len(vertices)
+    vertices.extend([(cx + x, cy + y, cz + z) for x, y, z in corners])
+    joints.extend([[joint, 0, 0, 0]] * 8)
+    weights.extend([[1.0, 0.0, 0.0, 0.0]] * 8)
+    faces = [
+        (0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6),
+        (0, 4, 5), (0, 5, 1), (3, 2, 6), (3, 6, 7),
+        (0, 3, 7), (0, 7, 4), (1, 5, 6), (1, 6, 2),
+    ]
+    for a, b, c in faces:
+        indices.extend([start + a, start + b, start + c])
+
+
+def lod_geometry(detail):
+    vertices, indices, joints, weights = [], [], [], []
+    # Bind-space centers relative to the owning joint.
+    cube(vertices, indices, joints, weights, (0, 0, 0), (0.95, 1.75, 0.52), 1, detail)
+    cube(vertices, indices, joints, weights, (0, 0.0, 0), (0.78, 0.86, 0.78), 2, detail)
+    for joint, center, size in [
+        (3, (0, 0, 0), (0.30, 1.05, 0.30)),
+        (4, (0, 0, 0), (0.24, 0.86, 0.24)),
+        (5, (0, 0, 0), (0.28, 0.28, 0.28)),
+        (6, (0, 0, 0), (0.30, 1.05, 0.30)),
+        (7, (0, 0, 0), (0.24, 0.86, 0.24)),
+        (8, (0, 0, 0), (0.28, 0.28, 0.28)),
+        (9, (0, 0, 0), (0.36, 0.90, 0.36)),
+        (10, (0, 0, 0), (0.30, 0.78, 0.30)),
+        (11, (0, 0, 0), (0.42, 0.24, 0.70)),
+        (12, (0, 0, 0), (0.36, 0.90, 0.36)),
+        (13, (0, 0, 0), (0.30, 0.78, 0.30)),
+        (14, (0, 0, 0), (0.42, 0.24, 0.70)),
+    ]:
+        cube(vertices, indices, joints, weights, center, size, joint, detail)
+    return vertices, indices, joints, weights
+
+
+def accessor(buffer_view, component_type, count, kind, minimum=None, maximum=None):
+    value = {"bufferView": buffer_view, "componentType": component_type, "count": count, "type": kind}
+    if minimum is not None:
+        value["min"] = minimum
+    if maximum is not None:
+        value["max"] = maximum
+    return value
+
+
+def make_glb(output):
+    binary = bytearray()
+    views, accessors, meshes = [], [], []
+
+    def add_blob(blob, target=None):
+        while len(binary) % 4:
+            binary.append(0)
+        offset = len(binary)
+        binary.extend(blob)
+        view = {"buffer": 0, "byteOffset": offset, "byteLength": len(blob)}
+        if target is not None:
+            view["target"] = target
+        views.append(view)
+        return len(views) - 1
+
+    for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
+        positions, indices, joints, weights = lod_geometry(detail)
+        pos_blob = b"".join(struct.pack("<3f", *v) for v in positions)
+        idx_blob = b"".join(struct.pack("<I", v) for v in indices)
+        joint_blob = b"".join(struct.pack("<4H", *v) for v in joints)
+        weight_blob = b"".join(struct.pack("<4f", *v) for v in weights)
+        pos_view = add_blob(pos_blob, 34962)
+        idx_view = add_blob(idx_blob, 34963)
+        joint_view = add_blob(joint_blob, 34962)
+        weight_view = add_blob(weight_blob, 34962)
+        pos_accessor = len(accessors)
+        accessors.append(accessor(pos_view, 5126, len(positions), "VEC3"))
+        idx_accessor = len(accessors)
+        accessors.append(accessor(idx_view, 5125, len(indices), "SCALAR"))
+        joint_accessor = len(accessors)
+        accessors.append(accessor(joint_view, 5123, len(joints), "VEC4"))
+        weight_accessor = len(accessors)
+        accessors.append(accessor(weight_view, 5126, len(weights), "VEC4"))
+        meshes.append({
+            "name": f"Person_{level}",
+            "primitives": [{
+                "attributes": {"POSITION": pos_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
+                "indices": idx_accessor,
+                "material": 0,
+                "mode": 4,
+            }],
+        })
+
+    nodes = [{"name": name, **({"parent": parent} if parent is not None else {})} for name, parent, _ in JOINTS]
+    # glTF expresses hierarchy on parents, not with a parent field.
+    for index, (name, parent, translation) in enumerate(JOINTS):
+        nodes[index] = {"name": name, "translation": list(translation)}
+        if parent is not None:
+            nodes[parent].setdefault("children", []).append(index)
+    lod_node_indices = []
+    for index, level in enumerate(["Near", "Mid", "Far"]):
+        lod_node_indices.append(len(nodes))
+        nodes.append({"name": f"Person_{level}", "mesh": index, "skin": 0})
+    scene_nodes = [0]
+    # Identity inverse bind matrices keep the fixture easy to inspect; runtime
+    # importers still receive complete JOINTS_0/WEIGHTS_0 data.
+    inverse_bind = b"".join(struct.pack("<16f", *([1.0 if i % 5 == 0 else 0.0 for i in range(16)])) for _ in JOINTS)
+    inverse_view = add_blob(inverse_bind)
+    inverse_accessor = len(accessors)
+    accessors.append(accessor(inverse_view, 5126, len(JOINTS), "MAT4"))
+    nodes[0].setdefault("children", []).extend(lod_node_indices)
+    document = {
+        "asset": {"version": "2.0", "generator": "Cubacadabra Phase 5 fixture"},
+        "scene": 0,
+        "scenes": [{"nodes": scene_nodes}],
+        "nodes": nodes,
+        "meshes": meshes,
+        "skins": [{"name": "Person_Skin", "joints": list(range(len(JOINTS))), "inverseBindMatrices": inverse_accessor, "skeleton": 0}],
+        "materials": [{"name": "Person_Skin", "pbrMetallicRoughness": {"baseColorFactor": [0.55, 0.72, 0.68, 1.0], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "accessors": accessors,
+        "bufferViews": views,
+        "buffers": [{"byteLength": len(binary)}],
+    }
+    json_blob = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    json_blob += b" " * ((4 - len(json_blob) % 4) % 4)
+    binary += b"\0" * ((4 - len(binary) % 4) % 4)
+    total = 12 + 8 + len(json_blob) + 8 + len(binary)
+    glb = struct.pack("<III", 0x46546C67, 2, total)
+    glb += struct.pack("<II", len(json_blob), 0x4E4F534A) + json_blob
+    glb += struct.pack("<II", len(binary), 0x004E4942) + binary
+    output.write_bytes(glb)
+
+
+def main():
+    target = Path(sys.argv[1] if len(sys.argv) > 1 else "/Users/aa/Downloads/person_skinned.glb")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    make_glb(target)
+    sidecar = target.with_suffix(".morph.json")
+    sidecar.write_text(json.dumps({
+        "schemaVersion": 2,
+        "asset": {
+            "id": "cuba:base/person-authored.v1",
+            "kind": "base",
+            "displayName": "Person Authored",
+            "rigProfile": "cuba:rig/biped15.v1",
+            "fitProfiles": ["cuba:fit/person-standard.v1"],
+            "occupiedSlots": ["base"],
+            "coverage": ["body"],
+            "conflicts": [],
+            "materials": ["skin", "face"],
+            "lod": {"near": 180, "mid": 180, "far": 180},
+            "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
+            "source": {"geometry": target.name},
+            "provenance": {"source": "Cubacadabra generated Blender-compatible Phase 5 fixture", "license": "Cubacadabra official"},
+        },
+        "geometry": {"file": target.name, "lodNodes": {"near": "Person_Near", "mid": "Person_Mid", "far": "Person_Far"}},
+        "attachment": {"mode": "skinned", "joint": "root", "translation": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
+        "skin": {"skeleton": "Person_Skin", "jointOrder": [name for name, _, _ in JOINTS], "maxInfluences": 4},
+    }, indent=2) + "\n")
+    print(target)
+    print(sidecar)
+
+
+if __name__ == "__main__":
+    main()
