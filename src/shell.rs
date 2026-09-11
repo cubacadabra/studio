@@ -14,8 +14,6 @@ use egui::{
 };
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor, wgpu};
 use egui_winit::State as EguiState;
-use log::debug;
-use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::{
@@ -26,6 +24,11 @@ use std::{
 };
 use winit::{event::WindowEvent, window::Window};
 
+#[path = "shell/morph_library.rs"]
+mod morph_library;
+#[cfg(test)]
+#[path = "shell/morph_ui_tests.rs"]
+mod morph_ui_tests;
 #[cfg(test)]
 mod tests;
 
@@ -333,36 +336,6 @@ const MORPH_LIBRARY_KINDS: [MorphAssetKind; 17] = [
     MorphAssetKind::HeldItem,
 ];
 
-#[derive(Deserialize)]
-struct RemoteMorphCatalog {
-    assets: Vec<RemoteMorphAsset>,
-}
-
-#[derive(Deserialize)]
-struct RemoteMorphAsset {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    kind: Option<MorphAssetKind>,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    artifact: Option<RemoteMorphArtifact>,
-    #[serde(default)]
-    base: String,
-    #[serde(default)]
-    slots: Vec<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    definition: Option<cubacadabra_morphs::MorphAssetDefinition>,
-}
-
-#[derive(Deserialize)]
-struct RemoteMorphArtifact {
-    url: String,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StudioCommand {
     OpenProject,
@@ -399,10 +372,14 @@ pub(crate) struct StudioShell {
     search_query: String,
     morph_query: String,
     morph_catalog: MorphCatalog,
-    remote_morph_pack_urls: BTreeMap<MorphAssetId, String>,
-    morph_remote_pack_requested: Option<(String, String)>,
-    morph_toggle_requested: Option<MorphAssetId>,
-    morph_asset_requested: Option<MorphAssetId>,
+    morph_artifacts: BTreeMap<MorphAssetId, crate::wardrobe::Artifact>,
+    morph_request: Option<crate::wardrobe::Request>,
+    morph_starters: bool,
+    morph_loading: bool,
+    morph_catalog_ready: bool,
+    morph_catalog_error: Option<String>,
+    morph_thumbnails: BTreeMap<String, egui::TextureHandle>,
+    active_loadout: cubacadabra_morphs::MorphLoadout,
     active_morphs: BTreeSet<String>,
     selected_morph: MorphAssetId,
     morph_import_requested: bool,
@@ -450,9 +427,13 @@ impl StudioShell {
             game_renderer.studio_overlay_format(),
             RendererOptions::default(),
         );
-        let logo_texture = load_logo_texture(&context);
         #[cfg(target_os = "macos")]
         install_system_icon_textures(&context);
+        Self::from_egui(context, state, renderer)
+    }
+
+    fn from_egui(context: egui::Context, state: EguiState, renderer: EguiRenderer) -> Self {
+        let logo_texture = load_logo_texture(&context);
         Self {
             context,
             state,
@@ -474,10 +455,14 @@ impl StudioShell {
                 "../../rust/assets/characters/morph_catalog.json"
             ))
             .expect("bundled morph catalog must be valid"),
-            remote_morph_pack_urls: BTreeMap::new(),
-            morph_remote_pack_requested: None,
-            morph_toggle_requested: None,
-            morph_asset_requested: None,
+            morph_artifacts: BTreeMap::new(),
+            morph_request: None,
+            morph_starters: true,
+            morph_loading: false,
+            morph_catalog_ready: false,
+            morph_catalog_error: None,
+            morph_thumbnails: BTreeMap::new(),
+            active_loadout: crate::default_morph_loadout(),
             active_morphs: BTreeSet::new(),
             selected_morph: MorphAssetId::parse("cuba:base/person.v1")
                 .expect("built-in morph ID must be valid"),
@@ -531,70 +516,46 @@ impl StudioShell {
     }
 
     pub(crate) fn set_remote_morph_catalog(&mut self, source: &str) -> Result<usize, String> {
-        let remote: RemoteMorphCatalog = serde_json::from_str(source)
-            .map_err(|error| format!("The morph catalog response was invalid: {error}"))?;
-        let mut remote_ids = Vec::with_capacity(remote.assets.len());
-        let mut definitions = Vec::with_capacity(remote.assets.len());
-        let mut pack_urls = BTreeMap::new();
-        for asset in remote.assets {
-            let definition = if let Some(definition) = asset.definition {
-                definition
-            } else {
-                let id = MorphAssetId::parse(asset.id.clone()).map_err(|error| {
-                    format!("Invalid morph catalog asset {}: {error:?}", asset.id)
-                })?;
-                let base = MorphAssetId::parse(asset.base.clone())
-                    .map_err(|error| format!("Invalid morph base {}: {error:?}", asset.base))?;
-                let rig = MorphAssetId::parse("cuba:rig/biped15.v1")
-                    .expect("bundled rig ID must be valid");
-                let fit = MorphAssetId::parse("cuba:fit/person-standard.v1")
-                    .expect("bundled fit ID must be valid");
-                let capability = cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
-                    .expect("bundled morph capability must be valid");
-                let kind = asset
-                    .kind
-                    .ok_or_else(|| "Morph catalog row is missing kind".to_owned())?;
-                cubacadabra_morphs::MorphAssetDefinition {
-                    id,
-                    kind,
-                    display_name: asset.name,
-                    rig_profile: Some(rig),
-                    fit_profiles: vec![fit],
-                    supported_bases: if kind == MorphAssetKind::Base {
-                        Vec::new()
-                    } else {
-                        vec![base]
-                    },
-                    occupied_slots: asset.slots,
-                    coverage: asset.tags,
-                    conflicts: Vec::new(),
-                    materials: vec!["catalog".to_owned()],
-                    lod: cubacadabra_morphs::MorphLodBudget {
-                        near: 128,
-                        mid: 64,
-                        far: 24,
-                    },
-                    required_capabilities: vec![capability],
-                    source: None,
-                    provenance: cubacadabra_morphs::MorphProvenance {
-                        source: "D1/R2 catalog".to_owned(),
-                        license: "Catalog managed".to_owned(),
-                    },
-                }
-            };
-            let id = definition.id.clone();
-            remote_ids.push(id.clone());
-            if let Some(artifact) = asset.artifact {
-                pack_urls.insert(id.clone(), artifact.url);
+        let published = crate::wardrobe::PublishedCatalog::parse(source)?;
+        let count = published.catalog.assets.len();
+        self.morph_catalog = published.catalog;
+        self.morph_artifacts = published.artifacts;
+        self.morph_catalog_ready = true;
+        self.morph_catalog_error = None;
+        Ok(count)
+    }
+
+    pub(crate) fn morph_artifact(&self, id: &MorphAssetId) -> Option<&crate::wardrobe::Artifact> {
+        self.morph_artifacts.get(id)
+    }
+
+    pub(crate) fn set_catalog_error(&mut self, message: String) {
+        self.morph_catalog_error = Some(message);
+    }
+
+    pub(crate) fn set_morph_thumbnail(&mut self, url: String, bytes: &[u8]) {
+        if let Ok(image) = image::load_from_memory(bytes) {
+            if image.width() > 1024 || image.height() > 1024 {
+                return;
             }
-            definitions.push(definition);
+            let rgba = image.to_rgba8();
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [rgba.width() as usize, rgba.height() as usize],
+                rgba.as_raw(),
+            );
+            let texture = self
+                .context
+                .load_texture(&url, image, egui::TextureOptions::LINEAR);
+            self.morph_thumbnails.insert(url, texture);
         }
-        self.morph_catalog
-            .assets
-            .retain(|asset| !remote_ids.contains(&asset.id));
-        self.morph_catalog.assets.extend(definitions);
-        self.remote_morph_pack_urls = pack_urls;
-        Ok(remote_ids.len())
+    }
+
+    pub(crate) fn set_morph_loading(&mut self, loading: bool) {
+        self.morph_loading = loading;
+    }
+
+    pub(crate) fn select_morph(&mut self, id: MorphAssetId) {
+        self.selected_morph = id;
     }
 
     pub(crate) fn upsert_morph_asset(
@@ -611,30 +572,16 @@ impl StudioShell {
         &self.morph_catalog
     }
 
-    pub(crate) fn morph_asset(
-        &self,
-        id: &MorphAssetId,
-    ) -> Option<&cubacadabra_morphs::MorphAssetDefinition> {
-        self.morph_catalog.asset(id)
+    pub(crate) fn take_morph_request(&mut self) -> Option<crate::wardrobe::Request> {
+        self.morph_request.take()
     }
 
-    pub(crate) fn take_remote_morph_pack_request(&mut self) -> Option<(String, String)> {
-        self.morph_remote_pack_requested.take()
-    }
-
-    pub(crate) fn take_morph_toggle_request(&mut self) -> Option<MorphAssetId> {
-        self.morph_toggle_requested.take()
-    }
-
-    pub(crate) fn take_morph_asset_request(&mut self) -> Option<MorphAssetId> {
-        self.morph_asset_requested.take()
-    }
-
-    pub(crate) fn set_active_morphs<I>(&mut self, ids: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.active_morphs = ids.into_iter().collect();
+    pub(crate) fn set_active_morph_loadout(&mut self, loadout: &cubacadabra_morphs::MorphLoadout) {
+        self.active_morphs = crate::wardrobe::selected_ids(loadout)
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        self.active_loadout = loadout.clone();
     }
 
     pub(crate) fn take_morph_import_request(&mut self) -> bool {
@@ -1324,9 +1271,13 @@ impl StudioShell {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        let live =
-                            ui.allocate_response(egui::vec2(40.0, CONTROL_HEIGHT), Sense::hover());
-                        paint_status_label(ui, live.rect, colors.live, "Live");
+                        if ui.available_width() >= 130.0 {
+                            let live = ui.allocate_response(
+                                egui::vec2(40.0, CONTROL_HEIGHT),
+                                Sense::hover(),
+                            );
+                            paint_status_label(ui, live.rect, colors.live, "Live");
+                        }
                         let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
                         let play_label = if self.playing { "Stop" } else { "Play" };
                         if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
@@ -1538,107 +1489,10 @@ impl StudioShell {
 
     fn show_morphs(&mut self, root: &mut egui::Ui) {
         let colors = palette(root);
-        egui::Panel::left("morph_library")
-            .resizable(true)
-            .default_size(236.0)
-            .size_range(200.0..=340.0)
-            .frame(editor_frame(colors.panel))
-            .show(root, |ui| {
-                panel_header(ui, Icon::Character, "Morph library", |ui| {
-                    if icon_button(ui, Icon::Plus, "Create morph", false).clicked() {
-                        self.notice = "Create Morph is not connected yet".to_owned();
-                    }
-                });
-                content_frame().show(ui, |ui| {
-                    search_field(ui, &mut self.morph_query, ui.available_width());
-                    ui.add_space(6.0);
-                    let query = self.morph_query.trim().to_ascii_lowercase();
-                    for kind in MORPH_LIBRARY_KINDS {
-                        let mut assets = self
-                            .morph_catalog
-                            .assets
-                            .iter()
-                            .filter(|asset| asset.kind == kind)
-                            .filter(|asset| {
-                                query.is_empty()
-                                    || asset.display_name.to_ascii_lowercase().contains(&query)
-                                    || asset.id.as_str().contains(&query)
-                            })
-                            .map(|asset| (asset.id.clone(), asset.display_name.clone()))
-                            .collect::<Vec<_>>();
-                        assets.sort_by(|first, second| {
-                            first
-                                .1
-                                .to_ascii_lowercase()
-                                .cmp(&second.1.to_ascii_lowercase())
-                                .then_with(|| first.0.cmp(&second.0))
-                        });
-                        if assets.is_empty() {
-                            continue;
-                        }
-                        egui::CollapsingHeader::new(
-                            RichText::new(morph_kind_label(kind))
-                                .font(semibold_font(TYPE.secondary))
-                                .color(colors.secondary_text),
-                        )
-                        .default_open(matches!(kind, MorphAssetKind::Base | MorphAssetKind::Hair))
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            for (id, name) in &assets {
-                                if navigation_row(
-                                    ui,
-                                    Icon::Character,
-                                    name,
-                                    self.selected_morph == *id,
-                                    self.active_morphs.contains(id.as_str()),
-                                )
-                                .clicked()
-                                {
-                                    self.selected_morph = id.clone();
-                                    self.notice = format!("Selected {name}");
-                                    debug!(
-                                        "morph library row clicked: asset_id={} name={} kind={:?}",
-                                        id, name, kind
-                                    );
-                                    if kind == MorphAssetKind::Headwear {
-                                        self.morph_toggle_requested = Some(id.clone());
-                                        debug!("queued headwear toggle: asset_id={}", id);
-                                    } else {
-                                        self.morph_asset_requested = Some(id.clone());
-                                        debug!("queued morph asset selection: asset_id={}", id);
-                                    }
-                                    if let Some(url) = self.remote_morph_pack_urls.get(id) {
-                                        self.morph_remote_pack_requested =
-                                            Some((id.to_string(), url.clone()));
-                                        debug!(
-                                            "queued remote morph pack request: asset_id={} url={}",
-                                            id, url
-                                        );
-                                    } else {
-                                        debug!(
-                                            "no remote morph pack URL is available: asset_id={}",
-                                            id
-                                        );
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    if self.morph_catalog.assets.iter().all(|asset| {
-                        !query.is_empty()
-                            && !asset.display_name.to_ascii_lowercase().contains(&query)
-                            && !asset.id.as_str().contains(&query)
-                    }) {
-                        ui.label(
-                            RichText::new("No morphs match this search.")
-                                .size(TYPE.secondary)
-                                .color(colors.muted),
-                        );
-                    }
-                });
-            });
+        self.show_morph_library(root);
 
-        egui::Panel::right("morph_inspector")
+        if root.available_width() >= 650.0 {
+            egui::Panel::right("morph_inspector")
             .resizable(true)
             .default_size(280.0)
             .size_range(236.0..=360.0)
@@ -1843,7 +1697,19 @@ impl StudioShell {
                         ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
                         ui.add_space(4.0);
                     }
-                    if let Some(asset) = self.morph_catalog.asset(&self.selected_morph) {
+                    if let Some(preset) = self.morph_catalog.presets.iter().find(|preset| preset.id == self.selected_morph) {
+                        selected_object_header(ui, &preset.display_name, "Starter");
+                        property_section(ui, "Appearance", |ui| {
+                            for id in std::iter::once(&preset.base).chain(preset.parts.iter()) {
+                                if let Some(asset) = self.morph_catalog.asset(id) {
+                                    property_row(ui, morph_kind_label(asset.kind), &asset.display_name);
+                                }
+                            }
+                            if let Some(cubacadabra_morphs::MorphParameterValue::Text(skin)) = preset.parameters.get("skin") {
+                                property_row(ui, "Skin", skin);
+                            }
+                        });
+                    } else if let Some(asset) = self.morph_catalog.asset(&self.selected_morph) {
                         selected_object_header(
                             ui,
                             &asset.display_name,
@@ -1898,7 +1764,7 @@ impl StudioShell {
                     }
                 });
             });
-
+        }
         self.morph_preview_panel(root);
     }
 
@@ -1917,9 +1783,19 @@ impl StudioShell {
                     );
                     vertical_separator(ui, 12.0);
                     ui.label(
-                        RichText::new("Imported GLB")
-                            .size(TYPE.secondary)
-                            .color(colors.secondary_text),
+                        RichText::new(if self.morph_preview.is_some() {
+                            "Imported GLB"
+                        } else {
+                            self.morph_catalog
+                                .presets
+                                .iter()
+                                .find(|preset| {
+                                    crate::wardrobe::matches_preset(&self.active_loadout, preset)
+                                })
+                                .map_or("Custom appearance", |preset| preset.display_name.as_str())
+                        })
+                        .size(TYPE.secondary)
+                        .color(colors.secondary_text),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         icon_button(ui, Icon::More, "Preview options", false);
@@ -1940,14 +1816,6 @@ impl StudioShell {
                     0.0,
                     Stroke::new(1.0, colors.border),
                     StrokeKind::Inside,
-                );
-
-                ui.painter().text(
-                    preview_rect.left_top() + egui::vec2(10.0, 10.0),
-                    Align2::LEFT_TOP,
-                    "Shared character preview · live equipment renderer",
-                    FontId::proportional(TYPE.meta),
-                    colors.secondary_text,
                 );
             });
     }

@@ -974,7 +974,10 @@ pub fn compile_morph_pack(
     let mut pack = Vec::with_capacity(manifest_json.len() + 64);
     pack.extend_from_slice(MORPH_PACK_MAGIC);
     let skinned = manifest.attachment.mode == MorphAttachmentMode::Skinned;
-    let multi_surface = meshes.iter().any(|(_, primitives)| primitives.len() > 1);
+    // A single surface can still require the explicit avatar-tint flag.
+    let multi_surface = meshes.iter().any(|(_, primitives)| {
+        primitives.len() > 1 || primitives.iter().any(|mesh| mesh.use_avatar_tint)
+    });
     let mut textures = Vec::<MorphGlbTexture>::new();
     for (_, primitives) in &meshes {
         for mesh in primitives {

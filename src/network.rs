@@ -5,7 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::wardrobe::Artifact;
 use log::{debug, info, warn};
+use sha2::{Digest, Sha256};
 use tungstenite::{Message, WebSocket, connect, stream::MaybeTlsStream};
 use url::Url;
 
@@ -25,8 +27,18 @@ pub enum BackendEvent {
     Message(String),
     MorphCatalog(String),
     MorphCatalogError(String),
-    MorphPack { asset_id: String, bytes: Vec<u8> },
-    MorphPackError { asset_id: String, message: String },
+    MorphPacks {
+        request_id: u64,
+        packs: Vec<(String, Vec<u8>)>,
+    },
+    MorphPacksError {
+        request_id: u64,
+        message: String,
+    },
+    MorphThumbnail {
+        url: String,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Debug)]
@@ -45,7 +57,11 @@ enum Command {
     Send(String),
     Move(MoveCommand),
     FetchMorphCatalog,
-    FetchMorphPack { asset_id: String, url: String },
+    FetchMorphPacks {
+        request_id: u64,
+        assets: Vec<(String, Artifact)>,
+    },
+    FetchMorphThumbnail(String),
     Shutdown,
 }
 
@@ -117,14 +133,14 @@ impl BackendClient {
         let _ = self.commands.send(Command::FetchMorphCatalog);
     }
 
-    pub fn request_morph_pack(&self, asset_id: String, url: String) {
-        debug!(
-            "queueing morph pack request: asset_id={} url={}",
-            asset_id, url
-        );
+    pub fn request_morph_packs(&self, request_id: u64, assets: Vec<(String, Artifact)>) {
         let _ = self
             .commands
-            .send(Command::FetchMorphPack { asset_id, url });
+            .send(Command::FetchMorphPacks { request_id, assets });
+    }
+
+    pub fn request_morph_thumbnail(&self, url: String) {
+        let _ = self.commands.send(Command::FetchMorphThumbnail(url));
     }
 
     pub fn try_recv(&self) -> Option<BackendEvent> {
@@ -236,7 +252,7 @@ fn run_worker(
                         .map(|url| url.to_string())
                         .unwrap_or_else(|_| "/morphs/catalog".to_owned());
                     debug!("fetching morph catalog: url={}", endpoint);
-                    match fetch_http_text(&backend_url, "/morphs/catalog") {
+                    match fetch_morph_catalog(&backend_url) {
                         Ok(source) => {
                             debug!("morph catalog response received: bytes={}", source.len());
                             let _ = events.send(BackendEvent::MorphCatalog(source));
@@ -247,23 +263,35 @@ fn run_worker(
                         }
                     }
                 }
-                Ok(Command::FetchMorphPack { asset_id, url }) => {
-                    debug!("fetching morph pack: asset_id={} url={}", asset_id, url);
-                    match fetch_http_bytes(&backend_url, &url) {
-                        Ok(bytes) => {
-                            debug!(
-                                "morph pack response received: asset_id={} bytes={}",
-                                asset_id,
-                                bytes.len()
-                            );
-                            let _ = events.send(BackendEvent::MorphPack { asset_id, bytes });
-                        }
-                        Err(message) => {
-                            warn!(
-                                "morph pack HTTP request failed: asset_id={} {}",
-                                asset_id, message
-                            );
-                            let _ = events.send(BackendEvent::MorphPackError { asset_id, message });
+                Ok(Command::FetchMorphPacks { request_id, assets }) => {
+                    let result = assets
+                        .into_iter()
+                        .map(|(id, artifact)| {
+                            let bytes = fetch_http_bytes(&backend_url, &artifact.url)?;
+                            verify_artifact(&bytes, &artifact)?;
+                            Ok((id, bytes))
+                        })
+                        .collect::<Result<Vec<_>, String>>();
+                    let event = match result {
+                        Ok(packs) => BackendEvent::MorphPacks { request_id, packs },
+                        Err(message) => BackendEvent::MorphPacksError {
+                            request_id,
+                            message,
+                        },
+                    };
+                    let _ = events.send(event);
+                }
+                Ok(Command::FetchMorphThumbnail(url)) => {
+                    // Images are optional; a failed thumbnail never blocks selection.
+                    if let Ok(bytes) = fetch_http_bytes(&backend_url, &url) {
+                        let expected = url
+                            .rsplit('/')
+                            .next()
+                            .and_then(|name| name.strip_suffix(".png"));
+                        if expected
+                            .is_some_and(|hash| format!("{:x}", Sha256::digest(&bytes)) == hash)
+                        {
+                            let _ = events.send(BackendEvent::MorphThumbnail { url, bytes });
                         }
                     }
                 }
@@ -438,6 +466,61 @@ fn http_url(base_url: &Url, path: &str) -> Result<Url, String> {
     .map_err(|error| format!("could not build HTTP URL: {error}"))
 }
 
+fn verify_artifact(bytes: &[u8], artifact: &Artifact) -> Result<(), String> {
+    if bytes.len() != artifact.bytes || format!("{:x}", Sha256::digest(bytes)) != artifact.sha256 {
+        return Err("Downloaded morph did not match the published content hash.".into());
+    }
+    Ok(())
+}
+
+fn fetch_morph_catalog(base_url: &Url) -> Result<String, String> {
+    let mut combined: Option<serde_json::Value> = None;
+    let mut path = "/morphs/catalog?limit=100".to_owned();
+    let mut cursors = std::collections::BTreeSet::new();
+    for _ in 0..8 {
+        let source = fetch_http_text(base_url, &path)?;
+        let mut page: serde_json::Value = serde_json::from_str(&source)
+            .map_err(|error| format!("Invalid catalog page: {error}"))?;
+        let cursor = page
+            .get("nextCursor")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if let Some(catalog) = &mut combined {
+            if catalog["release"] != page["release"] {
+                return Err("Catalog changed while loading. Retry.".into());
+            }
+            let rows = page["assets"]
+                .as_array_mut()
+                .ok_or("Missing catalog assets")?;
+            catalog["assets"]
+                .as_array_mut()
+                .ok_or("Missing catalog assets")?
+                .append(rows);
+        } else {
+            combined = Some(page);
+        }
+        if let Some(catalog) = &combined {
+            if catalog["assets"]
+                .as_array()
+                .is_none_or(|rows| rows.len() > cubacadabra_morphs::MAX_CATALOG_ASSETS)
+            {
+                return Err("Catalog exceeds the supported asset count.".into());
+            }
+        }
+        let Some(cursor) = cursor else {
+            return serde_json::to_string(&combined.unwrap()).map_err(|error| error.to_string());
+        };
+        if !cursors.insert(cursor.clone()) {
+            return Err("Catalog repeated its pagination cursor.".into());
+        }
+        path = format!(
+            "/morphs/catalog?limit=100&cursor={}",
+            encode_path_segment(&cursor)
+        );
+    }
+    Err("Catalog has too many pages.".into())
+}
+
 fn fetch_http_text(base_url: &Url, path: &str) -> Result<String, String> {
     let url = http_url(base_url, path)?;
     debug!("resolved morph catalog URL: {}", url);
@@ -479,7 +562,36 @@ fn disconnect(
 
 #[cfg(test)]
 mod tests {
-    use super::{http_url, parse_backend_url, socket_url};
+    use super::*;
+
+    #[test]
+    fn published_packs_require_both_the_expected_hash_and_length() {
+        let bytes = b"test pack";
+        let mut artifact = Artifact {
+            url: String::new(),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            bytes: bytes.len(),
+        };
+        assert!(verify_artifact(bytes, &artifact).is_ok());
+        assert!(verify_artifact(b"bad bytes", &artifact).is_err());
+        artifact.bytes += 1;
+        assert!(verify_artifact(bytes, &artifact).is_err());
+    }
+
+    #[test]
+    fn catalog_pagination_preserves_query_and_base_path() {
+        let base = parse_backend_url("http://127.0.0.1:8787/api").unwrap();
+        let url = http_url(
+            &base,
+            "/morphs/catalog?limit=100&cursor=eyJvZmZzZXQiOjEwMH0",
+        )
+        .unwrap();
+        assert_eq!(url.path(), "/api/morphs/catalog");
+        assert_eq!(
+            url.query_pairs().find(|(key, _)| key == "limit").unwrap().1,
+            "100"
+        );
+    }
 
     #[test]
     fn backend_http_url_becomes_local_websocket_url() {

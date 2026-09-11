@@ -21,6 +21,7 @@ log = "0.4"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tungstenite = { version = "0.27", features = ["native-tls"] }
 ureq = { version = "3", default-features = true }
 url = "2"
@@ -50,3 +51,6 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[dev-dependencies]
+pollster = "0.4"

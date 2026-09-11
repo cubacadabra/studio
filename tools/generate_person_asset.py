@@ -301,7 +301,7 @@ def make_glb(output, variant):
         "nodes": nodes,
         "meshes": meshes,
         "skins": [{"name": "Person_Skin", "joints": list(range(len(JOINTS))), "inverseBindMatrices": inverse_accessor, "skeleton": 0}],
-        "materials": [{"name": "Person_Skin", "pbrMetallicRoughness": {"baseColorFactor": variant["skin_color"], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "materials": [{"name": "Person_Skin", "extras": {"cubaUseAvatarTint": variant.get("avatar_tint", False)}, "pbrMetallicRoughness": {"baseColorFactor": variant["skin_color"], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
         "accessors": accessors,
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],

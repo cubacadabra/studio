@@ -12,9 +12,13 @@ use std::{
 };
 #[cfg(target_os = "macos")]
 mod macos;
+mod morph_application;
 mod morphs;
 mod network;
 mod shell;
+mod wardrobe;
+#[cfg(test)]
+mod wardrobe_tests;
 use cubacadabra_morphs::decode_morph_pack;
 use morphs::{
     MorphGlbPreviewMesh, compile_source_morph_pack, decode_source_glb_preview,
@@ -105,8 +109,10 @@ struct StudioApp {
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
     mobile_sprint: bool,
-    morph_equipment: BTreeMap<String, String>,
     morph_loadout: cubacadabra_morphs::MorphLoadout,
+    morph_request_serial: u64,
+    pending_morph: Option<(u64, cubacadabra_morphs::MorphLoadout)>,
+    registered_morphs: HashSet<String>,
     climb: bool,
     joystick_input: (f32, f32),
     pointer_position: Option<(f32, f32)>,
@@ -161,8 +167,10 @@ impl StudioApp {
             pressed_keys: HashSet::new(),
             jump_queued: false,
             mobile_sprint: false,
-            morph_equipment: BTreeMap::new(),
             morph_loadout: default_morph_loadout(),
+            morph_request_serial: 0,
+            pending_morph: None,
+            registered_morphs: HashSet::new(),
             climb: false,
             joystick_input: (0.0, 0.0),
             pointer_position: None,
@@ -279,65 +287,24 @@ impl StudioApp {
 
         let project_name = game_name(&self.game_root);
         if let Some(shell) = &mut self.shell {
-            shell.set_active_morphs(self.morph_equipment.values().cloned());
+            shell.set_active_morph_loadout(&self.morph_loadout);
         }
         let prepared_shell: Option<PreparedShell> = match (&mut self.shell, &self.window) {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
         };
-        let toggle_request = self
+        if let Some(request) = self
             .shell
             .as_mut()
-            .and_then(StudioShell::take_morph_toggle_request);
-        let remote_pack_request = self
-            .shell
-            .as_mut()
-            .and_then(StudioShell::take_remote_morph_pack_request);
-        let asset_request = self
-            .shell
-            .as_mut()
-            .and_then(StudioShell::take_morph_asset_request);
-        if let Some(asset_id) = asset_request {
-            debug!(
-                "morph asset selection request received: asset_id={}",
-                asset_id
-            );
-            let result = self.select_morph_asset(&asset_id);
-            if let Some(shell) = &mut self.shell {
-                match result {
-                    Ok(()) => shell.set_notice(format!("Applied {}", asset_id.as_str())),
-                    Err(message) => shell.set_notice(message),
-                }
-            }
-        }
-        let mut skip_remote_pack = false;
-        if let Some(asset_id) = toggle_request {
-            debug!("morph toggle request received: asset_id={}", asset_id);
-            let was_active = self
-                .morph_loadout
-                .parts
-                .iter()
-                .any(|active_id| active_id == &asset_id);
-            skip_remote_pack = was_active;
-            if was_active {
-                debug!("morph asset is active; removing it: asset_id={}", asset_id);
-                let result = self.remove_morph(&asset_id);
-                if let Some(shell) = &mut self.shell {
-                    match result {
-                        Ok(()) => shell.set_notice(format!("Removed {}", asset_id.as_str())),
-                        Err(message) => shell.set_notice(message),
-                    }
-                }
-            }
-        }
-        if let Some((asset_id, url)) = remote_pack_request
-            && !skip_remote_pack
+            .and_then(StudioShell::take_morph_request)
         {
-            debug!(
-                "morph pack download request received: asset_id={} url={}",
-                asset_id, url
-            );
-            self.network.request_morph_pack(asset_id, url);
+            if matches!(request, wardrobe::Request::RetryCatalog) {
+                self.network.request_morph_catalog();
+            } else if let Err(message) = self.request_morph_change(request) {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_notice(message);
+                }
+            }
         }
         let import_requested = self
             .shell
@@ -726,145 +693,9 @@ impl StudioApp {
         if let Some(shell) = &mut self.shell {
             shell.upsert_morph_asset(decoded.asset.clone());
         }
-        let mut loadout = self.morph_loadout.clone();
-        if decoded.asset.kind == cubacadabra_morphs::MorphAssetKind::Base {
-            loadout.base = decoded.asset.id.clone();
-        } else {
-            let is_clothing = matches!(
-                decoded.asset.kind,
-                cubacadabra_morphs::MorphAssetKind::Top
-                    | cubacadabra_morphs::MorphAssetKind::Outerwear
-                    | cubacadabra_morphs::MorphAssetKind::Bottom
-                    | cubacadabra_morphs::MorphAssetKind::Footwear
-            );
-            if is_clothing {
-                loadout.parts.retain(|part_id| {
-                    self.shell
-                        .as_ref()
-                        .and_then(|shell| shell.morph_asset(part_id))
-                        .is_none_or(|part| part.kind != cubacadabra_morphs::MorphAssetKind::Outfit)
-                });
-            }
-            if !loadout.parts.iter().any(|part| part == &decoded.asset.id) {
-                loadout.parts.push(decoded.asset.id.clone());
-            }
-        }
-        debug!(
-            "applying loadout after morph pack activation: base={} parts={:?}",
-            loadout.base, loadout.parts
-        );
-        self.apply_morph_loadout(loadout)?;
+        self.registered_morphs.insert(asset_id.clone());
+        self.request_morph_change(wardrobe::Request::Equip(decoded.asset.id))?;
         Ok((asset_id, pack.len()))
-    }
-
-    fn remove_morph(&mut self, asset_id: &cubacadabra_morphs::MorphAssetId) -> Result<(), String> {
-        let mut loadout = self.morph_loadout.clone();
-        let before = loadout.parts.len();
-        loadout.parts.retain(|active_id| active_id != asset_id);
-        if loadout.parts.len() == before {
-            return Err(format!("{} is not currently equipped", asset_id.as_str()));
-        }
-        debug!(
-            "applying morph removal: asset_id={} parts={:?}",
-            asset_id, loadout.parts
-        );
-        self.apply_morph_loadout(loadout)
-    }
-
-    fn select_morph_asset(
-        &mut self,
-        asset_id: &cubacadabra_morphs::MorphAssetId,
-    ) -> Result<(), String> {
-        let definition = self
-            .shell
-            .as_ref()
-            .and_then(|shell| shell.morph_asset(asset_id))
-            .cloned()
-            .ok_or_else(|| format!("Morph {} is not in the catalog", asset_id.as_str()))?;
-        debug!(
-            "morph asset selected: asset_id={} kind={:?} name={}",
-            definition.id, definition.kind, definition.display_name
-        );
-        let mut loadout = self.morph_loadout.clone();
-        match definition.kind {
-            cubacadabra_morphs::MorphAssetKind::Base => {
-                loadout.base = definition.id.clone();
-                loadout.parts.retain(|part_id| {
-                    self.shell
-                        .as_ref()
-                        .and_then(|shell| shell.morph_asset(part_id))
-                        .is_some_and(|part| {
-                            part.kind != cubacadabra_morphs::MorphAssetKind::Base
-                                && part.supported_bases.contains(&loadout.base)
-                        })
-                });
-            }
-            cubacadabra_morphs::MorphAssetKind::Face => loadout.face = Some(definition.id.clone()),
-            cubacadabra_morphs::MorphAssetKind::Hair
-            | cubacadabra_morphs::MorphAssetKind::Outfit => {
-                loadout.parts.retain(|part_id| {
-                    self.shell
-                        .as_ref()
-                        .and_then(|shell| shell.morph_asset(part_id))
-                        .is_none_or(|part| {
-                            part.kind != definition.kind
-                                && !(definition.kind == cubacadabra_morphs::MorphAssetKind::Outfit
-                                    && matches!(
-                                        part.kind,
-                                        cubacadabra_morphs::MorphAssetKind::Top
-                                            | cubacadabra_morphs::MorphAssetKind::Outerwear
-                                            | cubacadabra_morphs::MorphAssetKind::Bottom
-                                            | cubacadabra_morphs::MorphAssetKind::Footwear
-                                    ))
-                        })
-                });
-                loadout.parts.push(definition.id.clone());
-            }
-            cubacadabra_morphs::MorphAssetKind::Top
-            | cubacadabra_morphs::MorphAssetKind::Outerwear
-            | cubacadabra_morphs::MorphAssetKind::Bottom
-            | cubacadabra_morphs::MorphAssetKind::Footwear => {
-                loadout.parts.retain(|part_id| {
-                    self.shell
-                        .as_ref()
-                        .and_then(|shell| shell.morph_asset(part_id))
-                        .is_none_or(|part| {
-                            part.kind != cubacadabra_morphs::MorphAssetKind::Outfit
-                                && part
-                                    .occupied_slots
-                                    .iter()
-                                    .all(|slot| !definition.occupied_slots.contains(slot))
-                        })
-                });
-                loadout.parts.push(definition.id.clone());
-            }
-            _ => {
-                loadout.parts.retain(|part_id| {
-                    self.shell
-                        .as_ref()
-                        .and_then(|shell| shell.morph_asset(part_id))
-                        .is_none_or(|part| {
-                            part.occupied_slots
-                                .iter()
-                                .all(|slot| !definition.occupied_slots.contains(slot))
-                        })
-                });
-                loadout.parts.push(definition.id.clone());
-            }
-        }
-        debug!(
-            "applying loadout after morph selection: base={} parts={:?}",
-            loadout.base, loadout.parts
-        );
-        let result = self.apply_morph_loadout(loadout);
-        match &result {
-            Ok(()) => debug!("morph asset applied: asset_id={}", asset_id),
-            Err(error) => warn!(
-                "morph asset application failed: asset_id={} error={}",
-                asset_id, error
-            ),
-        }
-        result
     }
 
     fn apply_morph_loadout(
@@ -882,22 +713,7 @@ impl StudioApp {
             .morph_catalog()
             .clone();
         loadout.revision = self.client.engine().appearance_revision().saturating_add(1);
-        let capabilities = cubacadabra_morphs::CapabilitySet::new([
-            cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
-                .expect("built-in morph capability must be valid"),
-            cubacadabra_morphs::CapabilityId::parse("skin.biped15-linear.v1")
-                .expect("built-in morph capability must be valid"),
-            cubacadabra_morphs::CapabilityId::parse("material.cuba-pbr.v1")
-                .expect("built-in morph capability must be valid"),
-            cubacadabra_morphs::CapabilityId::parse("material.base-color-texture.v1")
-                .expect("built-in morph capability must be valid"),
-            cubacadabra_morphs::CapabilityId::parse("face.analytic.v1")
-                .expect("built-in morph capability must be valid"),
-            cubacadabra_morphs::CapabilityId::parse("secondary.chain.v1")
-                .expect("built-in morph capability must be valid"),
-            cubacadabra_morphs::CapabilityId::parse("material.emissive.v1")
-                .expect("built-in morph capability must be valid"),
-        ]);
+        let capabilities = morph_application::capabilities();
         cubacadabra_morphs::resolve_loadout(&catalog, &loadout, &capabilities).map_err(
             |diagnostics| {
                 let message = Self::format_morph_diagnostics(&diagnostics);
@@ -905,12 +721,21 @@ impl StudioApp {
                 message
             },
         )?;
-        let legacy =
+        let mut legacy =
             cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout).map_err(|diagnostics| {
                 let message = Self::format_morph_diagnostics(&diagnostics);
                 warn!("morph loadout projection failed: {}", message);
                 message
             })?;
+        if !loadout.parts.iter().any(|id| {
+            catalog
+                .asset(id)
+                .is_some_and(|a| a.kind == cubacadabra_morphs::MorphAssetKind::Hair)
+        }) {
+            legacy
+                .equipment
+                .insert("hair".into(), "cuba:hair/bald.v1".into());
+        }
         let appearance = serde_json::to_string(&legacy)
             .map_err(|error| format!("Could not encode morph loadout: {error}"))?;
         debug!(
@@ -926,7 +751,6 @@ impl StudioApp {
             error!("engine rejected projected morph loadout");
             return Err("The player appearance rejected that morph loadout.".to_owned());
         }
-        self.morph_equipment = legacy.equipment;
         self.morph_loadout = loadout;
         debug!(
             "morph loadout applied to engine: base={} parts={:?}",
@@ -1137,61 +961,39 @@ impl StudioApp {
                 BackendEvent::Message(source) => {
                     let _ = self.client.receive_text(&source);
                 }
-                BackendEvent::MorphCatalog(source) => {
-                    debug!("morph catalog event received: bytes={}", source.len());
-                    if let Some(shell) = &mut self.shell {
-                        match shell.set_remote_morph_catalog(&source) {
-                            Ok(count) => {
-                                debug!("morph catalog installed: count={}", count);
-                                shell.set_notice(format!(
-                                    "Loaded {count} published morphs from D1/R2"
-                                ));
-                            }
-                            Err(message) => {
-                                warn!("morph catalog rejected: {}", message);
-                                shell.set_notice(message);
-                            }
-                        }
-                    }
-                }
+                BackendEvent::MorphCatalog(source) => self.install_published_morphs(&source),
                 BackendEvent::MorphCatalogError(message) => {
-                    warn!("morph catalog request failed: {}", message);
                     if let Some(shell) = &mut self.shell {
-                        shell.set_notice(format!("Morph catalog unavailable: {message}"));
+                        shell.set_catalog_error(message);
+                        shell.set_notice("Morph catalog unavailable".into());
                     }
                 }
-                BackendEvent::MorphPack { asset_id, bytes } => {
-                    debug!(
-                        "morph pack event received: asset_id={} bytes={}",
-                        asset_id,
-                        bytes.len()
-                    );
-                    let result = self.activate_morph_pack(&bytes);
-                    match &result {
-                        Ok((activated_id, size)) => {
-                            debug!(
-                                "morph pack activated: asset_id={} bytes={}",
-                                activated_id, size
-                            );
+                BackendEvent::MorphPacks { request_id, packs } => {
+                    if let Err(message) = self.finish_morph_change(request_id, packs) {
+                        if let Some(shell) = &mut self.shell {
+                            shell.set_notice(message);
                         }
-                        Err(error) => {
-                            warn!(
-                                "morph pack activation failed: asset_id={} error={}",
-                                asset_id, error
-                            );
-                        }
-                    }
-                    if let Some(shell) = &mut self.shell {
-                        shell.set_morph_runtime_result(result);
                     }
                 }
-                BackendEvent::MorphPackError { asset_id, message } => {
-                    warn!(
-                        "morph pack request failed: asset_id={} error={}",
-                        asset_id, message
-                    );
+                BackendEvent::MorphPacksError {
+                    request_id,
+                    message,
+                } => {
+                    if self
+                        .pending_morph
+                        .as_ref()
+                        .is_some_and(|(serial, _)| *serial == request_id)
+                    {
+                        self.pending_morph = None;
+                        if let Some(shell) = &mut self.shell {
+                            shell.set_morph_loading(false);
+                            shell.set_notice(format!("Appearance unchanged: {message}"));
+                        }
+                    }
+                }
+                BackendEvent::MorphThumbnail { url, bytes } => {
                     if let Some(shell) = &mut self.shell {
-                        shell.set_notice(format!("Could not load {asset_id}: {message}"));
+                        shell.set_morph_thumbnail(url, &bytes);
                     }
                 }
             }
