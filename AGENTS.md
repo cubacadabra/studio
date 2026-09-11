@@ -22,6 +22,37 @@ rendered as the 20×20 image in `src/shell.rs`. Do not replace it with a generic
 painted icon or remove its texture initialization when changing shell layout
 or styling.
 
+# Local R2 fixture sync
+
+Files staged under `../foo` are local runtime fixtures. To upload them to the
+local Wrangler R2 `prod` bucket, run from `../backend`:
+
+```sh
+for file in ../foo/runtime/morphs/sha256/*/*.morphpack; do
+  key="${file#../foo/}"
+  npx wrangler r2 object put "prod/$key" --file "$file" --local
+done
+```
+
+Keep the `runtime/morphs/sha256/<prefix>/<hash>.morphpack` key unchanged. Do
+not add `--remote`; that uploads to the local R2 emulator used by
+`http://127.0.0.1:8787`. Updating a D1 catalog row is a separate step; apply
+the migration locally with `npx wrangler d1 migrations apply prod --local`,
+then restart the local backend if needed.
+
+Verify a synced object with:
+
+```sh
+MORPH_KEY='runtime/morphs/sha256/<prefix>/<hash>.morphpack'
+npx wrangler r2 object get "prod/$MORPH_KEY" \
+  --file /tmp/morph-pack-check.morphpack --local
+sha256sum /tmp/morph-pack-check.morphpack
+```
+
+For a morph pack, also verify the API URL and content hash before testing in
+Studio. Never use `--remote` unless a production upload has been explicitly
+requested.
+
 # Cross-platform desktop integration
 
 Use a shared Rust Studio UI with a thin native integration layer for each
