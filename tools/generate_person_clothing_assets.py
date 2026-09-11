@@ -85,10 +85,10 @@ ASSETS = {
         "slots": ["shirt"],
         "coverage": ["torso", "upper-arms"],
         "materials": [
-            material("shirt", "Royal Blue Polo", [0.035, 0.16, 0.48, 1.0], roughness=0.78),
-            material("collar-placket", "Navy Collar and Placket", [0.025, 0.075, 0.25, 1.0], roughness=0.72),
-            material("sleeve-cuffs", "Navy Sleeve Cuffs", [0.02, 0.06, 0.20, 1.0], roughness=0.70),
-            material("buttons", "Garnet Buttons", [0.48, 0.055, 0.07, 1.0], roughness=0.42),
+            material("shirt", "Royal Blue Polo", [0.08, 0.29, 0.58, 1.0], roughness=0.78),
+            material("collar-placket", "Folded Blue Collar", [0.065, 0.22, 0.46, 1.0], roughness=0.72),
+            material("sleeve-cuffs", "Navy Polo Trim", [0.025, 0.09, 0.23, 1.0], roughness=0.70),
+            material("buttons", "Slate Buttons", [0.27, 0.35, 0.47, 1.0], roughness=0.42),
             material("logo", "Cubacadabra Logo", [1.0, 1.0, 1.0, 1.0], roughness=0.72, texture="logo.png"),
         ],
         "pieces": [
@@ -334,24 +334,6 @@ def shoe_detail_surfaces(detail):
     return soles, laces
 
 
-def add_front_triangle(surface, points, joint=1):
-    vertices, indices, joints, weights = surface
-    start = len(vertices)
-    vertices.extend(points)
-    joints.extend([[joint, 0, 0, 0]] * 3)
-    weights.extend([[1.0, 0.0, 0.0, 0.0]] * 3)
-    indices.extend([start, start + 2, start + 1])
-
-
-def add_front_quad(surface, points, joint=1):
-    vertices, indices, joints, weights = surface
-    start = len(vertices)
-    vertices.extend(points)
-    joints.extend([[joint, 0, 0, 0]] * 4)
-    weights.extend([[1.0, 0.0, 0.0, 0.0]] * 4)
-    indices.extend([start, start + 2, start + 1, start, start + 3, start + 2])
-
-
 def add_front_disc(surface, center, radius, detail, joint=1):
     vertices, indices, joints, weights = surface
     segments = {3: 12, 2: 8, 1: 6}[detail]
@@ -372,70 +354,123 @@ def add_front_disc(surface, center, radius, detail, joint=1):
             indices.extend([start, start + index + 2, start + index + 1])
 
 
-def polo_front_point(x, y, lift=0.010):
-    """Place trim just above the generated polo torso instead of floating."""
-    size_x, size_y, size_z = 1.05, 0.98, 0.69
-    t = max(0.0, min(1.0, y / size_y + 0.5))
-    radius_x, radius_z = person.profile(person.TORSO_PROFILE, t)
-    normalized_x = min(abs(x) / max(radius_x * size_x, 0.0001), 0.999)
-    cosine = normalized_x ** (1.0 / 0.66)
-    sine = math.sqrt(max(0.0, 1.0 - cosine * cosine))
-    z = -(radius_z * size_z) * (sine ** 0.66) - lift
-    return (x, y, z)
-
-
-def logo_decal_surface():
-    vertices = [
-        polo_front_point(-0.36, 0.085, 0.014),
-        polo_front_point(-0.23, 0.085, 0.014),
-        polo_front_point(-0.23, 0.215, 0.014),
-        polo_front_point(-0.36, 0.215, 0.014),
-    ]
-    return (
-        vertices,
-        [0, 2, 1, 0, 3, 2],
-        [[1, 0, 0, 0]] * 4,
-        [[1.0, 0.0, 0.0, 0.0]] * 4,
-        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
-    )
-
-
 def collared_surfaces(asset, detail):
     shirt = ([], [], [], [])
-    for joint, center, size, shape in asset["pieces"]:
-        person.profile_piece(*shirt, center, size, joint, detail, shape)
-    collar_placket = ([], [], [], [])
-    # Compact overlapping polo leaves follow the neckline instead of hanging
-    # down the chest like a dress-shirt collar.
-    add_front_quad(
-        collar_placket,
-        [polo_front_point(-0.015, 0.475, 0.016), polo_front_point(-0.265, 0.395, 0.016), polo_front_point(-0.135, 0.245, 0.016), polo_front_point(-0.020, 0.355, 0.016)],
-    )
-    add_front_quad(
-        collar_placket,
-        [polo_front_point(0.015, 0.475, 0.016), polo_front_point(0.020, 0.355, 0.016), polo_front_point(0.135, 0.245, 0.016), polo_front_point(0.265, 0.395, 0.016)],
-    )
-    # A narrow inset placket and curved shoulder seam give the front the same
-    # layered construction as the reference polo.
-    add_front_quad(
-        collar_placket,
-        [polo_front_point(-0.045, 0.365, 0.019), polo_front_point(0.045, 0.365, 0.019), polo_front_point(0.045, 0.075, 0.019), polo_front_point(-0.045, 0.075, 0.019)],
-    )
-    detail_tube(
-        *collar_placket,
-        [polo_front_point(-0.31, 0.385, 0.012), polo_front_point(0.0, 0.485, 0.012), polo_front_point(0.31, 0.385, 0.012)],
-        0.014,
-        detail,
-    )
+    radial = {3: 32, 2: 24, 1: 16}[detail]
+    # An open neckline, not a capped torso with collar triangles pasted on it.
+    torso_profile = [
+        (-0.49, 0.42, 0.27), (-0.46, 0.46, 0.30),
+        (-0.30, 0.48, 0.315), (0.0, 0.47, 0.31),
+        (0.24, 0.48, 0.275), (0.36, 0.40, 0.225),
+        (0.43, 0.27, 0.17), (0.49, 0.145, 0.135),
+    ]
+    rings = []
+    for row, (y, rx, rz) in enumerate(torso_profile):
+        ring = []
+        for column in range(radial + 1):
+            angle = column / radial * math.tau
+            # Open V below the throat; taper it into the last two shoulder rows.
+            dip = max(0.0, -math.sin(angle)) ** 18 * max(0, row - 5) * 0.063
+            ring.append((rx * person.signed_power(math.cos(angle), 0.72),
+                         y - dip, rz * person.signed_power(math.sin(angle), 0.72)))
+        rings.append(ring)
+    append_grid(shirt, rings, 1)
+    torso = (list(shirt[0]), list(shirt[1]))
 
-    cuffs = ([], [], [], [])
+    # Sample the actual triangulated torso at each LOD. Analytic overlays can
+    # otherwise float above (or disappear inside) a simplified mesh.
+    def chest(x, y, lift=0.006):
+        hits = []
+        vertices, indices = torso
+        for offset in range(0, len(indices), 3):
+            a, b, c = [vertices[i] for i in indices[offset:offset + 3]]
+            det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+            if abs(det) < 1e-10:
+                continue
+            u = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / det
+            v = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / det
+            if min(u, v, 1 - u - v) >= -1e-6:
+                hits.append(u * a[2] + v * b[2] + (1 - u - v) * c[2])
+        if not hits:
+            raise ValueError(f"Polo detail outside torso: {x}, {y}")
+        return (x, y, min(hits) - lift)
+
+    trim = ([], [], [], [])
     for joint in (3, 6):
-        person.profile_piece(*cuffs, (0.0, -0.265, 0.0), (0.42, 0.085, 0.46), joint, max(1, detail - 1), "limb")
+        # Sleeve and hem share their rim; neither is a capped floating pebble.
+        sleeve_profile = [(-0.36, 0.172, 0.188), (-0.30, 0.178, 0.193),
+                          (-0.13, 0.192, 0.211), (0.04, 0.192, 0.208),
+                          (0.10, 0.181, 0.198), (0.15, 0.153, 0.170),
+                          (0.19, 0.108, 0.122), (0.21, 0.05, 0.058),
+                          (0.215, 0.001, 0.001)]
+        append_grid(shirt, oval_rings(sleeve_profile, radial), joint)
+        cuff_profile = [(-0.30, 0.180, 0.195), (-0.36, 0.175, 0.191),
+                        (-0.365, 0.158, 0.174), (-0.30, 0.163, 0.178)]
+        cuff_rings = oval_rings(cuff_profile, radial)
+        # This profile travels down the outside, around the hem and up inside.
+        append_grid(trim, cuff_rings, joint, reverse=True)
 
+    collar = ([], [], [], [])
+    # Folded collar with a stand around the neck, a rounded fold and an outer
+    # fall. Front tips sweep down onto the chest, leaving an open throat.
+    sections = [(0.15, 0.14, 0.475), (0.155, 0.145, 0.515),
+                (0.18, 0.166, 0.522), (0.24, 0.21, 0.455),
+                (0.29, 0.24, 0.40)]
+    collar_rings = []
+    for row, (rx, rz, y) in enumerate(sections):
+        ring = []
+        for column in range(radial + 1):
+            angle = -math.pi / 2 + 0.40 + column / radial * (math.tau - 0.80)
+            front = max(0., -math.sin(angle)) ** 8
+            fall = row / (len(sections) - 1)
+            ring.append((rx * math.cos(angle), y - front * fall * 0.12,
+                         rz * math.sin(angle) - front * fall * 0.085))
+        collar_rings.append(ring)
+    # Closed cloth thickness: front and back faces have opposing winding.
+    append_grid(collar, collar_rings, 1, reverse=True)
+    inner = [[(x, y - 0.012, z) for x, y, z in ring] for ring in collar_rings]
+    append_grid(collar, inner, 1)
+    for edge in (0, -1):
+        append_grid(collar, [collar_rings[edge], inner[edge]], 1, reverse=edge == 0)
+        append_grid(collar, [[ring[edge] for ring in collar_rings],
+                            [ring[edge] for ring in inner]], 1, reverse=edge == -1)
+
+    # Two small buttons on a short inset placket, rather than bright red beads.
+    placket = [[chest(x, y) for x in (-0.041, 0.041)]
+               for y in (0.09, 0.15, 0.22, 0.29, 0.345)]
+    append_grid(trim, placket, 1)
     buttons = ([], [], [], [])
-    for y in (0.285, 0.165):
-        add_front_disc(buttons, polo_front_point(0.0, y, 0.024), 0.024, detail)
-    return [shirt, collar_placket, cuffs, buttons, logo_decal_surface()]
+    for y in (0.17, 0.285):
+        add_front_disc(buttons, chest(0.0, y, 0.010), 0.015, detail)
+
+    logo = ([], [], [], [], [])
+    logo_grid = [[chest(-0.32 + column * 0.03, 0.08 + row * 0.03, 0.008)
+                  for column in range(5)] for row in range(5)]
+    append_grid(logo[:4], logo_grid, 1)
+    logo[4].extend([(column / 4, 1 - row / 4) for row in range(5) for column in range(5)])
+    return [shirt, collar, trim, buttons, logo]
+
+
+def oval_rings(profile, radial):
+    return [[(rx * math.cos(column / radial * math.tau), y,
+              rz * math.sin(column / radial * math.tau))
+             for column in range(radial + 1)] for y, rx, rz in profile]
+
+
+def append_grid(surface, rings, joint, reverse=False):
+    vertices, indices, joints, weights = surface
+    start, width = len(vertices), len(rings[0])
+    for ring in rings:
+        vertices.extend(ring)
+        joints.extend([[joint, 0, 0, 0]] * width)
+        weights.extend([[1.0, 0.0, 0.0, 0.0]] * width)
+    for row in range(len(rings) - 1):
+        for column in range(width - 1):
+            a = start + row * width + column
+            b = a + width
+            faces = [[a, b, a + 1], [a + 1, b, b + 1]]
+            for face in faces:
+                indices.extend(reversed(face) if reverse else face)
 
 
 def slacks_surfaces(asset, detail):
