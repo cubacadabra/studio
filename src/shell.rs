@@ -14,6 +14,7 @@ use egui::{
 };
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor, wgpu};
 use egui_winit::State as EguiState;
+use log::debug;
 use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -1590,14 +1591,29 @@ impl StudioShell {
                                 {
                                     self.selected_morph = id.clone();
                                     self.notice = format!("Selected {name}");
+                                    debug!(
+                                        "morph library row clicked: asset_id={} name={} kind={:?}",
+                                        id, name, kind
+                                    );
                                     if kind == MorphAssetKind::Headwear {
                                         self.morph_toggle_requested = Some(id.clone());
+                                        debug!("queued headwear toggle: asset_id={}", id);
                                     } else {
                                         self.morph_asset_requested = Some(id.clone());
+                                        debug!("queued morph asset selection: asset_id={}", id);
                                     }
                                     if let Some(url) = self.remote_morph_pack_urls.get(id) {
                                         self.morph_remote_pack_requested =
                                             Some((id.to_string(), url.clone()));
+                                        debug!(
+                                            "queued remote morph pack request: asset_id={} url={}",
+                                            id, url
+                                        );
+                                    } else {
+                                        debug!(
+                                            "no remote morph pack URL is available: asset_id={}",
+                                            id
+                                        );
                                     }
                                 }
                             }

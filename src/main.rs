@@ -1,5 +1,6 @@
 use cubacadabra_client::{ClientAction, ClientSession, native::Renderer};
 use image::{GenericImage, RgbaImage, imageops::FilterType};
+use log::{debug, error, info, warn};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -141,6 +142,12 @@ impl StudioApp {
             }
         }
         let network = BackendClient::new(client.game_id()).map_err(StudioError)?;
+        info!(
+            "studio loaded: game_id={} standalone_preview={} root={}",
+            client.game_id(),
+            standalone_preview,
+            game_root.display()
+        );
         network.request_morph_catalog();
 
         Ok(Self {
@@ -293,6 +300,10 @@ impl StudioApp {
             .as_mut()
             .and_then(StudioShell::take_morph_asset_request);
         if let Some(asset_id) = asset_request {
+            debug!(
+                "morph asset selection request received: asset_id={}",
+                asset_id
+            );
             let result = self.select_morph_asset(&asset_id);
             if let Some(shell) = &mut self.shell {
                 match result {
@@ -303,6 +314,7 @@ impl StudioApp {
         }
         let mut skip_remote_pack = false;
         if let Some(asset_id) = toggle_request {
+            debug!("morph toggle request received: asset_id={}", asset_id);
             let was_active = self
                 .morph_loadout
                 .parts
@@ -310,6 +322,7 @@ impl StudioApp {
                 .any(|active_id| active_id == &asset_id);
             skip_remote_pack = was_active;
             if was_active {
+                debug!("morph asset is active; removing it: asset_id={}", asset_id);
                 let result = self.remove_morph(&asset_id);
                 if let Some(shell) = &mut self.shell {
                     match result {
@@ -322,6 +335,10 @@ impl StudioApp {
         if let Some((asset_id, url)) = remote_pack_request
             && !skip_remote_pack
         {
+            debug!(
+                "morph pack download request received: asset_id={} url={}",
+                asset_id, url
+            );
             self.network.request_morph_pack(asset_id, url);
         }
         let import_requested = self
@@ -694,14 +711,20 @@ impl StudioApp {
     }
 
     fn activate_morph_pack(&mut self, pack: &[u8]) -> Result<(String, usize), String> {
+        debug!("decoding morph pack: bytes={}", pack.len());
         let decoded = decode_morph_pack(pack)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
         let asset_id = decoded.asset.id.to_string();
+        debug!(
+            "morph pack decoded: asset_id={} kind={:?} attachment_mode={:?}",
+            asset_id, decoded.asset.kind, decoded.attachment.mode
+        );
         self.renderer
             .as_mut()
             .ok_or_else(|| "The renderer is not ready for morph registration.".to_owned())?
             .register_morph_pack(pack)
             .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+        debug!("morph pack registered with renderer: asset_id={}", asset_id);
         if let Some(shell) = &mut self.shell {
             let mut definition = decoded.asset.clone();
             if definition.id.as_str() == "cuba:base/person.v1" {
@@ -733,6 +756,10 @@ impl StudioApp {
                 loadout.parts.push(decoded.asset.id.clone());
             }
         }
+        debug!(
+            "applying loadout after morph pack activation: base={} parts={:?}",
+            loadout.base, loadout.parts
+        );
         self.apply_morph_loadout(loadout)?;
         Ok((asset_id, pack.len()))
     }
@@ -744,6 +771,10 @@ impl StudioApp {
         if loadout.parts.len() == before {
             return Err(format!("{} is not currently equipped", asset_id.as_str()));
         }
+        debug!(
+            "applying morph removal: asset_id={} parts={:?}",
+            asset_id, loadout.parts
+        );
         self.apply_morph_loadout(loadout)
     }
 
@@ -757,6 +788,10 @@ impl StudioApp {
             .and_then(|shell| shell.morph_asset(asset_id))
             .cloned()
             .ok_or_else(|| format!("Morph {} is not in the catalog", asset_id.as_str()))?;
+        debug!(
+            "morph asset selected: asset_id={} kind={:?} name={}",
+            definition.id, definition.kind, definition.display_name
+        );
         let mut loadout = self.morph_loadout.clone();
         match definition.kind {
             cubacadabra_morphs::MorphAssetKind::Base => {
@@ -824,13 +859,29 @@ impl StudioApp {
                 loadout.parts.push(definition.id.clone());
             }
         }
-        self.apply_morph_loadout(loadout)
+        debug!(
+            "applying loadout after morph selection: base={} parts={:?}",
+            loadout.base, loadout.parts
+        );
+        let result = self.apply_morph_loadout(loadout);
+        match &result {
+            Ok(()) => debug!("morph asset applied: asset_id={}", asset_id),
+            Err(error) => warn!(
+                "morph asset application failed: asset_id={} error={}",
+                asset_id, error
+            ),
+        }
+        result
     }
 
     fn apply_morph_loadout(
         &mut self,
         mut loadout: cubacadabra_morphs::MorphLoadout,
     ) -> Result<(), String> {
+        debug!(
+            "resolving morph loadout: base={} parts={:?}",
+            loadout.base, loadout.parts
+        );
         let catalog = self
             .shell
             .as_ref()
@@ -852,10 +903,19 @@ impl StudioApp {
             cubacadabra_morphs::CapabilityId::parse("material.emissive.v1")
                 .expect("built-in morph capability must be valid"),
         ]);
-        cubacadabra_morphs::resolve_loadout(&catalog, &loadout, &capabilities)
-            .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
-        let mut legacy = cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout)
-            .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+        cubacadabra_morphs::resolve_loadout(&catalog, &loadout, &capabilities).map_err(
+            |diagnostics| {
+                let message = Self::format_morph_diagnostics(&diagnostics);
+                warn!("morph loadout resolution failed: {}", message);
+                message
+            },
+        )?;
+        let mut legacy =
+            cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout).map_err(|diagnostics| {
+                let message = Self::format_morph_diagnostics(&diagnostics);
+                warn!("morph loadout projection failed: {}", message);
+                message
+            })?;
         if self.morph_base_asset.as_ref() == Some(&loadout.base) {
             legacy
                 .equipment
@@ -863,16 +923,25 @@ impl StudioApp {
         }
         let appearance = serde_json::to_string(&legacy)
             .map_err(|error| format!("Could not encode morph loadout: {error}"))?;
+        debug!(
+            "projected morph loadout to engine appearance: base={} parts={:?} equipment={:?}",
+            loadout.base, loadout.parts, legacy.equipment
+        );
         if self
             .client
             .engine_mut()
             .set_local_appearance_json(&appearance)
             == 0
         {
+            error!("engine rejected projected morph loadout");
             return Err("The player appearance rejected that morph loadout.".to_owned());
         }
         self.morph_equipment = legacy.equipment;
         self.morph_loadout = loadout;
+        debug!(
+            "morph loadout applied to engine: base={} parts={:?}",
+            self.morph_loadout.base, self.morph_loadout.parts
+        );
         Ok(())
     }
 
@@ -1079,26 +1148,58 @@ impl StudioApp {
                     let _ = self.client.receive_text(&source);
                 }
                 BackendEvent::MorphCatalog(source) => {
+                    debug!("morph catalog event received: bytes={}", source.len());
                     if let Some(shell) = &mut self.shell {
                         match shell.set_remote_morph_catalog(&source) {
-                            Ok(count) => shell
-                                .set_notice(format!("Loaded {count} published morphs from D1/R2")),
-                            Err(message) => shell.set_notice(message),
+                            Ok(count) => {
+                                debug!("morph catalog installed: count={}", count);
+                                shell.set_notice(format!(
+                                    "Loaded {count} published morphs from D1/R2"
+                                ));
+                            }
+                            Err(message) => {
+                                warn!("morph catalog rejected: {}", message);
+                                shell.set_notice(message);
+                            }
                         }
                     }
                 }
                 BackendEvent::MorphCatalogError(message) => {
+                    warn!("morph catalog request failed: {}", message);
                     if let Some(shell) = &mut self.shell {
                         shell.set_notice(format!("Morph catalog unavailable: {message}"));
                     }
                 }
-                BackendEvent::MorphPack { asset_id: _, bytes } => {
+                BackendEvent::MorphPack { asset_id, bytes } => {
+                    debug!(
+                        "morph pack event received: asset_id={} bytes={}",
+                        asset_id,
+                        bytes.len()
+                    );
                     let result = self.activate_morph_pack(&bytes);
+                    match &result {
+                        Ok((activated_id, size)) => {
+                            debug!(
+                                "morph pack activated: asset_id={} bytes={}",
+                                activated_id, size
+                            );
+                        }
+                        Err(error) => {
+                            warn!(
+                                "morph pack activation failed: asset_id={} error={}",
+                                asset_id, error
+                            );
+                        }
+                    }
                     if let Some(shell) = &mut self.shell {
                         shell.set_morph_runtime_result(result);
                     }
                 }
                 BackendEvent::MorphPackError { asset_id, message } => {
+                    warn!(
+                        "morph pack request failed: asset_id={} error={}",
+                        asset_id, message
+                    );
                     if let Some(shell) = &mut self.shell {
                         shell.set_notice(format!("Could not load {asset_id}: {message}"));
                     }
@@ -1658,6 +1759,10 @@ mod tests {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+    debug!("Studio debug logging initialized");
     let game_path = parse_game_path()?;
     let mut app = StudioApp::load(game_path)?;
     let mut event_loop_builder = EventLoop::builder();

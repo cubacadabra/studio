@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use log::{debug, info, warn};
 use tungstenite::{Message, WebSocket, connect, stream::MaybeTlsStream};
 use url::Url;
 
@@ -61,6 +62,10 @@ impl BackendClient {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_BACKEND_URL.to_owned());
         let backend_url = parse_backend_url(&raw_url)?;
+        info!(
+            "backend client starting: url={} game_id={}",
+            backend_url, game_id
+        );
         let game_id = game_id.to_owned();
         let (command_sender, command_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
@@ -77,7 +82,9 @@ impl BackendClient {
     }
 
     pub fn set_world(&self, world_id: impl Into<String>) {
-        let _ = self.commands.send(Command::SetWorld(world_id.into()));
+        let world_id = world_id.into();
+        debug!("queueing world selection: world_id={}", world_id);
+        let _ = self.commands.send(Command::SetWorld(world_id));
     }
 
     pub fn send(&self, message: String) {
@@ -106,10 +113,15 @@ impl BackendClient {
     }
 
     pub fn request_morph_catalog(&self) {
+        debug!("queueing morph catalog request");
         let _ = self.commands.send(Command::FetchMorphCatalog);
     }
 
     pub fn request_morph_pack(&self, asset_id: String, url: String) {
+        debug!(
+            "queueing morph pack request: asset_id={} url={}",
+            asset_id, url
+        );
         let _ = self
             .commands
             .send(Command::FetchMorphPack { asset_id, url });
@@ -206,6 +218,10 @@ fn run_worker(
             match commands.try_recv() {
                 Ok(Command::SetWorld(world_id)) => {
                     if desired_world_id.as_deref() != Some(world_id.as_str()) {
+                        debug!(
+                            "backend worker changed desired world: world_id={}",
+                            world_id
+                        );
                         desired_world_id = Some(world_id);
                         disconnect(&mut socket, &mut connected_world_id, &events);
                         pending_messages.clear();
@@ -216,21 +232,37 @@ fn run_worker(
                 Ok(Command::Send(message)) => pending_messages.push_back(message),
                 Ok(Command::Move(movement)) => latest_move = Some(movement),
                 Ok(Command::FetchMorphCatalog) => {
+                    let endpoint = http_url(&backend_url, "/morphs/catalog")
+                        .map(|url| url.to_string())
+                        .unwrap_or_else(|_| "/morphs/catalog".to_owned());
+                    debug!("fetching morph catalog: url={}", endpoint);
                     match fetch_http_text(&backend_url, "/morphs/catalog") {
                         Ok(source) => {
+                            debug!("morph catalog response received: bytes={}", source.len());
                             let _ = events.send(BackendEvent::MorphCatalog(source));
                         }
                         Err(message) => {
+                            warn!("morph catalog HTTP request failed: {}", message);
                             let _ = events.send(BackendEvent::MorphCatalogError(message));
                         }
                     }
                 }
                 Ok(Command::FetchMorphPack { asset_id, url }) => {
+                    debug!("fetching morph pack: asset_id={} url={}", asset_id, url);
                     match fetch_http_bytes(&backend_url, &url) {
                         Ok(bytes) => {
+                            debug!(
+                                "morph pack response received: asset_id={} bytes={}",
+                                asset_id,
+                                bytes.len()
+                            );
                             let _ = events.send(BackendEvent::MorphPack { asset_id, bytes });
                         }
                         Err(message) => {
+                            warn!(
+                                "morph pack HTTP request failed: asset_id={} {}",
+                                asset_id, message
+                            );
                             let _ = events.send(BackendEvent::MorphPackError { asset_id, message });
                         }
                     }
@@ -263,12 +295,17 @@ fn run_worker(
                         .map_err(tungstenite::Error::Io)
                 }) {
                 Ok(next_socket) => {
+                    info!("backend world socket connected: world_id={}", world_id);
                     socket = Some(next_socket);
                     connected_world_id = Some(world_id.to_owned());
                     next_connect_at = Instant::now();
                     let _ = events.send(BackendEvent::Connected);
                 }
-                Err(_) => {
+                Err(error) => {
+                    debug!(
+                        "backend world socket connection failed: world_id={} error={}",
+                        world_id, error
+                    );
                     next_connect_at = Instant::now() + RECONNECT_INTERVAL;
                 }
             }
