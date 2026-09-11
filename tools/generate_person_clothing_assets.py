@@ -57,20 +57,56 @@ ASSETS = {
 }
 
 
-def folded_hood(vertices, indices, joints, weights, detail):
-    """Add a soft folded hood behind the neck instead of a head shell.
+def hood_ring(vertices, indices, joints, weights, detail):
+    """Build the soft oval collar that gives a lowered hood its opening."""
+    radial, rows = {3: (28, 11), 2: (24, 10), 1: (20, 9)}[detail]
+    start = len(vertices)
+    center = (0.0, 0.45, 0.12)
+    size = (0.73, 0.21, 0.72)
+    for row in range(rows + 1):
+        t = row / rows
+        v, u = math.sin(t * math.tau), math.cos(t * math.tau)
+        for column in range(radial + 1):
+            angle = column / radial * math.tau
+            point = (
+                (0.33 + 0.15 * u) * math.cos(angle),
+                0.22 * v + 0.26 * math.sin(angle),
+                (0.32 + 0.15 * u) * math.sin(angle),
+            )
+            vertices.append(tuple(center[axis] + point[axis] * size[axis] for axis in range(3)))
+            joints.append([1, 0, 0, 0])
+            weights.append([1.0, 0.0, 0.0, 0.0])
+            if row < rows and column < radial:
+                a = start + row * (radial + 1) + column
+                b = a + radial + 1
+                indices.extend([a, b, a + 1, a + 1, b, b + 1])
 
-    The hood is torso-skinned and sits behind the upper back. It may overlap
-    the lower rear hair slightly, like cloth resting against it, but never
-    surrounds the face or forms the rigid cylinder produced by the old shell.
-    """
+
+def folded_hood(vertices, indices, joints, weights, detail):
+    """Add the lowered hood profile used by the established Person art."""
+    hood_ring(vertices, indices, joints, weights, detail)
     person.profile_piece(
         vertices,
         indices,
         joints,
         weights,
-        (0.0, 0.51, 0.30),
-        (0.78, 0.34, 0.38),
+        (0.0, 0.30, 0.30),
+        (0.69, 0.60, 0.38),
+        1,
+        detail,
+        "pebble",
+    )
+
+
+def hoodie_pocket(vertices, indices, joints, weights, detail):
+    """Add a shallow kangaroo pocket that follows the front torso surface."""
+    person.profile_piece(
+        vertices,
+        indices,
+        joints,
+        weights,
+        (0.0, -0.21, -0.345),
+        (0.66, 0.32, 0.10),
         1,
         detail,
         "pebble",
@@ -94,12 +130,12 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
     """Sweep a slim capped tube from the neckline to a short aglet."""
     radial = {3: 10, 2: 8, 1: 6}[detail]
     points = [
-        (side * 0.105, 0.505, -0.375),
-        (side * 0.135, 0.435, -0.402),
-        (side * 0.155, 0.315, -0.414),
-        (side * 0.145, 0.175, -0.416),
-        (side * 0.135, 0.055, -0.413),
-        (side * 0.135, 0.010, -0.410),
+        (side * 0.105, 0.505, -0.190),
+        (side * 0.125, 0.435, -0.235),
+        (side * 0.145, 0.315, -0.285),
+        (side * 0.145, 0.175, -0.325),
+        (side * 0.135, 0.055, -0.350),
+        (side * 0.135, 0.010, -0.350),
     ]
     start = len(vertices)
     for row, point in enumerate(points):
@@ -108,7 +144,7 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
         tangent = normalize(tuple(following[axis] - previous[axis] for axis in range(3)))
         basis_x = normalize(cross(tangent, (0.0, 0.0, 1.0)))
         basis_z = cross(tangent, basis_x)
-        radius = 0.015 if row < len(points) - 2 else 0.020
+        radius = 0.022 if row == 0 else (0.015 if row < len(points) - 2 else 0.020)
         for column in range(radial + 1):
             angle = column / radial * math.tau
             vertices.append(tuple(
@@ -141,6 +177,7 @@ def clothing_lod_surfaces(pieces, detail):
         person.profile_piece(vertices, indices, joints, weights, center, size, joint, detail, shape)
     if pieces and pieces[0][3] == "torso":
         folded_hood(vertices, indices, joints, weights, detail)
+        hoodie_pocket(vertices, indices, joints, weights, detail)
         cords = ([], [], [], [])
         for side in (-1.0, 1.0):
             curved_cord(*cords, side, detail)
