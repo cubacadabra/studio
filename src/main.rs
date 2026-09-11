@@ -794,6 +794,8 @@ impl StudioApp {
                 .expect("built-in morph capability must be valid"),
             cubacadabra_morphs::CapabilityId::parse("skin.biped15-linear.v1")
                 .expect("built-in morph capability must be valid"),
+            cubacadabra_morphs::CapabilityId::parse("material.cuba-pbr.v1")
+                .expect("built-in morph capability must be valid"),
             cubacadabra_morphs::CapabilityId::parse("face.analytic.v1")
                 .expect("built-in morph capability must be valid"),
             cubacadabra_morphs::CapabilityId::parse("secondary.chain.v1")
