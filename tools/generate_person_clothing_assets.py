@@ -22,8 +22,10 @@ ASSETS = {
         "name": "Person Top",
         "slots": ["shirt"],
         "coverage": ["torso", "arms"],
-        "color": [0.10, 0.52, 0.46, 1.0],
-        "string_color": [0.97, 0.97, 0.95, 1.0],
+        "materials": [
+            ("top", "Person Top", [0.10, 0.52, 0.46, 1.0], True, 0.82),
+            ("drawstring", "White Drawstring", [0.97, 0.97, 0.95, 1.0], False, 0.68),
+        ],
         "pieces": [
             (1, (0.0, 0.0, 0.0), (1.10, 1.04, 0.73), "torso"),
             (3, (0.0, -0.40, 0.0), (0.46, 1.13, 0.49), "sleeve"),
@@ -36,7 +38,9 @@ ASSETS = {
         "name": "Person Bottom",
         "slots": ["pants"],
         "coverage": ["legs"],
-        "color": [0.20, 0.28, 0.66, 1.0],
+        "materials": [
+            ("bottom", "Person Bottom", [0.20, 0.28, 0.66, 1.0], True, 0.82),
+        ],
         "pieces": [
             (9, (0.0, -0.15, 0.0), (0.46, 0.66, 0.47), "shorts"),
             (12, (0.0, -0.15, 0.0), (0.46, 0.66, 0.47), "shorts"),
@@ -48,7 +52,11 @@ ASSETS = {
         "name": "Person Shoes",
         "slots": ["shoes"],
         "coverage": ["feet"],
-        "color": [0.08, 0.08, 0.12, 1.0],
+        "materials": [
+            ("footwear", "Navy Upper", [0.08, 0.11, 0.16, 1.0], False, 0.72),
+            ("sole", "Ivory Sole", [0.96, 0.93, 0.84, 1.0], False, 0.76),
+            ("laces", "Ivory Laces", [0.98, 0.97, 0.94, 1.0], False, 0.66),
+        ],
         "pieces": [
             (11, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
             (14, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
@@ -170,7 +178,36 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
             indices.extend([cap, a + 1, a] if top else [cap, a, a + 1])
 
 
-def clothing_lod_surfaces(pieces, detail):
+def shoe_detail_surfaces(detail):
+    """Recreate the established Person shoe sole and three raised lace bands."""
+    soles = ([], [], [], [])
+    laces = ([], [], [], [])
+    # The foot joint rests 0.05 units above the floor. The sole profile is
+    # centered so its lowest normalized point (-0.5) lands exactly on it.
+    sole_center_y = -0.05 + 0.5 * 0.095
+    for joint in (11, 14):
+        person.profile_piece(
+            *soles,
+            (0.0, sole_center_y, -0.09),
+            (0.51, 0.095, 0.77),
+            joint,
+            detail,
+            "shoe",
+        )
+        for offset in (-0.32, 0.0, 0.32):
+            person.profile_piece(
+                *laces,
+                (0.0, 0.26 + offset * 0.7 * 0.065, -0.24 + offset * 0.24),
+                (0.31, 0.065 * 0.28, 0.24 * 0.15),
+                joint,
+                max(1, detail - 1),
+                "pebble",
+            )
+    return soles, laces
+
+
+def clothing_lod_surfaces(asset, detail):
+    pieces = asset["pieces"]
     cloth = ([], [], [], [])
     vertices, indices, joints, weights = cloth
     for joint, center, size, shape in pieces:
@@ -182,6 +219,8 @@ def clothing_lod_surfaces(pieces, detail):
         for side in (-1.0, 1.0):
             curved_cord(*cords, side, detail)
         return [cloth, cords]
+    if pieces and pieces[0][3] == "shoe":
+        return [cloth, *shoe_detail_surfaces(detail)]
     return [cloth]
 
 
@@ -202,7 +241,9 @@ def make_glb(output, asset):
 
     triangle_counts = {}
     for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
-        surfaces = clothing_lod_surfaces(asset["pieces"], detail)
+        surfaces = clothing_lod_surfaces(asset, detail)
+        if len(surfaces) != len(asset["materials"]):
+            raise ValueError(f"surface/material mismatch for {asset['id']}")
         triangle_counts[level.lower()] = sum(len(surface[1]) // 3 for surface in surfaces)
         primitives = []
         for material, (positions, indices, joints, weights) in enumerate(surfaces):
@@ -256,22 +297,14 @@ def make_glb(output, asset):
     inverse_view = add_blob(inverse_bind)
     inverse_accessor = len(accessors)
     accessors.append({"bufferView": inverse_view, "componentType": 5126, "count": len(person.JOINTS), "type": "MAT4"})
-    materials = [{
-        "name": asset["name"],
-        "extras": {"cubaUseAvatarTint": True},
-        "pbrMetallicRoughness": {
-            "baseColorFactor": asset["color"],
-            "roughnessFactor": 0.82,
-            "metallicFactor": 0.0,
-        },
-    }]
-    if "string_color" in asset:
+    materials = []
+    for _, name, color, use_avatar_tint, roughness in asset["materials"]:
         materials.append({
-            "name": "White Drawstring",
-            "extras": {"cubaUseAvatarTint": False},
+            "name": name,
+            "extras": {"cubaUseAvatarTint": use_avatar_tint},
             "pbrMetallicRoughness": {
-                "baseColorFactor": asset["string_color"],
-                "roughnessFactor": 0.68,
+                "baseColorFactor": color,
+                "roughnessFactor": roughness,
                 "metallicFactor": 0.0,
             },
         })
@@ -313,7 +346,7 @@ def write_sidecar(glb_path, asset):
             "occupiedSlots": asset["slots"],
             "coverage": asset["coverage"],
             "conflicts": [],
-            "materials": [asset["kind"]] + (["drawstring"] if "string_color" in asset else []),
+            "materials": [material[0] for material in asset["materials"]],
             "lod": asset["lod"],
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
             "source": {"geometry": glb_path.name},
