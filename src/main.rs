@@ -251,15 +251,38 @@ impl StudioApp {
         self.last_frame = now;
 
         let project_name = game_name(&self.game_root);
+        if let Some(shell) = &mut self.shell {
+            shell.set_active_morphs(self.morph_equipment.values().cloned());
+        }
         let prepared_shell: Option<PreparedShell> = match (&mut self.shell, &self.window) {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
         };
-        if let Some((asset_id, url)) = self
+        let toggle_request = self
             .shell
             .as_mut()
-            .and_then(StudioShell::take_remote_morph_pack_request)
-        {
+            .and_then(StudioShell::take_morph_toggle_request);
+        let remote_pack_request = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_remote_morph_pack_request);
+        if let Some(asset_id) = toggle_request {
+            if self
+                .morph_equipment
+                .values()
+                .any(|active_id| active_id == asset_id.as_str())
+            {
+                let result = self.remove_morph(&asset_id);
+                if let Some(shell) = &mut self.shell {
+                    match result {
+                        Ok(()) => shell.set_notice(format!("Removed {}", asset_id.as_str())),
+                        Err(message) => shell.set_notice(message),
+                    }
+                }
+            } else if let Some((requested_id, url)) = remote_pack_request {
+                self.network.request_morph_pack(requested_id, url);
+            }
+        } else if let Some((asset_id, url)) = remote_pack_request {
             self.network.request_morph_pack(asset_id, url);
         }
         let import_requested = self
@@ -662,6 +685,31 @@ impl StudioApp {
         }
         self.morph_equipment = equipment;
         Ok((asset_id, pack.len()))
+    }
+
+    fn remove_morph(&mut self, asset_id: &cubacadabra_morphs::MorphAssetId) -> Result<(), String> {
+        let mut equipment = self.morph_equipment.clone();
+        let before = equipment.len();
+        equipment.retain(|_, active_id| active_id != asset_id.as_str());
+        if equipment.len() == before {
+            return Err(format!("{} is not currently equipped", asset_id.as_str()));
+        }
+        let appearance = serde_json::json!({
+            "version": 1,
+            "equipment": equipment,
+            "revision": self.client.engine().appearance_revision().saturating_add(1),
+        })
+        .to_string();
+        if self
+            .client
+            .engine_mut()
+            .set_local_appearance_json(&appearance)
+            == 0
+        {
+            return Err("The player appearance rejected removing that morph.".to_owned());
+        }
+        self.morph_equipment = equipment;
+        Ok(())
     }
 
     fn generate_morph_thumbnail(&mut self) {

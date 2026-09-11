@@ -17,7 +17,12 @@ use egui_winit::State as EguiState;
 use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
-use std::{collections::BTreeMap, fs, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    sync::Arc,
+    time::Duration,
+};
 use winit::{event::WindowEvent, window::Window};
 
 #[cfg(test)]
@@ -381,6 +386,8 @@ pub(crate) struct StudioShell {
     morph_catalog: MorphCatalog,
     remote_morph_pack_urls: BTreeMap<MorphAssetId, String>,
     morph_remote_pack_requested: Option<(String, String)>,
+    morph_toggle_requested: Option<MorphAssetId>,
+    active_morphs: BTreeSet<String>,
     selected_morph: MorphAssetId,
     morph_import_requested: bool,
     morph_sidecar_import_requested: bool,
@@ -453,6 +460,8 @@ impl StudioShell {
             .expect("bundled morph catalog must be valid"),
             remote_morph_pack_urls: BTreeMap::new(),
             morph_remote_pack_requested: None,
+            morph_toggle_requested: None,
+            active_morphs: BTreeSet::new(),
             selected_morph: MorphAssetId::parse("cuba:base/person.v1")
                 .expect("built-in morph ID must be valid"),
             morph_import_requested: false,
@@ -557,6 +566,17 @@ impl StudioShell {
 
     pub(crate) fn take_remote_morph_pack_request(&mut self) -> Option<(String, String)> {
         self.morph_remote_pack_requested.take()
+    }
+
+    pub(crate) fn take_morph_toggle_request(&mut self) -> Option<MorphAssetId> {
+        self.morph_toggle_requested.take()
+    }
+
+    pub(crate) fn set_active_morphs<I>(&mut self, ids: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.active_morphs = ids.into_iter().collect();
     }
 
     pub(crate) fn take_morph_import_request(&mut self) -> bool {
@@ -1340,7 +1360,9 @@ impl StudioShell {
                         ("Materials", Icon::Material),
                         ("Characters", Icon::Character),
                     ] {
-                        if navigation_row(ui, icon, filter, self.asset_filter == filter).clicked() {
+                        if navigation_row(ui, icon, filter, self.asset_filter == filter, false)
+                            .clicked()
+                        {
                             self.asset_filter = filter;
                             self.notice = format!("Showing {filter}");
                         }
@@ -1408,6 +1430,7 @@ impl StudioShell {
                             Icon::Material,
                             material,
                             self.selected_asset == material,
+                            false,
                         )
                         .clicked()
                         {
@@ -1499,11 +1522,15 @@ impl StudioShell {
                                     Icon::Character,
                                     name,
                                     self.selected_morph == *id,
+                                    self.active_morphs.contains(id.as_str()),
                                 )
                                 .clicked()
                                 {
                                     self.selected_morph = id.clone();
                                     self.notice = format!("Selected {name}");
+                                    if kind == MorphAssetKind::Headwear {
+                                        self.morph_toggle_requested = Some(id.clone());
+                                    }
                                     if let Some(url) = self.remote_morph_pack_urls.get(id) {
                                         self.morph_remote_pack_requested =
                                             Some((id.to_string(), url.clone()));
@@ -3016,7 +3043,13 @@ fn compact_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response
     response
 }
 
-fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
+fn navigation_row(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    active: bool,
+) -> egui::Response {
     let colors = palette(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
@@ -3059,6 +3092,15 @@ fn navigation_row(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) ->
         label_font,
         if selected { colors.text } else { colors.muted },
     );
+    if active {
+        ui.painter().text(
+            rect.right_center() - egui::vec2(8.0, 0.0),
+            Align2::RIGHT_CENTER,
+            "ON",
+            FontId::new(TYPE.meta, FontFamily::Name(MEDIUM_FONT_FAMILY.into())),
+            colors.live,
+        );
+    }
     paint_focus(ui, &response);
     response
 }
