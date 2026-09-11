@@ -25,6 +25,7 @@ ASSETS = {
         "materials": [
             ("top", "Person Top", [0.10, 0.52, 0.46, 1.0], True, 0.82),
             ("drawstring", "White Drawstring", [0.97, 0.97, 0.95, 1.0], False, 0.68),
+            ("pocket-opening", "Pocket Opening", [0.055, 0.25, 0.23, 1.0], False, 0.76),
         ],
         "pieces": [
             (1, (0.0, 0.0, 0.0), (1.10, 1.04, 0.73), "torso"),
@@ -107,17 +108,17 @@ def folded_hood(vertices, indices, joints, weights, detail):
 
 
 def hoodie_pocket(vertices, indices, joints, weights, detail):
-    """Add a shallow kangaroo pocket that follows the front torso surface."""
+    """Add the established tapered kangaroo pocket profile."""
     person.profile_piece(
         vertices,
         indices,
         joints,
         weights,
-        (0.0, -0.21, -0.345),
-        (0.66, 0.32, 0.10),
+        (0.0, -0.21, -0.33),
+        (0.66, 0.32, 0.11),
         1,
         detail,
-        "pebble",
+        "pocket",
     )
 
 
@@ -178,6 +179,63 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
             indices.extend([cap, a + 1, a] if top else [cap, a, a + 1])
 
 
+def detail_tube(vertices, indices, joints, weights, points, radius, detail):
+    """Sweep a small capped tube for modeled pocket openings and stitches."""
+    radial = {3: 8, 2: 6, 1: 5}[detail]
+    start = len(vertices)
+    for row, point in enumerate(points):
+        previous = points[max(0, row - 1)]
+        following = points[min(len(points) - 1, row + 1)]
+        tangent = normalize(tuple(following[axis] - previous[axis] for axis in range(3)))
+        across = normalize(cross(tangent, (0.0, 0.0, 1.0)))
+        forward = cross(tangent, across)
+        for column in range(radial + 1):
+            angle = column / radial * math.tau
+            vertices.append(tuple(
+                point[axis]
+                + across[axis] * math.cos(angle) * radius
+                + forward[axis] * math.sin(angle) * radius
+                for axis in range(3)
+            ))
+            joints.append([1, 0, 0, 0])
+            weights.append([1.0, 0.0, 0.0, 0.0])
+            if row < len(points) - 1 and column < radial:
+                a = start + row * (radial + 1) + column
+                b = a + radial + 1
+                indices.extend([a, b, a + 1, a + 1, b, b + 1])
+    for row, top in [(0, False), (len(points) - 1, True)]:
+        ring = start + row * (radial + 1)
+        cap = len(vertices)
+        vertices.append(points[row])
+        joints.append([1, 0, 0, 0])
+        weights.append([1.0, 0.0, 0.0, 0.0])
+        for column in range(radial):
+            a = ring + column
+            indices.extend([cap, a + 1, a] if top else [cap, a, a + 1])
+
+
+def pocket_details(white, openings, detail):
+    front = -0.389
+    for side in (-1.0, 1.0):
+        detail_tube(
+            *openings,
+            [
+                (side * 0.17, -0.105, front),
+                (side * 0.235, -0.175, front - 0.002),
+                (side * 0.295, -0.265, front),
+            ],
+            0.012,
+            detail,
+        )
+    for points in [
+        [(0.0, -0.215, front - 0.003), (0.0, -0.255, front - 0.003)],
+        [(-0.110, -0.285, front - 0.003), (-0.060, -0.285, front - 0.003)],
+        [(0.060, -0.285, front - 0.003), (0.110, -0.285, front - 0.003)],
+        [(0.0, -0.315, front - 0.003), (0.0, -0.355, front - 0.003)],
+    ]:
+        detail_tube(*white, points, 0.008, detail)
+
+
 def shoe_detail_surfaces(detail):
     """Recreate the established Person shoe sole and three raised lace bands."""
     soles = ([], [], [], [])
@@ -218,7 +276,9 @@ def clothing_lod_surfaces(asset, detail):
         cords = ([], [], [], [])
         for side in (-1.0, 1.0):
             curved_cord(*cords, side, detail)
-        return [cloth, cords]
+        openings = ([], [], [], [])
+        pocket_details(cords, openings, detail)
+        return [cloth, cords, openings]
     if pieces and pieces[0][3] == "shoe":
         return [cloth, *shoe_detail_surfaces(detail)]
     return [cloth]

@@ -47,6 +47,10 @@ SLEEVE_PROFILE = [
     (0.57, 0.43, 0.43), (0.80, 0.42, 0.42), (0.93, 0.35, 0.35),
     (1.00, 0.12, 0.14),
 ]
+POCKET_PROFILE = [
+    (0.00, 0.34, 0.20), (0.13, 0.48, 0.43), (0.38, 0.48, 0.48),
+    (0.72, 0.37, 0.45), (0.94, 0.29, 0.34), (1.00, 0.27, 0.20),
+]
 SHOE_PROFILE = [
     (0.00, 0.43, 0.46), (0.12, 0.49, 0.49), (0.38, 0.48, 0.48),
     (0.65, 0.41, 0.40), (0.85, 0.31, 0.29), (1.00, 0.22, 0.22),
@@ -91,6 +95,9 @@ def surface(shape, t, angle):
     elif shape == "sleeve":
         radius_x, radius_z = profile(SLEEVE_PROFILE, t)
         exponent = 0.90
+    elif shape == "pocket":
+        radius_x, radius_z = profile(POCKET_PROFILE, t)
+        exponent = 0.58
     elif shape == "shoe":
         radius_x, radius_z = profile(SHOE_PROFILE, t)
         exponent = 0.65
