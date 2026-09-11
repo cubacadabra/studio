@@ -150,7 +150,7 @@ def profile_piece(
     shape,
     head_profile=HEAD_PROFILE,
 ):
-    radial, rows = {3: (20, 10), 2: (12, 6), 1: (6, 3)}[detail]
+    radial, rows = {3: (32, 16), 2: (16, 8), 1: (8, 4)}[detail]
     start = len(vertices)
     for row in range(rows + 1):
         t = row / rows
@@ -233,6 +233,32 @@ def accessor(buffer_view, component_type, count, kind, minimum=None, maximum=Non
     return value
 
 
+def weld_surface(surface):
+    """Share round seam vertices without merging different skin weights/UVs.
+
+    The morphpack renderer calculates normals from topology. Exporting a
+    duplicated longitude seam makes otherwise smooth sleeves show a crease.
+    """
+    vertices, indices, joints, weights = surface[:4]
+    uvs = surface[4] if len(surface) == 5 else None
+    result = ([], [], [], [], []) if uvs is not None else ([], [], [], [])
+    lookup, remap = {}, []
+    for index, vertex in enumerate(vertices):
+        key = (tuple(round(v, 7) for v in vertex), tuple(joints[index]), tuple(weights[index]),
+               tuple(uvs[index]) if uvs is not None else None)
+        if key not in lookup:
+            lookup[key] = len(result[0])
+            result[0].append(vertex)
+            result[2].append(joints[index])
+            result[3].append(weights[index])
+            if uvs is not None: result[4].append(uvs[index])
+        remap.append(lookup[key])
+    for offset in range(0, len(indices), 3):
+        face = [remap[i] for i in indices[offset:offset+3]]
+        if len(set(face)) == 3: result[1].extend(face)
+    return result
+
+
 def make_glb(output, variant):
     binary = bytearray()
     views, accessors, meshes = [], [], []
@@ -249,7 +275,7 @@ def make_glb(output, variant):
         return len(views) - 1
 
     for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
-        positions, indices, joints, weights = lod_geometry(detail, variant["head_profile"])
+        positions, indices, joints, weights = weld_surface(lod_geometry(detail, variant["head_profile"]))
         pos_blob = b"".join(struct.pack("<3f", *v) for v in positions)
         idx_blob = b"".join(struct.pack("<I", v) for v in indices)
         joint_blob = b"".join(struct.pack("<4H", *v) for v in joints)

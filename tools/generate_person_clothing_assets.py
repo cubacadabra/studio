@@ -85,8 +85,8 @@ ASSETS = {
         "slots": ["shirt"],
         "coverage": ["torso", "upper-arms"],
         "materials": [
-            material("shirt", "Royal Blue Polo", [0.08, 0.29, 0.58, 1.0], roughness=0.78),
-            material("collar-placket", "Folded Blue Collar", [0.095, 0.31, 0.57, 1.0], roughness=0.72),
+            material("shirt", "Polo Cotton", [0.08, 0.29, 0.58, 1.0], True, roughness=0.78),
+            material("collar-placket", "Folded Collar", [0.095, 0.31, 0.57, 1.0], True, roughness=0.72),
             material("sleeve-cuffs", "Navy Polo Trim", [0.025, 0.09, 0.23, 1.0], roughness=0.70),
             material("buttons", "Slate Buttons", [0.27, 0.35, 0.47, 1.0], roughness=0.42),
             material("logo", "Cubacadabra Logo", [1.0, 1.0, 1.0, 1.0], roughness=0.72, texture="logo.png"),
@@ -106,8 +106,8 @@ ASSETS = {
         "slots": ["pants"],
         "coverage": ["legs"],
         "materials": [
-            material("slacks", "Charcoal Slacks", [0.105, 0.12, 0.17, 1.0], roughness=0.74),
-            material("seams", "Pressed Seams", [0.24, 0.27, 0.34, 1.0], roughness=0.62),
+            material("slacks", "Charcoal Slacks", [0.13, 0.155, 0.20, 1.0], roughness=0.86),
+            material("seams", "Pressed Seams", [0.16, 0.18, 0.23, 1.0], roughness=0.86),
         ],
         "pieces": [
             (9, (0.0, -0.15, 0.0), (0.48, 0.72, 0.49), "shorts"),
@@ -124,10 +124,10 @@ ASSETS = {
         "slots": ["shoes"],
         "coverage": ["feet"],
         "materials": [
-            material("sparkle-satin", "Amethyst Satin", [0.34, 0.08, 0.50, 1.0], roughness=0.28),
-            material("gold-sole", "Gold Sole", [0.95, 0.62, 0.16, 1.0], roughness=0.24),
-            material("gold-laces", "Gold Laces", [1.0, 0.78, 0.25, 1.0], roughness=0.20),
-            material("sequins", "Iridescent Sequins", [0.98, 0.50, 0.88, 1.0], roughness=0.14),
+            material("sparkle-satin", "Amethyst Satin", [0.43, 0.29, 0.60, 1.0], roughness=0.38),
+            material("gold-sole", "Pearl Sole", [0.91, 0.86, 0.74, 1.0], roughness=0.72),
+            material("gold-laces", "Champagne Laces", [0.81, 0.69, 0.45, 1.0], roughness=0.56),
+            material("sequins", "Iridescent Sequins", [0.85, 0.66, 0.89, 1.0], roughness=0.22),
         ],
         "pieces": [
             (11, (0.0, 0.155, -0.09), (0.50, 0.29, 0.76), "shoe"),
@@ -224,7 +224,7 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
         tangent = normalize(tuple(following[axis] - previous[axis] for axis in range(3)))
         basis_x = normalize(cross(tangent, (0.0, 0.0, 1.0)))
         basis_z = cross(tangent, basis_x)
-        radius = 0.022 if row == 0 else (0.015 if row < len(points) - 2 else 0.020)
+        radius = 0.017 if row == 0 else (0.011 if row < len(points) - 2 else 0.014)
         for column in range(radial + 1):
             angle = column / radial * math.tau
             vertices.append(tuple(
@@ -298,13 +298,6 @@ def pocket_details(white, openings, detail):
             0.012,
             detail,
         )
-    for points in [
-        [(0.0, -0.215, front - 0.003), (0.0, -0.255, front - 0.003)],
-        [(-0.110, -0.285, front - 0.003), (-0.060, -0.285, front - 0.003)],
-        [(0.060, -0.285, front - 0.003), (0.110, -0.285, front - 0.003)],
-        [(0.0, -0.315, front - 0.003), (0.0, -0.355, front - 0.003)],
-    ]:
-        detail_tube(*white, points, 0.008, detail)
 
 
 def shoe_detail_surfaces(detail):
@@ -510,17 +503,9 @@ def slacks_surfaces(asset, detail):
         person.profile_piece(*fabric, center, size, joint, detail, shape)
     seams = ([], [], [], [])
     for joint in (9, 12):
-        detail_tube(*seams, [(0.0, 0.14, -0.225), (0.0, -0.48, -0.225)], 0.009, detail, joint)
-        for side in (-1.0, 1.0):
-            detail_tube(
-                *seams,
-                [(side * 0.09, 0.16, -0.218), (side * 0.045, -0.04, -0.225)],
-                0.010,
-                detail,
-                joint,
-            )
+        detail_tube(*seams, [(0.0, 0.10, -0.225), (0.0, -0.48, -0.225)], 0.004, detail, joint)
     for joint in (10, 13):
-        detail_tube(*seams, [(0.0, 0.13, -0.180), (0.0, -0.54, -0.180)], 0.008, detail, joint)
+        detail_tube(*seams, [(0.0, 0.13, -0.180), (0.0, -0.54, -0.180)], 0.003, detail, joint)
     return [fabric, seams]
 
 
@@ -585,7 +570,7 @@ def make_glb(output, asset):
 
     triangle_counts = {}
     for level, detail in [("Near", 3), ("Mid", 2), ("Far", 1)]:
-        surfaces = clothing_lod_surfaces(asset, detail)
+        surfaces = [person.weld_surface(surface) for surface in clothing_lod_surfaces(asset, detail)]
         if len(surfaces) != len(asset["materials"]):
             raise ValueError(f"surface/material mismatch for {asset['id']}")
         triangle_counts[level.lower()] = sum(len(surface[1]) // 3 for surface in surfaces)
