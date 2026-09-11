@@ -870,7 +870,6 @@ impl StudioApp {
                 };
                 match button {
                     MouseButton::Left if morph_preview => {
-                        let _ = (local_x, local_y);
                         self.movement_pointer_active = true;
                         self.movement_pointer_origin = Some((x, y));
                         self.joystick_input = (0.0, 0.0);
