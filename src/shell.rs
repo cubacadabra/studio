@@ -1796,8 +1796,6 @@ impl StudioShell {
             .frame(Frame::NONE.fill(Color32::TRANSPARENT))
             .show(root, |ui| {
                 let available = ui.available_rect_before_wrap();
-                ui.painter()
-                    .rect_filled(available, 0.0, colors.surface_deep);
                 editor_header(ui, |ui| {
                     inline_icon(ui, Icon::Camera, colors.muted);
                     ui.label(
