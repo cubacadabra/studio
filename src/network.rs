@@ -225,14 +225,16 @@ fn run_worker(
                         }
                     }
                 }
-                Ok(Command::FetchMorphPack { asset_id, url }) => match fetch_http_bytes(&url) {
-                    Ok(bytes) => {
-                        let _ = events.send(BackendEvent::MorphPack { asset_id, bytes });
+                Ok(Command::FetchMorphPack { asset_id, url }) => {
+                    match fetch_http_bytes(&backend_url, &url) {
+                        Ok(bytes) => {
+                            let _ = events.send(BackendEvent::MorphPack { asset_id, bytes });
+                        }
+                        Err(message) => {
+                            let _ = events.send(BackendEvent::MorphPackError { asset_id, message });
+                        }
                     }
-                    Err(message) => {
-                        let _ = events.send(BackendEvent::MorphPackError { asset_id, message });
-                    }
-                },
+                }
                 Ok(Command::Shutdown) | Err(TryRecvError::Disconnected) => {
                     running = false;
                     break;
@@ -392,8 +394,13 @@ fn fetch_http_text(base_url: &Url, path: &str) -> Result<String, String> {
         .map_err(|error| format!("morph catalog response failed: {error}"))
 }
 
-fn fetch_http_bytes(raw_url: &str) -> Result<Vec<u8>, String> {
-    let mut response = ureq::get(raw_url)
+fn fetch_http_bytes(base_url: &Url, raw_url: &str) -> Result<Vec<u8>, String> {
+    let url = if raw_url.starts_with('/') {
+        http_url(base_url, raw_url)?
+    } else {
+        Url::parse(raw_url).map_err(|error| format!("morph pack URL is invalid: {error}"))?
+    };
+    let mut response = ureq::get(url.as_str())
         .call()
         .map_err(|error| format!("morph pack request failed: {error}"))?;
     response
