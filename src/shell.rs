@@ -544,15 +544,20 @@ impl StudioShell {
                     .expect("bundled fit ID must be valid");
                 let capability = cubacadabra_morphs::CapabilityId::parse("mesh.rigid.v1")
                     .expect("bundled morph capability must be valid");
+                let kind = asset
+                    .kind
+                    .ok_or_else(|| "Morph catalog row is missing kind".to_owned())?;
                 cubacadabra_morphs::MorphAssetDefinition {
                     id,
-                    kind: asset
-                        .kind
-                        .ok_or_else(|| "Morph catalog row is missing kind".to_owned())?,
+                    kind,
                     display_name: asset.name,
                     rig_profile: Some(rig),
                     fit_profiles: vec![fit],
-                    supported_bases: vec![base],
+                    supported_bases: if kind == MorphAssetKind::Base {
+                        Vec::new()
+                    } else {
+                        vec![base]
+                    },
                     occupied_slots: asset.slots,
                     coverage: asset.tags,
                     conflicts: Vec::new(),
