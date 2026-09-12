@@ -100,6 +100,7 @@ struct GameSources {
 struct LocalMorphCatalog {
     catalog: cubacadabra_morphs::MorphCatalog,
     packs: BTreeMap<cubacadabra_morphs::MorphAssetId, Vec<u8>>,
+    thumbnails: BTreeMap<String, Vec<u8>>,
     initial_preset: Option<cubacadabra_morphs::MorphAssetId>,
 }
 
@@ -1231,15 +1232,42 @@ fn load_local_morph_catalog(path: &Path) -> Result<LocalMorphCatalog, Box<dyn Er
     }
 
     let mut presets = Vec::new();
+    let mut thumbnails = BTreeMap::new();
     for local_preset in definition.presets {
         let preset_path = local_catalog_file(catalog_root, &local_preset.source, "preset")?;
         let preset_source = read_utf8_file(&preset_path, "morph preset")?;
-        let preset = serde_json::from_str(&preset_source).map_err(|error| {
-            Box::new(StudioError(format!(
-                "morph preset {} is not valid: {error}",
-                preset_path.display()
-            ))) as Box<dyn Error>
-        })?;
+        let preset: cubacadabra_morphs::MorphPreset = serde_json::from_str(&preset_source)
+            .map_err(|error| {
+                Box::new(StudioError(format!(
+                    "morph preset {} is not valid: {error}",
+                    preset_path.display()
+                ))) as Box<dyn Error>
+            })?;
+        if let Some(thumbnail) = preset.thumbnail.as_deref() {
+            let thumbnail_path = preset_path
+                .parent()
+                .ok_or_else(|| {
+                    Box::new(StudioError(
+                        "local preset has no parent directory".to_owned(),
+                    )) as Box<dyn Error>
+                })?
+                .join(thumbnail);
+            if Path::new(thumbnail).is_absolute() || !thumbnail_path.is_file() {
+                return Err(Box::new(StudioError(format!(
+                    "local morph thumbnail does not exist: {}",
+                    thumbnail_path.display()
+                ))));
+            }
+            thumbnails.insert(
+                thumbnail.to_owned(),
+                fs::read(&thumbnail_path).map_err(|error| {
+                    Box::new(StudioError(format!(
+                        "could not read local morph thumbnail {}: {error}",
+                        thumbnail_path.display()
+                    ))) as Box<dyn Error>
+                })?,
+            );
+        }
         presets.push(preset);
     }
 
@@ -1268,6 +1296,7 @@ fn load_local_morph_catalog(path: &Path) -> Result<LocalMorphCatalog, Box<dyn Er
     Ok(LocalMorphCatalog {
         catalog,
         packs,
+        thumbnails,
         initial_preset,
     })
 }
@@ -1808,6 +1837,20 @@ mod tests {
                 .unwrap()
                 .display_name,
             "Studio study base"
+        );
+    }
+
+    #[test]
+    fn local_starter_catalog_loads_runtime_thumbnails() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/starter-set/catalog.json");
+        let local = load_local_morph_catalog(&path).expect("starter catalog");
+        assert_eq!(local.catalog.presets.len(), 24);
+        assert_eq!(local.thumbnails.len(), 24);
+        assert!(
+            local
+                .thumbnails
+                .get("thumbnails/person-05.png")
+                .is_some_and(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
         );
     }
 
