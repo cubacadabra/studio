@@ -337,10 +337,6 @@ impl StudioApp {
         if let Some(shell) = &mut self.shell {
             shell.set_active_morph_loadout(&self.morph_loadout);
         }
-        let prepared_shell: Option<PreparedShell> = match (&mut self.shell, &self.window) {
-            (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
-            _ => None,
-        };
         if let Some(request) = self
             .shell
             .as_mut()
@@ -368,6 +364,13 @@ impl StudioApp {
         if draft_export_requested {
             self.export_morph_draft();
         }
+        // Morph requests can turn the loading veil on or commit the first
+        // native v2 appearance. Prepare the overlay after those transitions
+        // so the old bundled character never reaches a visible frame.
+        let prepared_shell: Option<PreparedShell> = match (&mut self.shell, &self.window) {
+            (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
+            _ => None,
+        };
         let sidecar_export_requested = self
             .shell
             .as_mut()

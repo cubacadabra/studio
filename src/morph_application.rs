@@ -121,9 +121,6 @@ impl StudioApp {
                 .morph_catalog()
                 .asset(&id)
                 .ok_or_else(|| format!("Morph asset {id} is missing from the catalog."))?;
-            if definition.kind == cubacadabra_morphs::MorphAssetKind::Face {
-                continue;
-            }
             let artifact = shell
                 .morph_artifact(&id)
                 .cloned()
