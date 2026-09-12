@@ -82,6 +82,12 @@ pub(crate) fn source_manifest_geometry_file(source: &str) -> Result<String, Vec<
     Ok(parse_source_manifest(source)?.geometry.file)
 }
 
+pub(crate) fn source_manifest_asset(
+    source: &str,
+) -> Result<MorphAssetDefinition, Vec<MorphDiagnostic>> {
+    Ok(parse_source_manifest(source)?.asset)
+}
+
 pub(crate) fn inspect_source_sidecar(
     manifest_source: &str,
     glb: &[u8],

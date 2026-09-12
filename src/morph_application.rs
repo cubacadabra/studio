@@ -21,6 +21,42 @@ pub(crate) fn capabilities() -> CapabilitySet {
 }
 
 impl StudioApp {
+    pub(super) fn install_local_morphs(
+        &mut self,
+        local: super::LocalMorphCatalog,
+    ) -> Result<(), String> {
+        let Some(shell) = &mut self.shell else {
+            return Err("Morph shell is not ready.".to_owned());
+        };
+        shell.set_local_morph_catalog(local.catalog);
+        shell.set_morph_loading(true);
+
+        let renderer = self
+            .renderer
+            .as_mut()
+            .ok_or_else(|| "The renderer is not ready for morph registration.".to_owned())?;
+        for (expected_id, bytes) in &local.packs {
+            let decoded = decode_morph_pack(bytes)
+                .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+            if decoded.asset.id != *expected_id {
+                return Err(format!(
+                    "Local morph pack ID mismatch: catalog expects {}, pack contains {}.",
+                    expected_id, decoded.asset.id
+                ));
+            }
+            renderer
+                .register_morph_pack(bytes)
+                .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+            self.registered_morphs.insert(expected_id.to_string());
+        }
+        shell.set_morph_loading(false);
+
+        if let Some(preset_id) = local.initial_preset {
+            self.request_morph_change(wardrobe::Request::Preset(preset_id))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn install_published_morphs(&mut self, source: &str) {
         let Some(shell) = &mut self.shell else {
             return;

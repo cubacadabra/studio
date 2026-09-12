@@ -525,6 +525,13 @@ impl StudioShell {
         Ok(count)
     }
 
+    pub(crate) fn set_local_morph_catalog(&mut self, catalog: MorphCatalog) {
+        self.morph_catalog = catalog;
+        self.morph_artifacts.clear();
+        self.morph_catalog_ready = true;
+        self.morph_catalog_error = None;
+    }
+
     pub(crate) fn morph_artifact(&self, id: &MorphAssetId) -> Option<&crate::wardrobe::Artifact> {
         self.morph_artifacts.get(id)
     }

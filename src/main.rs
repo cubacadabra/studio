@@ -23,7 +23,7 @@ use cubacadabra_morphs::decode_morph_pack;
 use morphs::{
     MorphGlbPreviewMesh, compile_source_morph_pack, decode_source_glb_preview,
     decode_source_glb_preview_node, encode_morph_thumbnail_png, inspect_source_glb_structure,
-    inspect_source_sidecar, is_morph_draft_json, parse_morph_draft_json,
+    inspect_source_sidecar, is_morph_draft_json, parse_morph_draft_json, source_manifest_asset,
     source_manifest_geometry_file,
 };
 use network::{BackendClient, BackendEvent};
@@ -97,6 +97,38 @@ struct GameSources {
     standalone_preview: bool,
 }
 
+struct LocalMorphCatalog {
+    catalog: cubacadabra_morphs::MorphCatalog,
+    packs: BTreeMap<cubacadabra_morphs::MorphAssetId, Vec<u8>>,
+    initial_preset: Option<cubacadabra_morphs::MorphAssetId>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalMorphCatalogFile {
+    #[allow(dead_code)]
+    schema_version: u16,
+    #[serde(default)]
+    assets: Vec<LocalMorphAsset>,
+    #[serde(default)]
+    builtins: Option<String>,
+    #[serde(default)]
+    exclude_builtin_kinds: Vec<cubacadabra_morphs::MorphAssetKind>,
+    #[serde(default)]
+    presets: Vec<LocalMorphPreset>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LocalMorphAsset {
+    id: cubacadabra_morphs::MorphAssetId,
+    source: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LocalMorphPreset {
+    source: String,
+}
+
 struct StudioApp {
     game_root: PathBuf,
     standalone_preview: bool,
@@ -106,6 +138,7 @@ struct StudioApp {
     window: Option<Window>,
     renderer: Option<Renderer>,
     shell: Option<StudioShell>,
+    local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
     mobile_sprint: bool,
@@ -127,12 +160,19 @@ struct StudioApp {
 }
 
 impl StudioApp {
-    fn load(game_root: Option<PathBuf>) -> Result<Self, Box<dyn Error>> {
+    fn load(
+        game_root: Option<PathBuf>,
+        morph_catalog_path: Option<PathBuf>,
+    ) -> Result<Self, Box<dyn Error>> {
         let sources = load_game_sources(game_root)?;
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
         let standalone_preview = sources.standalone_preview;
+        let local_morph_catalog = morph_catalog_path
+            .as_deref()
+            .map(load_local_morph_catalog)
+            .transpose()?;
         let mut client = ClientSession::load(&manifest_source, &script_source)?;
         if standalone_preview {
             let position = client
@@ -153,7 +193,9 @@ impl StudioApp {
             standalone_preview,
             game_root.display()
         );
-        network.request_morph_catalog();
+        if local_morph_catalog.is_none() {
+            network.request_morph_catalog();
+        }
 
         Ok(Self {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
@@ -164,6 +206,7 @@ impl StudioApp {
             window: None,
             renderer: None,
             shell: None,
+            local_morph_catalog,
             pressed_keys: HashSet::new(),
             jump_queued: false,
             mobile_sprint: false,
@@ -225,6 +268,10 @@ impl StudioApp {
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.shell = Some(shell);
+        if let Some(local_catalog) = self.local_morph_catalog.take() {
+            self.install_local_morphs(local_catalog)
+                .map_err(|message| Box::new(StudioError(message)) as Box<dyn Error>)?;
+        }
         self.update_viewport();
         self.request_redraw();
         Ok(())
@@ -1079,6 +1126,168 @@ fn read_utf8_file(path: &Path, kind: &str) -> Result<String, Box<dyn Error>> {
     })
 }
 
+fn load_local_morph_catalog(path: &Path) -> Result<LocalMorphCatalog, Box<dyn Error>> {
+    let catalog_source = read_utf8_file(path, "morph catalog")?;
+    let definition: LocalMorphCatalogFile =
+        serde_json::from_str(&catalog_source).map_err(|error| {
+            Box::new(StudioError(format!(
+                "local morph catalog {} is not valid JSON: {error}",
+                path.display()
+            ))) as Box<dyn Error>
+        })?;
+    if definition.schema_version != 1 {
+        return Err(Box::new(StudioError(format!(
+            "unsupported local morph catalog schema {}; expected 1",
+            definition.schema_version
+        ))));
+    }
+
+    let catalog_root = path.parent().ok_or_else(|| {
+        Box::new(StudioError(format!(
+            "local morph catalog has no parent directory: {}",
+            path.display()
+        ))) as Box<dyn Error>
+    })?;
+    let mut assets = Vec::new();
+    if let Some(builtins) = definition.builtins.as_deref() {
+        let builtins_path = local_catalog_file(catalog_root, builtins, "built-in catalog")?;
+        let builtins_source = read_utf8_file(&builtins_path, "built-in morph catalog")?;
+        let builtins =
+            cubacadabra_morphs::parse_catalog(&builtins_source).map_err(|diagnostics| {
+                Box::new(StudioError(format!(
+                    "built-in morph catalog {} is invalid: {}",
+                    builtins_path.display(),
+                    StudioApp::format_morph_diagnostics(&diagnostics)
+                ))) as Box<dyn Error>
+            })?;
+        assets.extend(
+            builtins
+                .assets
+                .into_iter()
+                .filter(|asset| !definition.exclude_builtin_kinds.contains(&asset.kind)),
+        );
+    }
+
+    let mut packs = BTreeMap::new();
+    for local_asset in definition.assets {
+        let sidecar_path = local_catalog_file(catalog_root, &local_asset.source, "asset sidecar")?;
+        let sidecar_source = read_utf8_file(&sidecar_path, "morph sidecar")?;
+        let asset = source_manifest_asset(&sidecar_source).map_err(|diagnostics| {
+            Box::new(StudioError(format!(
+                "morph sidecar {} is invalid: {}",
+                sidecar_path.display(),
+                StudioApp::format_morph_diagnostics(&diagnostics)
+            ))) as Box<dyn Error>
+        })?;
+        if asset.id != local_asset.id {
+            return Err(Box::new(StudioError(format!(
+                "local morph catalog asset {} points to {}, which declares {}",
+                local_asset.id,
+                sidecar_path.display(),
+                asset.id
+            ))));
+        }
+        let geometry_file =
+            source_manifest_geometry_file(&sidecar_source).map_err(|diagnostics| {
+                Box::new(StudioError(format!(
+                    "morph sidecar {} has invalid geometry: {}",
+                    sidecar_path.display(),
+                    StudioApp::format_morph_diagnostics(&diagnostics)
+                ))) as Box<dyn Error>
+            })?;
+        let geometry_path = local_catalog_file(
+            sidecar_path.parent().ok_or_else(|| {
+                Box::new(StudioError(format!(
+                    "morph sidecar has no parent directory: {}",
+                    sidecar_path.display()
+                ))) as Box<dyn Error>
+            })?,
+            &geometry_file,
+            "morph geometry",
+        )?;
+        let geometry = fs::read(&geometry_path).map_err(|error| {
+            Box::new(StudioError(format!(
+                "could not read morph geometry {}: {error}",
+                geometry_path.display()
+            ))) as Box<dyn Error>
+        })?;
+        let (pack, summary) =
+            compile_source_morph_pack(&sidecar_source, &geometry).map_err(|diagnostics| {
+                Box::new(StudioError(format!(
+                    "could not compile local morph {}: {}",
+                    local_asset.id,
+                    StudioApp::format_morph_diagnostics(&diagnostics)
+                ))) as Box<dyn Error>
+            })?;
+        if summary.asset_id != local_asset.id.as_str() {
+            return Err(Box::new(StudioError(format!(
+                "compiled local morph has unexpected ID {} (expected {})",
+                summary.asset_id, local_asset.id
+            ))));
+        }
+        assets.retain(|existing| existing.id != asset.id);
+        assets.push(asset);
+        packs.insert(local_asset.id, pack);
+    }
+
+    let mut presets = Vec::new();
+    for local_preset in definition.presets {
+        let preset_path = local_catalog_file(catalog_root, &local_preset.source, "preset")?;
+        let preset_source = read_utf8_file(&preset_path, "morph preset")?;
+        let preset = serde_json::from_str(&preset_source).map_err(|error| {
+            Box::new(StudioError(format!(
+                "morph preset {} is not valid: {error}",
+                preset_path.display()
+            ))) as Box<dyn Error>
+        })?;
+        presets.push(preset);
+    }
+
+    let catalog = cubacadabra_morphs::MorphCatalog {
+        schema_version: cubacadabra_morphs::MORPH_CATALOG_SCHEMA_VERSION,
+        content_version: "local-development".to_owned(),
+        assets,
+        presets,
+    };
+    let diagnostics = catalog.validate();
+    if !diagnostics.is_empty() {
+        return Err(Box::new(StudioError(format!(
+            "local morph catalog {} is invalid: {}",
+            path.display(),
+            StudioApp::format_morph_diagnostics(&diagnostics)
+        ))));
+    }
+    let initial_preset = catalog.presets.first().map(|preset| preset.id.clone());
+    log::info!(
+        "loaded local morph catalog: path={} assets={} packs={} presets={}",
+        path.display(),
+        catalog.assets.len(),
+        packs.len(),
+        catalog.presets.len()
+    );
+    Ok(LocalMorphCatalog {
+        catalog,
+        packs,
+        initial_preset,
+    })
+}
+
+fn local_catalog_file(root: &Path, reference: &str, kind: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = root.join(reference);
+    if reference.is_empty() || Path::new(reference).is_absolute() || !path.is_file() {
+        return Err(Box::new(StudioError(format!(
+            "local {kind} does not exist: {}",
+            path.display()
+        ))));
+    }
+    path.canonicalize().map_err(|error| {
+        Box::new(StudioError(format!(
+            "could not resolve local {kind} {}: {error}",
+            path.display()
+        ))) as Box<dyn Error>
+    })
+}
+
 fn expand_raw_script(source_root: &Path, entry: &Path) -> Result<String, Box<dyn Error>> {
     let mut stack = Vec::new();
     expand_source_file(source_root, entry, &mut stack)
@@ -1498,12 +1707,18 @@ fn next_power_of_two(value: u32) -> u32 {
     value.next_power_of_two().min(MAX_ATLAS_DIMENSION)
 }
 
-fn parse_game_path() -> Result<Option<PathBuf>, Box<dyn Error>> {
+struct StudioOptions {
+    game_path: Option<PathBuf>,
+    morph_catalog_path: Option<PathBuf>,
+}
+
+fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
     let mut args = env::args_os().skip(1);
-    let mut path = None;
+    let mut game_path = None;
+    let mut morph_catalog_path = None;
     while let Some(argument) = args.next() {
         if argument == "--help" || argument == "-h" {
-            println!("Usage: studio [--path <game-directory>]");
+            println!("Usage: studio [--path <game-directory>] [--morph-catalog <catalog.json>]");
             println!();
             println!(
                 "Open a local Cubacadabra game package, or launch the standalone morph preview."
@@ -1511,10 +1726,14 @@ fn parse_game_path() -> Result<Option<PathBuf>, Box<dyn Error>> {
             std::process::exit(0);
         }
         if argument == "--path" {
-            path = Some(
+            game_path = Some(
                 args.next()
                     .ok_or_else(|| StudioError("--path expects a game directory".to_owned()))?,
             );
+        } else if argument == "--morph-catalog" {
+            morph_catalog_path = Some(args.next().ok_or_else(|| {
+                StudioError("--morph-catalog expects a catalog JSON file".to_owned())
+            })?);
         } else {
             return Err(Box::new(StudioError(format!(
                 "unknown argument: {}",
@@ -1522,17 +1741,34 @@ fn parse_game_path() -> Result<Option<PathBuf>, Box<dyn Error>> {
             ))));
         }
     }
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let path = PathBuf::from(path).canonicalize()?;
-    if !path.is_dir() {
+    let game_path = game_path
+        .map(PathBuf::from)
+        .map(|path| path.canonicalize())
+        .transpose()?;
+    if let Some(path) = &game_path
+        && !path.is_dir()
+    {
         return Err(Box::new(StudioError(format!(
             "game path is not a directory: {}",
             path.display()
         ))));
     }
-    Ok(Some(path))
+    let morph_catalog_path = morph_catalog_path
+        .map(PathBuf::from)
+        .map(|path| path.canonicalize())
+        .transpose()?;
+    if let Some(path) = &morph_catalog_path
+        && !path.is_file()
+    {
+        return Err(Box::new(StudioError(format!(
+            "morph catalog is not a file: {}",
+            path.display()
+        ))));
+    }
+    Ok(StudioOptions {
+        game_path,
+        morph_catalog_path,
+    })
 }
 
 #[cfg(test)]
@@ -1569,8 +1805,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .format_timestamp_millis()
         .init();
     debug!("Studio debug logging initialized");
-    let game_path = parse_game_path()?;
-    let mut app = StudioApp::load(game_path)?;
+    let options = parse_options()?;
+    let mut app = StudioApp::load(options.game_path, options.morph_catalog_path)?;
     let mut event_loop_builder = EventLoop::builder();
     #[cfg(target_os = "macos")]
     event_loop_builder.with_activation_policy(ActivationPolicy::Regular);
