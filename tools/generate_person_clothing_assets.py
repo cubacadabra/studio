@@ -3,7 +3,7 @@
 
 Each asset uses the canonical 15-joint hierarchy and four-weight attributes,
 with presentation-detail Near meshes and intentionally economical Far meshes.
-Studio compiles them through the same schema 2 path as a Blender export.
+Studio compiles them through the same schema 5 path as a Blender export.
 """
 
 import json
@@ -685,6 +685,10 @@ def make_glb(output, asset):
             weight_accessor = len(accessors)
             accessors.append({"bufferView": weight_view, "componentType": 5126, "count": len(weights), "type": "VEC4"})
             attributes = {"POSITION": pos_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor}
+            normals=person.surface_normals(positions,indices,joints,weights)
+            normal_view=add_blob(b"".join(struct.pack("<3f",*n) for n in normals),34962)
+            attributes["NORMAL"]=len(accessors)
+            accessors.append({"bufferView":normal_view,"componentType":5126,"count":len(normals),"type":"VEC3"})
             if uvs is not None:
                 uv_blob = b"".join(struct.pack("<2f", *value) for value in uvs)
                 uv_view = add_blob(uv_blob, 34962)

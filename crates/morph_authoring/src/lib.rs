@@ -6,9 +6,7 @@
 
 pub use cubacadabra_morphs::{
     MAX_MORPH_PACK_BYTES, MAX_MORPH_PACK_SURFACES, MAX_MORPH_PACK_TEXTURES,
-    MAX_MORPH_TEXTURE_DIMENSION, MORPH_PACK_MAGIC, MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION,
-    MORPH_PACK_SCHEMA_VERSION, MORPH_PACK_SKINNED_SCHEMA_VERSION,
-    MORPH_PACK_TEXTURED_SCHEMA_VERSION, MorphPackVertexSkin,
+    MAX_MORPH_TEXTURE_DIMENSION, MORPH_PACK_MAGIC, MORPH_PACK_SCHEMA_VERSION, MorphPackVertexSkin,
 };
 use cubacadabra_morphs::{MorphAssetDefinition, MorphAssetKind, MorphDiagnostic};
 use serde::{Deserialize, Serialize};
@@ -21,6 +19,8 @@ pub const MAX_SOURCE_GLB_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NODE_NAME_BYTES: usize = 96;
 const COMPILED_TEXTURE_DIMENSION: u32 = 256;
 const MAX_SOURCE_TEXTURE_DIMENSION: u32 = 2048;
+
+mod normals;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -99,6 +99,7 @@ pub struct MorphGlbLodInspection {
 pub struct MorphGlbPreviewMesh {
     pub name: String,
     pub vertices: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub base_color: Option<[f32; 4]>,
     pub use_avatar_tint: bool,
@@ -824,6 +825,7 @@ fn decode_glb_preview_node_primitive(
         buffer_views,
         &bin,
     )?;
+    let normals = normals::decode(primitive, accessors, buffer_views, &bin, vertices.len())?;
     let texture = decode_material_texture(material, &document, buffer_views, &bin)?;
     let uvs = if let Some(uv_accessor) = primitive
         .get("attributes")
@@ -933,6 +935,7 @@ fn decode_glb_preview_node_primitive(
     Ok(MorphGlbPreviewMesh {
         name: mesh_name,
         vertices,
+        normals,
         indices,
         base_color,
         use_avatar_tint,
@@ -942,9 +945,8 @@ fn decode_glb_preview_node_primitive(
     })
 }
 
-/// Compile a validated rigid accessory into a deterministic CPU mesh pack.
-/// The format is intentionally small and renderer-neutral so the shared
-/// runtime can adopt it later without making Studio depend on GPU code.
+/// Compile rigid or skinned source geometry into the current shared runtime
+/// format. NORMAL is required on every primitive of every delivery LOD.
 pub fn compile_morph_pack(
     manifest: &MorphSourceManifest,
     glb: &[u8],
@@ -974,10 +976,6 @@ pub fn compile_morph_pack(
     let mut pack = Vec::with_capacity(manifest_json.len() + 64);
     pack.extend_from_slice(MORPH_PACK_MAGIC);
     let skinned = manifest.attachment.mode == MorphAttachmentMode::Skinned;
-    // A single surface can still require the explicit avatar-tint flag.
-    let multi_surface = meshes.iter().any(|(_, primitives)| {
-        primitives.len() > 1 || primitives.iter().any(|mesh| mesh.use_avatar_tint)
-    });
     let mut textures = Vec::<MorphGlbTexture>::new();
     for (_, primitives) in &meshes {
         for mesh in primitives {
@@ -995,19 +993,7 @@ pub fn compile_morph_pack(
             format!("at most {MAX_MORPH_PACK_TEXTURES} textures are supported"),
         )]);
     }
-    let textured = !textures.is_empty();
-    write_u16(
-        &mut pack,
-        if textured {
-            MORPH_PACK_TEXTURED_SCHEMA_VERSION
-        } else if multi_surface {
-            MORPH_PACK_MULTI_SURFACE_SCHEMA_VERSION
-        } else if skinned {
-            MORPH_PACK_SKINNED_SCHEMA_VERSION
-        } else {
-            MORPH_PACK_SCHEMA_VERSION
-        },
-    );
+    write_u16(&mut pack, MORPH_PACK_SCHEMA_VERSION);
     write_u16(&mut pack, 0);
     write_u32(
         &mut pack,
@@ -1020,7 +1006,7 @@ pub fn compile_morph_pack(
         })?,
     );
     pack.extend_from_slice(&manifest_json);
-    if textured {
+    {
         pack.push(
             u8::try_from(textures.len())
                 .map_err(|_| vec![error("MORPH_PACK_LIMIT", "textures", "too many textures")])?,
@@ -1074,7 +1060,7 @@ pub fn compile_morph_pack(
                 )]
             })?,
         );
-        if multi_surface || textured {
+        {
             write_u16(
                 &mut pack,
                 u16::try_from(primitives.len()).map_err(|_| {
@@ -1131,16 +1117,6 @@ pub fn compile_morph_pack(
                         )]
                     })?;
             }
-        } else {
-            match primitives[0].base_color {
-                Some(color) => {
-                    pack.push(1);
-                    for value in color {
-                        pack.extend_from_slice(&value.to_le_bytes());
-                    }
-                }
-                None => pack.push(0),
-            }
         }
         for mesh in &primitives {
             for vertex in &mesh.vertices {
@@ -1149,7 +1125,14 @@ pub fn compile_morph_pack(
                 }
             }
         }
-        if textured {
+        for mesh in &primitives {
+            for normal in &mesh.normals {
+                for value in normal {
+                    pack.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        {
             for mesh in &primitives {
                 if mesh.uvs.len() != mesh.vertices.len() {
                     return Err(vec![error(
@@ -2408,17 +2391,19 @@ mod tests {
             "asset": { "version": "2.0" },
             "meshes": [{
                 "name": "Triangle",
-                "primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]
+                "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 2}, "indices": 1}]
             }],
             "accessors": [
                 {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
-                {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+                {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
+                {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3"}
             ],
             "bufferViews": [
                 {"buffer": 0, "byteOffset": 0, "byteLength": 36},
-                {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+                {"buffer": 0, "byteOffset": 36, "byteLength": 6},
+                {"buffer": 0, "byteOffset": 44, "byteLength": 36}
             ],
-            "buffers": [{"byteLength": 44}]
+            "buffers": [{"byteLength": 80}]
         });
         let mut json_bytes = serde_json::to_vec(&document).unwrap();
         while !json_bytes.len().is_multiple_of(4) {
@@ -2435,6 +2420,11 @@ mod tests {
         }
         while !bin.len().is_multiple_of(4) {
             bin.push(0);
+        }
+        for _ in 0..3 {
+            for value in [0.0f32, 0.0, 1.0] {
+                bin.extend_from_slice(&value.to_le_bytes());
+            }
         }
         let total_length = 12 + 8 + json_bytes.len() + 8 + bin.len();
         let mut bytes = Vec::with_capacity(total_length);
@@ -2457,6 +2447,7 @@ mod tests {
         assert_eq!(preview.vertices.len(), 3);
         assert_eq!(preview.indices, [0, 1, 2]);
         assert_eq!(preview.vertices[2], [0.0, 1.0, 0.0]);
+        assert_eq!(preview.normals, vec![[0., 0., 1.]; 3]);
     }
 
     #[test]
@@ -2473,5 +2464,25 @@ mod tests {
         assert_eq!(summary.lod_triangle_counts["near"], 24);
         assert_eq!(summary.lod_triangle_counts["mid"], 8);
         assert_eq!(summary.lod_triangle_counts["far"], 4);
+        let decoded = cubacadabra_morphs::decode_morph_pack(&first).unwrap();
+        assert_eq!(u16::from_le_bytes(first[8..10].try_into().unwrap()), 5);
+        for (index, level) in ["near", "mid", "far"].into_iter().enumerate() {
+            let source = decode_glb_preview_node_primitive(
+                glb,
+                Some(&manifest.geometry.lod_nodes[level]),
+                0,
+            )
+            .unwrap();
+            assert_eq!(decoded.lods[index].normals, source.normals);
+        }
+        let near = &decoded.lods[0];
+        assert!(
+            near.vertices.iter().enumerate().any(|(i, p)| near
+                .vertices
+                .iter()
+                .enumerate()
+                .any(|(j, q)| p == q && near.normals[i] != near.normals[j])),
+            "fixture must exercise intentional hard edges at coincident positions"
+        );
     }
 }

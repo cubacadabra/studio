@@ -2,7 +2,7 @@
 """Generate a Blender-compatible skinned Person base GLB.
 
 It contains the canonical 15-joint hierarchy, four-weight skin attributes, and
-three separate LOD meshes. Studio compiles it into the shared schema 2 runtime
+three separate LOD meshes. Studio compiles it into the shared schema 5 runtime
 pack; a Blender-authored export can use the same sidecar contract.
 """
 
@@ -237,8 +237,7 @@ def accessor(buffer_view, component_type, count, kind, minimum=None, maximum=Non
 def weld_surface(surface):
     """Share round seam vertices without merging different skin weights/UVs.
 
-    The morphpack renderer calculates normals from topology. Exporting a
-    duplicated longitude seam makes otherwise smooth sleeves show a crease.
+    Normals are authored by this generator and preserved through compilation.
     """
     vertices, indices, joints, weights = surface[:4]
     uvs = surface[4] if len(surface) == 5 else None
@@ -258,6 +257,27 @@ def weld_surface(surface):
         face = [remap[i] for i in indices[offset:offset+3]]
         if len(set(face)) == 3: result[1].extend(face)
     return result
+
+
+def surface_normals(positions, indices, joints, weights):
+    """Author smooth shading across UV copies of these rounded source surfaces.
+
+    This is a source modelling choice, not a runtime rule. Keep distinct skin
+    bindings separate; hand-authored GLB hard edges remain untouched by import.
+    """
+    keys=[(tuple(round(v,7) for v in p),tuple(j),tuple(w)) for p,j,w in zip(positions,joints,weights)]
+    sums={key:[0.,0.,0.] for key in keys}
+    for at in range(0,len(indices),3):
+        a,b,c=indices[at:at+3]
+        u=[positions[b][i]-positions[a][i] for i in range(3)]
+        v=[positions[c][i]-positions[a][i] for i in range(3)]
+        n=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+        for index in (a,b,c):
+            for axis in range(3): sums[keys[index]][axis]+=n[axis]
+    def normalized(n):
+        length=math.sqrt(sum(v*v for v in n))
+        return tuple(v/length for v in n) if length>1e-12 else (0.,1.,0.)
+    return [normalized(sums[key]) for key in keys]
 
 
 def make_glb(output, variant):
@@ -293,10 +313,14 @@ def make_glb(output, variant):
         accessors.append(accessor(joint_view, 5123, len(joints), "VEC4"))
         weight_accessor = len(accessors)
         accessors.append(accessor(weight_view, 5126, len(weights), "VEC4"))
+        normals=surface_normals(positions,indices,joints,weights)
+        normal_view=add_blob(b"".join(struct.pack("<3f",*n) for n in normals),34962)
+        normal_accessor=len(accessors)
+        accessors.append(accessor(normal_view,5126,len(normals),"VEC3"))
         meshes.append({
             "name": f"Person_{level}",
             "primitives": [{
-                "attributes": {"POSITION": pos_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
+                "attributes": {"POSITION": pos_accessor, "NORMAL": normal_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
                 "indices": idx_accessor,
                 "material": 0,
                 "mode": 4,

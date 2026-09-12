@@ -9,6 +9,8 @@ pub(crate) fn capabilities() -> CapabilitySet {
             "material.cuba-pbr.v1",
             "material.base-color-texture.v1",
             "face.analytic.v1",
+            "face.authored-static.v1",
+            "rig.canonical-rest.v1",
             "secondary.chain.v1",
             "material.emissive.v1",
             "hair.authored.v1",

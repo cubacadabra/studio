@@ -670,6 +670,7 @@ mod tests {
     fn studio_fits_headwear_bounds_to_the_person_head_contract() {
         let preview = MorphGlbPreviewMesh {
             name: "oversized hat".to_owned(),
+            normals: vec![[0.0, 1.0, 0.0]; 2],
             vertices: vec![[-1.5, -0.525, -1.5], [1.5, 1.945, 1.5]],
             indices: vec![0, 1, 1],
             base_color: None,
@@ -721,6 +722,7 @@ mod tests {
     fn thumbnail_encoder_returns_png_bytes() {
         let preview = MorphGlbPreviewMesh {
             name: "triangle".to_owned(),
+            normals: vec![[0.0, 0.0, 1.0]; 3],
             vertices: vec![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             indices: vec![0, 1, 2],
             base_color: Some([0.2, 0.4, 0.8, 1.0]),

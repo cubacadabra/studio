@@ -46,6 +46,29 @@ fn build_fixture() -> Vec<u8> {
     let mut json_meshes = Vec::new();
     let mut json_nodes = Vec::new();
     for (mesh_index, (name, indices)) in meshes.iter().enumerate() {
+        // The box fixture intentionally has hard edges. Export split vertices
+        // with per-face authored normals so the contract tests can preserve them.
+        let mut face_positions = Vec::new();
+        let mut normals = Vec::new();
+        for face in indices.chunks_exact(3) {
+            let [a, b, c] = [
+                positions[face[0] as usize],
+                positions[face[1] as usize],
+                positions[face[2] as usize],
+            ];
+            let u: [f32; 3] = std::array::from_fn(|i| b[i] - a[i]);
+            let v: [f32; 3] = std::array::from_fn(|i| c[i] - a[i]);
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let length = n.iter().map(|v| v * v).sum::<f32>().sqrt();
+            face_positions.extend([a, b, c]);
+            normals.extend([n.map(|v| v / length); 3]);
+        }
+        let positions = &face_positions;
+        let indices = (0..face_positions.len() as u16).collect::<Vec<_>>();
         align4(&mut bin, 0);
         let position_offset = bin.len();
         for position in positions {
@@ -69,7 +92,7 @@ fn build_fixture() -> Vec<u8> {
         }));
         align4(&mut bin, 0);
         let index_offset = bin.len();
-        for index in indices {
+        for index in &indices {
             bin.extend_from_slice(&index.to_le_bytes());
         }
         buffer_views.push(json!({
@@ -84,10 +107,20 @@ fn build_fixture() -> Vec<u8> {
             "count": indices.len(),
             "type": "SCALAR"
         }));
+        align4(&mut bin, 0);
+        let offset = bin.len();
+        for normal in &normals {
+            for value in normal {
+                bin.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        buffer_views.push(json!({"buffer":0,"byteOffset":offset,"byteLength":normals.len()*12}));
+        let normal_accessor = accessors.len();
+        accessors.push(json!({"bufferView":buffer_views.len()-1,"componentType":5126,"count":normals.len(),"type":"VEC3"}));
         json_meshes.push(json!({
             "name": name,
             "primitives": [{
-                "attributes": {"POSITION": position_accessor},
+                "attributes": {"POSITION": position_accessor, "NORMAL": normal_accessor},
                 "indices": index_accessor,
                 "material": 0,
                 "mode": 4
