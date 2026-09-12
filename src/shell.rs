@@ -1818,6 +1818,20 @@ impl StudioShell {
                 );
                 self.runtime_viewport = preview_rect;
                 ui.allocate_rect(preview_rect, Sense::hover());
+                if !self.morph_catalog_ready || self.morph_loading {
+                    // The engine starts with its bundled appearance while the
+                    // Studio catalog and initial loadout are arriving. Keep
+                    // that implementation fallback out of the preview so it
+                    // cannot flash before the requested appearance is ready.
+                    ui.painter().rect_filled(preview_rect, 0.0, colors.surface);
+                    ui.painter().text(
+                        preview_rect.center(),
+                        Align2::CENTER_CENTER,
+                        "Loading appearance…",
+                        FontId::proportional(TYPE.secondary),
+                        colors.muted,
+                    );
+                }
                 ui.painter().rect_stroke(
                     available,
                     0.0,

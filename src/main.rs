@@ -430,17 +430,9 @@ impl StudioApp {
             0.0
         };
         if controls_active {
-            // The Morph workspace presents the avatar from the front. Its
-            // left-side drag therefore needs the opposite camera-relative
-            // axes from normal behind-the-player gameplay, otherwise the
-            // gesture feels mirrored in both directions.
-            let (joystick_x, joystick_y) = if morph_preview {
-                (-self.joystick_input.0, -self.joystick_input.1)
-            } else {
-                self.joystick_input
-            };
-            forward -= joystick_y;
-            strafe += joystick_x;
+            let (joystick_forward, joystick_strafe) = joystick_movement(self.joystick_input);
+            forward += joystick_forward;
+            strafe += joystick_strafe;
         }
         let length = (forward * forward + strafe * strafe).sqrt();
         let (forward, strafe) = if length > 1.0 {
@@ -1593,6 +1585,10 @@ fn axis(keys: &HashSet<KeyCode>, positive: &[KeyCode], negative: &[KeyCode]) -> 
         - f32::from(negative.iter().any(|key| keys.contains(key)))
 }
 
+fn joystick_movement((x, y): (f32, f32)) -> (f32, f32) {
+    (-y, x)
+}
+
 fn should_forward_gameplay_keyboard(playing: bool, shell_consumed: bool) -> bool {
     playing || !shell_consumed
 }
@@ -1802,7 +1798,10 @@ fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_game_sources, load_local_morph_catalog, should_forward_gameplay_keyboard};
+    use super::{
+        joystick_movement, load_game_sources, load_local_morph_catalog,
+        should_forward_gameplay_keyboard,
+    };
     use std::path::Path;
 
     #[test]
@@ -1863,6 +1862,14 @@ mod tests {
     fn paused_editor_still_honors_shell_keyboard_capture() {
         assert!(!should_forward_gameplay_keyboard(false, true));
         assert!(should_forward_gameplay_keyboard(false, false));
+    }
+
+    #[test]
+    fn preview_drag_preserves_screen_space_movement_directions() {
+        assert_eq!(joystick_movement((1.0, 0.0)), (0.0, 1.0));
+        assert_eq!(joystick_movement((-1.0, 0.0)), (0.0, -1.0));
+        assert_eq!(joystick_movement((0.0, -1.0)), (1.0, 0.0));
+        assert_eq!(joystick_movement((0.0, 1.0)), (-1.0, 0.0));
     }
 }
 
