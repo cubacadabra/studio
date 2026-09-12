@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Generate a small Blender-compatible skinned Person GLB fixture.
+"""Generate a Blender-compatible skinned Person base GLB.
 
-This is intentionally a small source fixture for the Phase 5 importer. It
-contains the canonical 15-joint hierarchy, four-weight skin attributes, and
+It contains the canonical 15-joint hierarchy, four-weight skin attributes, and
 three separate LOD meshes. Studio compiles it into the shared schema 2 runtime
 pack; a Blender-authored export can use the same sidecar contract.
 """
@@ -150,7 +149,9 @@ def profile_piece(
     shape,
     head_profile=HEAD_PROFILE,
 ):
-    radial, rows = {3: (32, 16), 2: (16, 8), 1: (8, 4)}[detail]
+    # Preserve round cheeks, hands, and garment fit in editor/portrait views.
+    # Far remains intentionally compact for small on-screen characters.
+    radial, rows = {3: (40, 20), 2: (20, 10), 1: (8, 4)}[detail]
     start = len(vertices)
     for row in range(rows + 1):
         t = row / rows
@@ -321,7 +322,7 @@ def make_glb(output, variant):
     accessors.append(accessor(inverse_view, 5126, len(JOINTS), "MAT4"))
     nodes[0].setdefault("children", []).extend(lod_node_indices)
     document = {
-        "asset": {"version": "2.0", "generator": "Cubacadabra Phase 5 fixture"},
+        "asset": {"version": "2.0", "generator": "Cubacadabra starter base artwork"},
         "scene": 0,
         "scenes": [{"nodes": scene_nodes}],
         "nodes": nodes,
@@ -354,6 +355,10 @@ def main():
     target = Path(args[0] if args else "/Users/aa/Downloads/person_skinned.glb")
     target.parent.mkdir(parents=True, exist_ok=True)
     make_glb(target, variant)
+    lod_counts = {
+        level: len(weld_surface(lod_geometry(detail, variant["head_profile"]))[1]) // 3
+        for level, detail in (("near", 3), ("mid", 2), ("far", 1))
+    }
     sidecar = target.with_suffix(".morph.json")
     sidecar.write_text(json.dumps({
         "schemaVersion": 2,
@@ -367,10 +372,10 @@ def main():
             "coverage": ["body"],
             "conflicts": [],
             "materials": ["skin", "face"],
-            "lod": {"near": 7500, "mid": 2900, "far": 820},
+            "lod": lod_counts,
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
             "source": {"geometry": target.name},
-            "provenance": {"source": f"Cubacadabra generated skinned {variant_name} source", "license": "Cubacadabra official"},
+            "provenance": {"source": f"Cubacadabra starter-set presentation skinned {variant_name} base", "license": "Cubacadabra official"},
         },
         "geometry": {"file": target.name, "lodNodes": {"near": "Person_Near", "mid": "Person_Mid", "far": "Person_Far"}},
         "attachment": {"mode": "skinned", "joint": "root", "translation": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},

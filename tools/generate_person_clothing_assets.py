@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate small Blender-compatible skinned clothing proof assets.
+"""Generate Blender-compatible skinned clothing assets.
 
-The meshes are deliberately simple migration fixtures. Each asset uses the
-canonical 15-joint hierarchy and four-weight attributes, so Studio can compile
-the files through the same schema 2 path as a Blender export.
+Each asset uses the canonical 15-joint hierarchy and four-weight attributes,
+with presentation-detail Near meshes and intentionally economical Far meshes.
+Studio compiles them through the same schema 2 path as a Blender export.
 """
 
 import json
@@ -139,7 +139,7 @@ ASSETS = {
 
 def hood_ring(vertices, indices, joints, weights, detail):
     """Build the soft oval collar that gives a lowered hood its opening."""
-    radial, rows = {3: (28, 11), 2: (24, 10), 1: (20, 9)}[detail]
+    radial, rows = {3: (40, 15), 2: (28, 11), 1: (20, 9)}[detail]
     start = len(vertices)
     center = (0.0, 0.45, 0.12)
     size = (0.73, 0.21, 0.72)
@@ -208,7 +208,7 @@ def cross(a, b):
 
 def curved_cord(vertices, indices, joints, weights, side, detail):
     """Sweep a slim capped tube from the neckline to a short aglet."""
-    radial = {3: 10, 2: 8, 1: 6}[detail]
+    radial = {3: 12, 2: 8, 1: 6}[detail]
     points = [
         (side * 0.105, 0.505, -0.190),
         (side * 0.125, 0.435, -0.235),
@@ -252,7 +252,7 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
 
 def detail_tube(vertices, indices, joints, weights, points, radius, detail, joint=1):
     """Sweep a small capped tube for modeled pocket openings and stitches."""
-    radial = {3: 8, 2: 6, 1: 5}[detail]
+    radial = {3: 12, 2: 8, 1: 5}[detail]
     start = len(vertices)
     for row, point in enumerate(points):
         previous = points[max(0, row - 1)]
@@ -300,6 +300,90 @@ def pocket_details(white, openings, detail):
         )
 
 
+def garment_band(surface, profile, detail, joint):
+    """Add a softly rolled cloth band while sharing the garment material."""
+    radial = {3: 40, 2: 24, 1: 12}[detail]
+    append_grid(surface, oval_rings(profile, radial), joint)
+
+
+def hoodie_finish(cloth, openings, detail):
+    """Model cuffs, waistband, hood seam, and pocket edge for close views."""
+    for joint in (3, 6):
+        garment_band(
+            cloth,
+            [(-0.985, 0.145, 0.155), (-0.970, 0.160, 0.170),
+             (-0.915, 0.170, 0.180), (-0.895, 0.155, 0.164)],
+            detail,
+            joint,
+        )
+    garment_band(
+        cloth,
+        [(-0.550, 0.390, 0.260), (-0.535, 0.420, 0.290),
+         (-0.485, 0.430, 0.300), (-0.470, 0.400, 0.270)],
+        detail,
+        1,
+    )
+    # Subtle modeled seams survive the untextured shared renderer and provide
+    # the small contact shadows that make the pocket and hood read as fabric.
+    for side in (-1.0, 1.0):
+        detail_tube(
+            *openings,
+            [(side * 0.300, -0.275, -0.385),
+             (side * 0.245, -0.345, -0.386),
+             (side * 0.165, -0.405, -0.384)],
+            0.006,
+            detail,
+        )
+    detail_tube(
+        *openings,
+        [(-0.285, 0.285, -0.205), (0.0, 0.245, -0.230), (0.285, 0.285, -0.205)],
+        0.005,
+        detail,
+    )
+
+
+def jeans_finish(cloth, detail):
+    """Give the shorts a waistband, hems, fly, and front-pocket construction."""
+    for joint, side in ((9, -1.0), (12, 1.0)):
+        garment_band(
+            cloth,
+            [(0.115, 0.218, 0.224), (0.135, 0.235, 0.240),
+             (0.175, 0.238, 0.243), (0.192, 0.218, 0.225)],
+            detail,
+            joint,
+        )
+        garment_band(
+            cloth,
+            [(-0.495, 0.205, 0.212), (-0.478, 0.226, 0.233),
+             (-0.435, 0.228, 0.235), (-0.418, 0.207, 0.214)],
+            detail,
+            joint,
+        )
+        detail_tube(
+            *cloth,
+            [(side * 0.035, 0.105, -0.225),
+             (side * 0.105, 0.045, -0.232),
+             (side * 0.165, -0.045, -0.226)],
+            0.005,
+            detail,
+            joint,
+        )
+        detail_tube(
+            *cloth,
+            [(side * -0.205, 0.095, -0.100), (side * -0.205, -0.425, -0.105)],
+            0.0035,
+            detail,
+            joint,
+        )
+    detail_tube(
+        *cloth,
+        [(0.0, 1.000, -0.242), (0.0, 0.925, -0.247), (0.0, 0.850, -0.235)],
+        0.004,
+        detail,
+        0,
+    )
+
+
 def shoe_detail_surfaces(detail):
     """Recreate the established Person shoe sole and three raised lace bands."""
     soles = ([], [], [], [])
@@ -330,7 +414,7 @@ def shoe_detail_surfaces(detail):
 
 def add_front_disc(surface, center, radius, detail, joint=1):
     vertices, indices, joints, weights = surface
-    segments = {3: 12, 2: 8, 1: 6}[detail]
+    segments = {3: 16, 2: 10, 1: 6}[detail]
     start = len(vertices)
     vertices.append(center)
     joints.append([joint, 0, 0, 0])
@@ -350,7 +434,7 @@ def add_front_disc(surface, center, radius, detail, joint=1):
 
 def collared_surfaces(asset, detail):
     shirt = ([], [], [], [])
-    radial = {3: 32, 2: 24, 1: 16}[detail]
+    radial = {3: 40, 2: 28, 1: 16}[detail]
     # An open neckline, not a capped torso with collar triangles pasted on it.
     torso_profile = [
         (-0.49, 0.42, 0.27), (-0.46, 0.46, 0.30),
@@ -458,14 +542,15 @@ def collared_surfaces(asset, detail):
         append_grid(underside, [[ring[edge] for ring in collar_rings],
                             [ring[edge] for ring in inner]], 1, reverse=edge == 0)
 
-    # One fastened button beneath the open throat. The placket ends at the
-    # opening instead of visually buttoning the shirt all the way to the neck.
+    # Two restrained fastened buttons beneath the open throat. The placket ends
+    # at the opening instead of visually buttoning the shirt to the neck.
     placket = [[chest(x, y) for x in (-width, width)]
                for y, width in ((0.18, 0.034), (0.23, 0.034), (0.28, 0.034),
                                 (0.32, 0.04), (0.337, 0.046))]
     append_grid(trim, placket, 1)
     buttons = ([], [], [], [])
     add_front_disc(buttons, chest(0.0, 0.23, 0.010), 0.017, detail)
+    add_front_disc(buttons, chest(0.0, 0.305, 0.010), 0.015, detail)
 
     logo = ([], [], [], [], [])
     logo_grid = [[chest(-0.32 + column * 0.03, 0.08 + row * 0.03, 0.008)
@@ -541,6 +626,7 @@ def clothing_lod_surfaces(asset, detail):
             curved_cord(*cords, side, detail)
         openings = ([], [], [], [])
         pocket_details(cords, openings, detail)
+        hoodie_finish(cloth, openings, detail)
         return [cloth, cords, openings]
     if asset["style"] == "short-sleeve-collared":
         return collared_surfaces(asset, detail)
@@ -550,6 +636,8 @@ def clothing_lod_surfaces(asset, detail):
         return sparkle_surfaces(asset, detail)
     if asset["style"] == "sneakers":
         return [cloth, *shoe_detail_surfaces(detail)]
+    if asset["style"] == "jeans":
+        jeans_finish(cloth, detail)
     return [cloth]
 
 
@@ -661,7 +749,7 @@ def make_glb(output, asset):
             },
         })
     document = {
-        "asset": {"version": "2.0", "generator": "Cubacadabra Phase 5 clothing fixture"},
+        "asset": {"version": "2.0", "generator": "Cubacadabra starter wardrobe artwork"},
         "scene": 0,
         "scenes": [{"nodes": [0]}],
         "nodes": nodes,
@@ -706,7 +794,7 @@ def write_sidecar(glb_path, asset):
             "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"]
             + (["material.base-color-texture.v1"] if any(material["texture"] for material in asset["materials"]) else []),
             "source": {"geometry": glb_path.name},
-            "provenance": {"source": "Cubacadabra generated Blender-compatible Phase 5 clothing fixture", "license": "Cubacadabra official"},
+            "provenance": {"source": "Cubacadabra starter-set presentation wardrobe", "license": "Cubacadabra official"},
         },
         "geometry": {"file": glb_path.name, "lodNodes": {
             "near": f"Person{asset['kind'].title()}_Near",
