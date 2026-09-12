@@ -382,8 +382,17 @@ impl StudioApp {
             0.0
         };
         if controls_active {
-            forward -= self.joystick_input.1;
-            strafe += self.joystick_input.0;
+            // The Morph workspace presents the avatar from the front. Its
+            // left-side drag therefore needs the opposite camera-relative
+            // axes from normal behind-the-player gameplay, otherwise the
+            // gesture feels mirrored in both directions.
+            let (joystick_x, joystick_y) = if morph_preview {
+                (-self.joystick_input.0, -self.joystick_input.1)
+            } else {
+                self.joystick_input
+            };
+            forward -= joystick_y;
+            strafe += joystick_x;
         }
         let length = (forward * forward + strafe * strafe).sqrt();
         let (forward, strafe) = if length > 1.0 {
