@@ -357,8 +357,13 @@ impl StudioApp {
         }
         self.update_viewport();
         let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
+        let morph_preview = self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::is_morphs_workspace);
+        let controls_active = playing || morph_preview;
 
-        let mut forward = if playing {
+        let mut forward = if controls_active {
             axis(
                 &self.pressed_keys,
                 &[KeyCode::KeyW, KeyCode::ArrowUp],
@@ -367,7 +372,7 @@ impl StudioApp {
         } else {
             0.0
         };
-        let mut strafe = if playing {
+        let mut strafe = if controls_active {
             axis(
                 &self.pressed_keys,
                 &[KeyCode::KeyD, KeyCode::ArrowRight],
@@ -376,7 +381,7 @@ impl StudioApp {
         } else {
             0.0
         };
-        if playing {
+        if controls_active {
             forward -= self.joystick_input.1;
             strafe += self.joystick_input.0;
         }
@@ -392,9 +397,9 @@ impl StudioApp {
         self.client.set_input_values(
             forward,
             strafe,
-            playing && sprint,
-            playing && self.jump_queued,
-            playing && self.climb,
+            controls_active && sprint,
+            controls_active && self.jump_queued,
+            controls_active && self.climb,
             self.look_delta.0,
             self.look_delta.1,
             self.zoom_delta,
