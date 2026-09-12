@@ -775,34 +775,19 @@ impl StudioApp {
                 message
             },
         )?;
-        let mut legacy =
-            cubacadabra_morphs::project_v2_to_v1(&catalog, &loadout).map_err(|diagnostics| {
-                let message = Self::format_morph_diagnostics(&diagnostics);
-                warn!("morph loadout projection failed: {}", message);
-                message
-            })?;
-        if !loadout.parts.iter().any(|id| {
-            catalog
-                .asset(id)
-                .is_some_and(|a| a.kind == cubacadabra_morphs::MorphAssetKind::Hair)
-        }) {
-            legacy
-                .equipment
-                .insert("hair".into(), "cuba:hair/bald.v1".into());
-        }
-        let appearance = serde_json::to_string(&legacy)
+        let appearance = serde_json::to_string(&loadout)
             .map_err(|error| format!("Could not encode morph loadout: {error}"))?;
         debug!(
-            "projected morph loadout to engine appearance: base={} parts={:?} equipment={:?}",
-            loadout.base, loadout.parts, legacy.equipment
+            "applying native morph loadout: base={} parts={:?}",
+            loadout.base, loadout.parts
         );
         if self
             .client
             .engine_mut()
-            .set_local_appearance_json(&appearance)
+            .set_local_morph_loadout_json(&appearance)
             == 0
         {
-            error!("engine rejected projected morph loadout");
+            error!("engine rejected native morph loadout");
             return Err("The player appearance rejected that morph loadout.".to_owned());
         }
         self.morph_loadout = loadout;

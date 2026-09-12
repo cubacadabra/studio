@@ -112,16 +112,24 @@ impl StudioApp {
             .unwrap_or(&self.morph_loadout);
         let next = wardrobe::edit(shell.morph_catalog(), current, &request)?;
         validate(shell.morph_catalog(), &next)?;
-        let assets: Vec<_> = wardrobe::selected_ids(&next)
-            .into_iter()
-            .filter(|id| !self.registered_morphs.contains(id.as_str()))
-            .filter_map(|id| {
-                shell
-                    .morph_artifact(&id)
-                    .cloned()
-                    .map(|artifact| (id.to_string(), artifact))
-            })
-            .collect();
+        let mut assets = Vec::new();
+        for id in wardrobe::selected_ids(&next) {
+            if self.registered_morphs.contains(id.as_str()) {
+                continue;
+            }
+            let definition = shell
+                .morph_catalog()
+                .asset(&id)
+                .ok_or_else(|| format!("Morph asset {id} is missing from the catalog."))?;
+            if definition.kind == cubacadabra_morphs::MorphAssetKind::Face {
+                continue;
+            }
+            let artifact = shell
+                .morph_artifact(&id)
+                .cloned()
+                .ok_or_else(|| format!("Morph asset {id} has no schema-5 artifact."))?;
+            assets.push((id.to_string(), artifact));
+        }
         self.morph_request_serial = self.morph_request_serial.wrapping_add(1);
         if let wardrobe::Request::Preset(id) = request {
             self.shell.as_mut().unwrap().select_morph(id);
@@ -193,8 +201,6 @@ fn validate(
     loadout: &MorphLoadout,
 ) -> Result<(), String> {
     cubacadabra_morphs::resolve_loadout(catalog, loadout, &capabilities())
-        .map_err(|d| StudioApp::format_morph_diagnostics(&d))?;
-    cubacadabra_morphs::project_v2_to_v1(catalog, loadout)
         .map_err(|d| StudioApp::format_morph_diagnostics(&d))?;
     Ok(())
 }
