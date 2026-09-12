@@ -14,8 +14,29 @@ from pathlib import Path
 
 import generate_person_asset as person
 
+STARTER_ROOT = Path(__file__).resolve().parents[2] / "tools" / "starter-set"
+sys.path.insert(0, str(STARTER_ROOT))
+from artwork.material_textures import ensure as ensure_material_textures
+
 
 def material(material_id, name, color, avatar_tint=False, roughness=0.82, texture=None):
+    textures=ensure_material_textures()
+    lower=name.lower()
+    if texture is None:
+        if any(token in lower for token in ("denim", "jeans")):
+            texture=textures["denim"]
+        elif any(token in lower for token in ("hoodie", "fleece", "rib", "polo", "shirt", "collar", "trim", "shadow")):
+            texture=textures["fleece"] if "rib" not in lower else textures["rib"]
+        elif any(token in lower for token in ("leather", "upper", "lace", "sneaker")):
+            texture=textures["leather"]
+        elif any(token in lower for token in ("sole", "rubber")):
+            texture=textures["rubber"]
+        elif any(token in lower for token in ("satin", "sequin")):
+            texture=textures["satin"]
+        elif any(token in lower for token in ("slack", "pressed")):
+            texture=textures["fleece"]
+        else:
+            texture=textures["cotton"]
     return {
         "id": material_id,
         "name": name,
@@ -139,7 +160,7 @@ ASSETS = {
 
 def hood_ring(vertices, indices, joints, weights, detail):
     """Build the soft oval collar that gives a lowered hood its opening."""
-    radial, rows = {3: (40, 15), 2: (28, 11), 1: (20, 9)}[detail]
+    radial, rows = {3: (48, 18), 2: (28, 11), 1: (20, 9)}[detail]
     start = len(vertices)
     center = (0.0, 0.45, 0.12)
     size = (0.73, 0.21, 0.72)
@@ -208,7 +229,7 @@ def cross(a, b):
 
 def curved_cord(vertices, indices, joints, weights, side, detail):
     """Sweep a slim capped tube from the neckline to a short aglet."""
-    radial = {3: 12, 2: 8, 1: 6}[detail]
+    radial = {3: 14, 2: 8, 1: 6}[detail]
     points = [
         (side * 0.105, 0.505, -0.190),
         (side * 0.125, 0.435, -0.235),
@@ -252,7 +273,7 @@ def curved_cord(vertices, indices, joints, weights, side, detail):
 
 def detail_tube(vertices, indices, joints, weights, points, radius, detail, joint=1):
     """Sweep a small capped tube for modeled pocket openings and stitches."""
-    radial = {3: 12, 2: 8, 1: 5}[detail]
+    radial = {3: 14, 2: 8, 1: 5}[detail]
     start = len(vertices)
     for row, point in enumerate(points):
         previous = points[max(0, row - 1)]
@@ -302,7 +323,7 @@ def pocket_details(white, openings, detail):
 
 def garment_band(surface, profile, detail, joint):
     """Add a softly rolled cloth band while sharing the garment material."""
-    radial = {3: 40, 2: 24, 1: 12}[detail]
+    radial = {3: 48, 2: 24, 1: 12}[detail]
     append_grid(surface, oval_rings(profile, radial), joint)
 
 
@@ -434,7 +455,7 @@ def add_front_disc(surface, center, radius, detail, joint=1):
 
 def collared_surfaces(asset, detail):
     shirt = ([], [], [], [])
-    radial = {3: 40, 2: 28, 1: 16}[detail]
+    radial = {3: 48, 2: 28, 1: 16}[detail]
     # An open neckline, not a capped torso with collar triangles pasted on it.
     torso_profile = [
         (-0.49, 0.42, 0.27), (-0.46, 0.46, 0.30),
@@ -689,6 +710,9 @@ def make_glb(output, asset):
             normal_view=add_blob(b"".join(struct.pack("<3f",*n) for n in normals),34962)
             attributes["NORMAL"]=len(accessors)
             accessors.append({"bufferView":normal_view,"componentType":5126,"count":len(normals),"type":"VEC3"})
+            if uvs is None:
+                uvs=[((position[0]*1.55+position[2]*.6)%1.0,
+                      (position[1]*1.25+position[2]*.3)%1.0) for position in positions]
             if uvs is not None:
                 uv_blob = b"".join(struct.pack("<2f", *value) for value in uvs)
                 uv_view = add_blob(uv_blob, 34962)
@@ -729,7 +753,7 @@ def make_glb(output, asset):
     accessors.append({"bufferView": inverse_view, "componentType": 5126, "count": len(person.JOINTS), "type": "MAT4"})
     materials, images, textures = [], [], []
     texture_indices = {}
-    asset_root = Path(__file__).resolve().parent.parent / "assets"
+    asset_root = STARTER_ROOT / "assets"
     for source in asset["materials"]:
         pbr = {
             "baseColorFactor": source["color"],
@@ -739,7 +763,10 @@ def make_glb(output, asset):
         if source["texture"] is not None:
             texture_name = source["texture"]
             if texture_name not in texture_indices:
-                image_view = add_blob((asset_root / texture_name).read_bytes())
+                texture_path = asset_root / texture_name
+                if not texture_path.exists():
+                    texture_path = Path(__file__).resolve().parent.parent / "assets" / texture_name
+                image_view = add_blob(texture_path.read_bytes())
                 image_index = len(images)
                 images.append({"name": texture_name, "bufferView": image_view, "mimeType": "image/png"})
                 texture_indices[texture_name] = len(textures)

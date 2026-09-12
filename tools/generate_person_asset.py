@@ -12,6 +12,10 @@ import struct
 import sys
 from pathlib import Path
 
+STARTER_ROOT = Path(__file__).resolve().parents[2] / "tools" / "starter-set"
+sys.path.insert(0, str(STARTER_ROOT))
+from artwork.material_textures import ensure as ensure_material_textures
+
 
 JOINTS = [
     ("root", None, (0.0, 0.0, 0.0)),
@@ -151,7 +155,7 @@ def profile_piece(
 ):
     # Preserve round cheeks, hands, and garment fit in editor/portrait views.
     # Far remains intentionally compact for small on-screen characters.
-    radial, rows = {3: (40, 20), 2: (20, 10), 1: (8, 4)}[detail]
+    radial, rows = {3: (48, 24), 2: (24, 12), 1: (8, 4)}[detail]
     start = len(vertices)
     for row in range(rows + 1):
         t = row / rows
@@ -317,10 +321,15 @@ def make_glb(output, variant):
         normal_view=add_blob(b"".join(struct.pack("<3f",*n) for n in normals),34962)
         normal_accessor=len(accessors)
         accessors.append(accessor(normal_view,5126,len(normals),"VEC3"))
+        uv_values=[((position[0]*1.25+position[2]*.55)%1.0,
+                    (position[1]*.9+position[2]*.25)%1.0) for position in positions]
+        uv_view=add_blob(b"".join(struct.pack("<2f",*uv) for uv in uv_values),34962)
+        uv_accessor=len(accessors)
+        accessors.append(accessor(uv_view,5126,len(uv_values),"VEC2"))
         meshes.append({
             "name": f"Person_{level}",
             "primitives": [{
-                "attributes": {"POSITION": pos_accessor, "NORMAL": normal_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
+                "attributes": {"POSITION": pos_accessor, "NORMAL": normal_accessor, "TEXCOORD_0": uv_accessor, "JOINTS_0": joint_accessor, "WEIGHTS_0": weight_accessor},
                 "indices": idx_accessor,
                 "material": 0,
                 "mode": 4,
@@ -345,6 +354,8 @@ def make_glb(output, variant):
     inverse_accessor = len(accessors)
     accessors.append(accessor(inverse_view, 5126, len(JOINTS), "MAT4"))
     nodes[0].setdefault("children", []).extend(lod_node_indices)
+    texture_names=ensure_material_textures()
+    image_view=add_blob((STARTER_ROOT/"assets"/texture_names["skin"]).read_bytes())
     document = {
         "asset": {"version": "2.0", "generator": "Cubacadabra starter base artwork"},
         "scene": 0,
@@ -352,7 +363,9 @@ def make_glb(output, variant):
         "nodes": nodes,
         "meshes": meshes,
         "skins": [{"name": "Person_Skin", "joints": list(range(len(JOINTS))), "inverseBindMatrices": inverse_accessor, "skeleton": 0}],
-        "materials": [{"name": "Person_Skin", "extras": {"cubaUseAvatarTint": variant.get("avatar_tint", False)}, "pbrMetallicRoughness": {"baseColorFactor": variant["skin_color"], "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "materials": [{"name": "Person_Skin", "extras": {"cubaUseAvatarTint": variant.get("avatar_tint", False)}, "pbrMetallicRoughness": {"baseColorFactor": variant["skin_color"], "baseColorTexture": {"index": 0}, "roughnessFactor": 0.82, "metallicFactor": 0.0}}],
+        "images": [{"name": texture_names["skin"], "bufferView": image_view, "mimeType": "image/png"}],
+        "textures": [{"name": texture_names["skin"], "source": 0}],
         "accessors": accessors,
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
@@ -397,7 +410,7 @@ def main():
             "conflicts": [],
             "materials": ["skin", "face"],
             "lod": lod_counts,
-            "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1"],
+            "requiredCapabilities": ["skin.biped15-linear.v1", "material.cuba-pbr.v1", "material.base-color-texture.v1"],
             "source": {"geometry": target.name},
             "provenance": {"source": f"Cubacadabra starter-set presentation skinned {variant_name} base", "license": "Cubacadabra official"},
         },
