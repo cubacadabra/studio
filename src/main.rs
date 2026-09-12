@@ -1773,7 +1773,8 @@ fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_game_sources, should_forward_gameplay_keyboard};
+    use super::{load_game_sources, load_local_morph_catalog, should_forward_gameplay_keyboard};
+    use std::path::Path;
 
     #[test]
     fn standalone_sources_load_as_a_default_person_preview() {
@@ -1786,6 +1787,28 @@ mod tests {
         .expect("standalone client");
         assert_eq!(client.game_id(), "studio-morph-preview");
         assert_eq!(client.engine().active_world_id(), Some("lobby"));
+    }
+
+    #[test]
+    fn local_study_catalog_compiles_current_source_assets() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tools/starter-set/studies/mockup-person/catalog.json");
+        let local = load_local_morph_catalog(&path).expect("mockup-person local catalog");
+        assert_eq!(
+            local.initial_preset.as_ref().unwrap().as_str(),
+            "cuba:preset/mockup-person.v1"
+        );
+        assert_eq!(local.packs.len(), 5);
+        assert_eq!(
+            local
+                .catalog
+                .asset(
+                    &cubacadabra_morphs::MorphAssetId::parse("cuba:base/study-person.v1").unwrap()
+                )
+                .unwrap()
+                .display_name,
+            "Studio study base"
+        );
     }
 
     #[test]
