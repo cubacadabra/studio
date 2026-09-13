@@ -1,0 +1,171 @@
+name: Release Studio
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            arch: arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos
+            arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: windows
+            arch: x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+
+      - name: Check out Studio
+        uses: actions/checkout@v4
+        with:
+          path: studio
+
+      # Studio's Cargo manifest refers to ../rust, so keep the two repositories
+      # beside each other in the runner workspace, just like a local checkout.
+      - name: Check out shared Rust engine
+        uses: actions/checkout@v4
+        with:
+          repository: cubacadabra/rust
+          ref: main
+          path: rust
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Studio
+        run: cargo build --release --manifest-path studio/Cargo.toml --bin studio --target "${{ matrix.target }}"
+
+      - name: Package macOS application
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          app_name="Cubacadabra Studio.app"
+          app_root="staging/${app_name}"
+          archive="cubacadabra-studio-${GITHUB_REF_NAME}-macos-${ARCH}.zip"
+
+          mkdir -p "${app_root}/Contents/MacOS" "${app_root}/Contents/Resources" dist
+          cp "studio/target/${TARGET}/release/studio" "${app_root}/Contents/MacOS/studio"
+          cp studio/assets/logo.png "${app_root}/Contents/Resources/logo.png"
+          iconset="staging/logo.iconset"
+          mkdir -p "${iconset}"
+          for size in 16 32 128 256 512; do
+            sips -z "${size}" "${size}" studio/assets/logo.png \
+              --out "${iconset}/icon_${size}x${size}.png" >/dev/null
+            doubled=$((size * 2))
+            sips -z "${doubled}" "${doubled}" studio/assets/logo.png \
+              --out "${iconset}/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns "${iconset}" -o "${app_root}/Contents/Resources/logo.icns"
+          sed "s/__VERSION__/${version}/g" \
+            studio/packaging/macos/Info.plist \
+            > "${app_root}/Contents/Info.plist"
+          chmod +x "${app_root}/Contents/MacOS/studio"
+
+          ditto -c -k --sequesterRsrc --keepParent "${app_root}" "dist/${archive}"
+
+      - name: Package Windows application
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          archive="cubacadabra-studio-${GITHUB_REF_NAME}-windows-${ARCH}.zip"
+          staging="staging/cubacadabra-studio-${GITHUB_REF_NAME}-windows-${ARCH}"
+
+          mkdir -p "${staging}" dist
+          cp "studio/target/${TARGET}/release/studio.exe" "${staging}/studio.exe"
+          cp studio/LICENSE studio/COPYRIGHT "${staging}/"
+          (cd staging && 7z a -tzip "../dist/${archive}" "$(basename "${staging}")")
+
+      - name: Package Linux application
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          archive="cubacadabra-studio-${GITHUB_REF_NAME}-linux-${ARCH}.tar.gz"
+          staging="staging/cubacadabra-studio-${GITHUB_REF_NAME}-linux-${ARCH}"
+
+          mkdir -p "${staging}" dist
+          cp "studio/target/${TARGET}/release/studio" "${staging}/studio"
+          cp studio/LICENSE studio/COPYRIGHT "${staging}/"
+          tar -C staging -czf "dist/${archive}" "$(basename "${staging}")"
+
+      - name: Upload packaged build
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packaged builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Create checksums
+        working-directory: release
+        run: sha256sum * > SHA256SUMS
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" release/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Cubacadabra Studio ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
