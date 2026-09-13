@@ -344,6 +344,19 @@ impl StudioApp {
                 shell.execute_command(command);
             }
         }
+        #[cfg(target_os = "macos")]
+        if let Some((title, parent, error)) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_native_new_project_dialog)
+            && let Some((title, parent)) =
+                macos::show_new_project_dialog(&title, &parent, error.as_deref())
+        {
+            if let Some(shell) = &mut self.shell {
+                shell.set_new_project_draft(title.clone(), parent.clone());
+            }
+            self.create_new_project(&title, &parent);
+        }
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
@@ -411,10 +424,12 @@ impl StudioApp {
         if sidecar_import_requested {
             self.import_morph_sidecar();
         }
+        #[cfg(not(target_os = "macos"))]
         let new_project_folder_requested = self
             .shell
             .as_mut()
             .is_some_and(StudioShell::take_new_project_folder_request);
+        #[cfg(not(target_os = "macos"))]
         if new_project_folder_requested {
             if let Some(parent) = rfd::FileDialog::new()
                 .set_title("Choose where to create the game")
@@ -425,10 +440,12 @@ impl StudioApp {
                 }
             }
         }
+        #[cfg(not(target_os = "macos"))]
         let new_project_request = self
             .shell
             .as_mut()
             .and_then(StudioShell::take_new_project_request);
+        #[cfg(not(target_os = "macos"))]
         if let Some((title, parent)) = new_project_request {
             self.create_new_project(&title, &parent);
         }

@@ -3,13 +3,19 @@ use std::collections::VecDeque;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
-use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{
-    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionKey, NSApplication, NSBitmapImageFileType,
-    NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSEventModifierFlags, NSImage, NSMenu,
-    NSMenuItem,
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
 };
-use objc2_foundation::{NSData, NSDictionary, NSObject, NSString, ns_string};
+use objc2_app_kit::{
+    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionKey, NSAlert, NSAlertFirstButtonReturn,
+    NSAlertSecondButtonReturn, NSAlertStyle, NSApplication, NSBitmapImageFileType,
+    NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSButton, NSEventModifierFlags, NSImage, NSMenu,
+    NSMenuItem, NSTextField, NSView,
+};
+use objc2_foundation::{
+    NSData, NSDictionary, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string,
+};
+use std::path::{Path, PathBuf};
 
 use crate::shell::StudioCommand;
 
@@ -57,6 +63,38 @@ define_class!(
     }
 );
 
+struct NewProjectLocationIvars {
+    parent: RefCell<PathBuf>,
+    path_label: Retained<NSTextField>,
+}
+
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = NewProjectLocationIvars]
+    struct NewProjectLocationTarget;
+
+    impl NewProjectLocationTarget {
+        #[unsafe(method(chooseProjectLocation:))]
+        fn choose_project_location(&self, _sender: Option<&AnyObject>) {
+            let current_parent = self.ivars().parent.borrow().clone();
+            if let Some(parent) = rfd::FileDialog::new()
+                .set_title("Choose where to create the project")
+                .set_directory(&current_parent)
+                .pick_folder()
+            {
+                self.ivars()
+                    .path_label
+                    .setStringValue(&NSString::from_str(&parent.display().to_string()));
+                self.ivars()
+                    .path_label
+                    .setToolTip(Some(&NSString::from_str(&parent.display().to_string())));
+                *self.ivars().parent.borrow_mut() = parent;
+            }
+        }
+    }
+);
+
 thread_local! {
     static MENU_TARGET: OnceCell<Retained<MenuTarget>> = const { OnceCell::new() };
     static MENU_ACTIONS: RefCell<VecDeque<StudioCommand>> = const { RefCell::new(VecDeque::new()) };
@@ -66,6 +104,21 @@ impl MenuTarget {
     fn new(main_thread: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(main_thread).set_ivars(());
         // SAFETY: NSObject's initializer is valid for this ivar-free subclass.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+impl NewProjectLocationTarget {
+    fn new(
+        main_thread: MainThreadMarker,
+        parent: PathBuf,
+        path_label: Retained<NSTextField>,
+    ) -> Retained<Self> {
+        let this = Self::alloc(main_thread).set_ivars(NewProjectLocationIvars {
+            parent: RefCell::new(parent),
+            path_label,
+        });
+        // SAFETY: NSObject's initializer is valid for this stored-value subclass.
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -96,6 +149,114 @@ pub(crate) fn system_symbol_png(name: &str) -> Option<Vec<u8>> {
         bitmap
             .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
             .map(|data| data.to_vec())
+    }
+}
+
+/// Present the first-run project flow with controls owned and laid out by
+/// AppKit. Keeping this out of the shared shell gives macOS native type,
+/// keyboard behavior, appearance, and accessibility without forking Studio's
+/// actual editor UI.
+pub(crate) fn show_new_project_dialog(
+    initial_title: &str,
+    initial_parent: &Path,
+    initial_error: Option<&str>,
+) -> Option<(String, PathBuf)> {
+    let main_thread = main_thread_marker();
+    let mut title = initial_title.to_owned();
+    let mut parent = initial_parent.to_path_buf();
+    let mut error = initial_error.map(str::to_owned);
+
+    loop {
+        let alert = NSAlert::new(main_thread);
+        alert.setAlertStyle(NSAlertStyle::Informational);
+        alert.setMessageText(ns_string!("New Project"));
+
+        let information = match error.as_deref() {
+            Some(message) => format!(
+                "{message}\n\nCreate a starter game with its manifest, Luau entry point, and local SDK."
+            ),
+            None => "Create a starter game with its manifest, Luau entry point, and local SDK."
+                .to_owned(),
+        };
+        alert.setInformativeText(&NSString::from_str(&information));
+        let icon = logo_image();
+        // SAFETY: `icon` is a valid NSImage retained for the alert's lifetime.
+        unsafe { alert.setIcon(Some(&icon)) };
+
+        let accessory = NSView::initWithFrame(
+            NSView::alloc(main_thread),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 102.0)),
+        );
+        let title_label = NSTextField::labelWithString(ns_string!("Game title"), main_thread);
+        title_label.setFrame(NSRect::new(
+            NSPoint::new(0.0, 84.0),
+            NSSize::new(360.0, 18.0),
+        ));
+        let title_field =
+            NSTextField::textFieldWithString(&NSString::from_str(&title), main_thread);
+        title_field.setPlaceholderString(Some(ns_string!("Game title")));
+        title_field.setFrame(NSRect::new(
+            NSPoint::new(0.0, 54.0),
+            NSSize::new(360.0, 24.0),
+        ));
+        let location_label = NSTextField::labelWithString(ns_string!("Location"), main_thread);
+        location_label.setFrame(NSRect::new(
+            NSPoint::new(0.0, 30.0),
+            NSSize::new(360.0, 18.0),
+        ));
+        let path = parent.display().to_string();
+        let path_label = NSTextField::labelWithString(&NSString::from_str(&path), main_thread);
+        path_label.setFrame(NSRect::new(
+            NSPoint::new(0.0, 3.0),
+            NSSize::new(266.0, 20.0),
+        ));
+        path_label.setToolTip(Some(&NSString::from_str(&path)));
+
+        let location_target =
+            NewProjectLocationTarget::new(main_thread, parent, path_label.clone());
+        let target: &AnyObject = &location_target;
+        // SAFETY: `chooseProjectLocation:` is registered on the retained target
+        // with the standard one-argument control action signature.
+        let choose_button = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                ns_string!("Choose…"),
+                Some(target),
+                Some(sel!(chooseProjectLocation:)),
+                main_thread,
+            )
+        };
+        choose_button.setFrame(NSRect::new(
+            NSPoint::new(274.0, 0.0),
+            NSSize::new(86.0, 28.0),
+        ));
+
+        accessory.addSubview(&title_label);
+        accessory.addSubview(&title_field);
+        accessory.addSubview(&location_label);
+        accessory.addSubview(&path_label);
+        accessory.addSubview(&choose_button);
+        alert.setAccessoryView(Some(&accessory));
+
+        alert.addButtonWithTitle(ns_string!("Create project"));
+        alert.addButtonWithTitle(ns_string!("Cancel"));
+        alert.layout();
+        let alert_window = alert.window();
+        alert_window.center();
+        alert_window.makeFirstResponder(Some(&title_field));
+
+        let response = alert.runModal();
+        title = title_field.stringValue().to_string();
+        parent = location_target.ivars().parent.borrow().clone();
+        if response == NSAlertFirstButtonReturn {
+            if !title.trim().is_empty() {
+                return Some((title.trim().to_owned(), parent));
+            }
+            error = Some("Enter a game title to continue.".to_owned());
+        } else if response == NSAlertSecondButtonReturn {
+            return None;
+        } else {
+            return None;
+        }
     }
 }
 

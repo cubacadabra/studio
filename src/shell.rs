@@ -412,9 +412,13 @@ pub(crate) struct StudioShell {
     new_project_dialog_open: bool,
     new_project_title: String,
     new_project_parent: PathBuf,
+    #[cfg(not(target_os = "macos"))]
     new_project_folder_requested: bool,
+    #[cfg(not(target_os = "macos"))]
     new_project_create_requested: bool,
     new_project_error: Option<String>,
+    #[cfg(not(target_os = "macos"))]
+    new_project_title_focus_requested: bool,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
@@ -507,9 +511,13 @@ impl StudioShell {
             new_project_dialog_open: false,
             new_project_title: String::new(),
             new_project_parent: PathBuf::from("."),
+            #[cfg(not(target_os = "macos"))]
             new_project_folder_requested: false,
+            #[cfg(not(target_os = "macos"))]
             new_project_create_requested: false,
             new_project_error: None,
+            #[cfg(not(target_os = "macos"))]
+            new_project_title_focus_requested: false,
             logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
@@ -566,10 +574,32 @@ impl StudioShell {
         self.new_project_parent = parent;
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn take_native_new_project_dialog(
+        &mut self,
+    ) -> Option<(String, PathBuf, Option<String>)> {
+        if !std::mem::take(&mut self.new_project_dialog_open) {
+            return None;
+        }
+        Some((
+            self.new_project_title.clone(),
+            self.new_project_parent.clone(),
+            self.new_project_error.take(),
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn set_new_project_draft(&mut self, title: String, parent: PathBuf) {
+        self.new_project_title = title;
+        self.new_project_parent = parent;
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn take_new_project_folder_request(&mut self) -> bool {
         std::mem::take(&mut self.new_project_folder_requested)
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn take_new_project_request(&mut self) -> Option<(String, PathBuf)> {
         if !std::mem::take(&mut self.new_project_create_requested) {
             return None;
@@ -583,6 +613,10 @@ impl StudioShell {
     pub(crate) fn set_new_project_error(&mut self, message: String) {
         self.new_project_dialog_open = true;
         self.new_project_error = Some(message);
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.new_project_title_focus_requested = true;
+        }
     }
 
     pub(crate) fn set_new_project_created(&mut self, project: &Path) {
@@ -1209,6 +1243,10 @@ impl StudioShell {
                 self.new_project_dialog_open = true;
                 self.new_project_title.clear();
                 self.new_project_error = None;
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.new_project_title_focus_requested = true;
+                }
             }
             StudioCommand::OpenProject => {
                 self.notice = "Open Project is a layout preview".to_owned();
@@ -1321,64 +1359,159 @@ impl StudioShell {
             Workspace::Morphs => self.show_morphs(ui),
             Workspace::Test => self.show_test(ui),
         }
+        #[cfg(not(target_os = "macos"))]
         self.show_new_project_dialog(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn show_new_project_dialog(&mut self, context: &egui::Context) {
         if !self.new_project_dialog_open {
             return;
         }
-        let mut open = true;
         let mut close_requested = false;
-        egui::Window::new("New Project")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(460.0)
+        let dialog_width = (context.content_rect().width() - 40.0).clamp(280.0, 440.0);
+        let response = egui::Modal::new(egui::Id::new("new_project_dialog"))
+            .backdrop_color(Color32::from_black_alpha(128))
+            .frame(
+                Frame::NONE
+                    .fill(if context.style().visuals.dark_mode {
+                        DARK_PALETTE.panel_raised
+                    } else {
+                        LIGHT_PALETTE.surface_deep
+                    })
+                    .stroke(Stroke::new(
+                        1.0,
+                        if context.style().visuals.dark_mode {
+                            DARK_PALETTE.border_strong
+                        } else {
+                            LIGHT_PALETTE.border
+                        },
+                    ))
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::same(20)),
+            )
             .show(context, |ui| {
-                ui.label("Create a starter game project with its manifest, Luau entry point, and local SDK.");
-                ui.add_space(8.0);
-                ui.label("Game title");
+                let colors = palette(ui);
+                ui.set_width(dialog_width);
+                ui.label(
+                    RichText::new("New Project")
+                        .font(semibold_font(18.0))
+                        .color(colors.text),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "Create a starter game with its manifest, Luau entry point, and local SDK.",
+                    )
+                    .size(TYPE.secondary)
+                    .color(colors.secondary_text),
+                );
+                ui.add_space(18.0);
+                ui.label(
+                    RichText::new("Game title")
+                        .font(medium_font(TYPE.secondary))
+                        .color(colors.text),
+                );
+                ui.add_space(4.0);
                 let title_response = ui.add(
                     egui::TextEdit::singleline(&mut self.new_project_title)
                         .hint_text("The Wild West")
-                        .desired_width(ui.available_width()),
+                        .desired_width(ui.available_width())
+                        .min_size(egui::vec2(0.0, 28.0))
+                        .vertical_align(Align::Center),
                 );
-                ui.add_space(6.0);
-                ui.label("Parent folder");
-                ui.horizontal(|ui| {
-                    ui.monospace(self.new_project_parent.display().to_string());
-                    if ui.button("Choose…").clicked() {
-                        self.new_project_folder_requested = true;
-                    }
-                });
-                ui.add_space(4.0);
+                if std::mem::take(&mut self.new_project_title_focus_requested) {
+                    title_response.request_focus();
+                }
+                ui.add_space(14.0);
                 ui.label(
-                    RichText::new("Studio will create a new folder from the title and will not overwrite an existing game.")
-                        .size(TYPE.meta)
-                        .color(palette(ui).secondary_text),
+                    RichText::new("Location")
+                        .font(medium_font(TYPE.secondary))
+                        .color(colors.text),
+                );
+                ui.add_space(4.0);
+                Frame::NONE
+                    .fill(colors.field)
+                    .stroke(Stroke::new(1.0, colors.border))
+                    .corner_radius(4.0)
+                    .inner_margin(Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .add_sized([78.0, 26.0], egui::Button::new("Choose…"))
+                                .clicked()
+                            {
+                                self.new_project_folder_requested = true;
+                            }
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(self.new_project_parent.display().to_string())
+                                        .size(TYPE.secondary)
+                                        .color(colors.secondary_text),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(self.new_project_parent.display().to_string());
+                        });
+                    });
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "A new folder is created from the title. Existing projects are never overwritten.",
+                    )
+                    .size(TYPE.meta)
+                    .color(colors.muted),
                 );
                 if let Some(error) = &self.new_project_error {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(error).size(TYPE.meta).color(palette(ui).axis_x));
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(error)
+                            .size(TYPE.secondary)
+                            .color(colors.axis_x),
+                    );
                 }
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                ui.add_space(20.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add_sized([82.0, 28.0], egui::Button::new("Cancel"))
+                        .clicked()
+                    {
                         close_requested = true;
                     }
-                    let create = ui.add_enabled(
-                        !self.new_project_title.trim().is_empty(),
-                        egui::Button::new("Create project"),
-                    );
-                    if create.clicked() || (title_response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))) {
+                    let enabled = !self.new_project_title.trim().is_empty();
+                    let button_text = if ui.visuals().dark_mode {
+                        colors.surface_deep
+                    } else {
+                        Color32::WHITE
+                    };
+                    let create = ui.add_enabled_ui(enabled, |ui| {
+                        ui.add_sized(
+                            [110.0, 28.0],
+                            egui::Button::new(
+                                RichText::new("Create project")
+                                    .font(medium_font(TYPE.secondary))
+                                    .color(button_text),
+                            )
+                            .fill(colors.accent)
+                            .stroke(Stroke::NONE)
+                            .corner_radius(4.0),
+                        )
+                    });
+                    let enter_pressed = title_response.has_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    if create.inner.clicked() || (enabled && enter_pressed) {
                         self.new_project_create_requested = true;
                         close_requested = true;
                     }
                 });
             });
-        if close_requested || !open {
+        let escape_pressed = response.is_top_modal
+            && !response.any_popup_open
+            && context
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if close_requested || escape_pressed {
             self.new_project_dialog_open = false;
         }
     }
@@ -1387,7 +1520,7 @@ impl StudioShell {
         let colors = palette(root);
         egui::Panel::top("studio_top_bar")
             .exact_size(TOP_BAR_HEIGHT)
-            .frame(editor_frame(colors.surface).inner_margin(Margin::symmetric(6, 0)))
+            .frame(editor_frame(colors.surface).inner_margin(Margin::symmetric(8, 0)))
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
                     ui.add(
@@ -1457,7 +1590,7 @@ impl StudioShell {
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.spacing_mut().item_spacing.x = 8.0;
                         if self.auth_pending {
                             ui.label(
                                 RichText::new("Signing in…")
