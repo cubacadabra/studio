@@ -654,7 +654,10 @@ fn web_base_url(backend_url: &Url) -> Result<Url, String> {
         .host_str()
         .is_some_and(|host| host == "localhost" || host == "127.0.0.1")
     {
-        Url::parse("http://localhost:5173").expect("local web URL must be valid")
+        // Keep the browser login on the same loopback site as the local API.
+        // Using localhost here while the API uses 127.0.0.1 makes the session
+        // cookie cross-site and can cause /auth/app/redirect to return 401.
+        Url::parse("http://127.0.0.1:5173").expect("local web URL must be valid")
     } else {
         Url::parse("https://cubacadabra.com").expect("production web URL must be valid")
     };
