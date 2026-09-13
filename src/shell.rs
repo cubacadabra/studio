@@ -398,10 +398,12 @@ pub(crate) struct StudioShell {
     morph_draft_status: Option<(bool, String)>,
     morph_draft_export_requested: bool,
     morph_sidecar_export_requested: bool,
+    morph_project_add_requested: bool,
     morph_pack_import_requested: bool,
     morph_publish_requested: bool,
     morph_thumbnail_requested: bool,
     morph_import_error: Option<String>,
+    project_asset_available: bool,
     auth_requested: bool,
     auth_pending: bool,
     auth_user: Option<crate::network::AuthUser>,
@@ -485,10 +487,12 @@ impl StudioShell {
             morph_draft_status: None,
             morph_draft_export_requested: false,
             morph_sidecar_export_requested: false,
+            morph_project_add_requested: false,
             morph_pack_import_requested: false,
             morph_publish_requested: false,
             morph_thumbnail_requested: false,
             morph_import_error: None,
+            project_asset_available: true,
             auth_requested: false,
             auth_pending: false,
             auth_user: None,
@@ -538,6 +542,10 @@ impl StudioShell {
     pub(crate) fn set_auth_error(&mut self, message: String) {
         self.auth_pending = false;
         self.notice = message;
+    }
+
+    pub(crate) fn set_project_asset_available(&mut self, available: bool) {
+        self.project_asset_available = available;
     }
 
     pub(crate) fn set_remote_morph_catalog(&mut self, source: &str) -> Result<usize, String> {
@@ -622,6 +630,10 @@ impl StudioShell {
 
     pub(crate) fn take_morph_sidecar_import_request(&mut self) -> bool {
         std::mem::take(&mut self.morph_sidecar_import_requested)
+    }
+
+    pub(crate) fn take_morph_project_add_request(&mut self) -> bool {
+        std::mem::take(&mut self.morph_project_add_requested)
     }
 
     pub(crate) fn take_morph_pack_import_request(&mut self) -> bool {
@@ -733,6 +745,21 @@ impl StudioShell {
         Ok((glb_path, suggested_name, manifest_json))
     }
 
+    pub(crate) fn morph_project_payload(
+        &self,
+    ) -> Result<(String, String, MorphGlbPreviewMesh), String> {
+        let path = self
+            .morph_preview_path
+            .clone()
+            .ok_or_else(|| "Import a GLB before adding it to this game.".to_owned())?;
+        let (_, manifest_json) = self.morph_sidecar_payload()?;
+        let preview = self
+            .morph_preview
+            .clone()
+            .ok_or_else(|| "The imported GLB has no preview mesh to add.".to_owned())?;
+        Ok((path, manifest_json, preview))
+    }
+
     pub(crate) fn morph_draft_payload(&self) -> Result<(String, String), String> {
         let path = self
             .morph_preview_path
@@ -832,6 +859,22 @@ impl StudioShell {
                 self.morph_draft_status =
                     Some((true, format!("Published {asset_id} ({byte_len} bytes).")));
                 self.notice = "Morph pack published".to_owned();
+            }
+            Err(message) => {
+                self.morph_draft_status = Some((false, message.clone()));
+                self.notice = message;
+            }
+        }
+    }
+
+    pub(crate) fn set_morph_project_result(&mut self, result: Result<(String, usize), String>) {
+        match result {
+            Ok((asset_id, byte_len)) => {
+                self.morph_draft_status = Some((
+                    true,
+                    format!("Added {asset_id} to this game ({byte_len} bytes)."),
+                ));
+                self.notice = "Character asset added to game".to_owned();
             }
             Err(message) => {
                 self.morph_draft_status = Some((false, message.clone()));
@@ -1550,7 +1593,7 @@ impl StudioShell {
                 });
                 content_frame().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button("Import GLB").clicked() {
+                        if ui.button("Import character asset…").clicked() {
                             self.morph_import_requested = true;
                             self.morph_import_error = None;
                         }
@@ -1717,7 +1760,25 @@ impl StudioShell {
                                         self.morph_sidecar_export_requested = true;
                                     }
                                 }
-                                if ui.button("Publish .morphpack").clicked() {
+                                let add_to_game = ui
+                                    .add_enabled(
+                                        self.project_asset_available,
+                                        egui::Button::new("Add to this game"),
+                                    )
+                                    .on_disabled_hover_text(
+                                        "Open a game project before adding an asset.",
+                                    );
+                                if add_to_game.clicked() {
+                                    self.validate_morph_draft();
+                                    if self
+                                        .morph_draft_status
+                                        .as_ref()
+                                        .is_some_and(|(valid, _)| *valid)
+                                    {
+                                        self.morph_project_add_requested = true;
+                                    }
+                                }
+                                if ui.button("Export .morphpack").clicked() {
                                     self.validate_morph_draft();
                                     if self
                                         .morph_draft_status

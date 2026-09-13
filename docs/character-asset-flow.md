@@ -19,7 +19,23 @@ The game repository remains the source of truth. The community catalog is a
 distribution and discovery layer, not the place where a game's source art is
 silently stored.
 
-## Proposed developer workflow
+## Implemented in this slice
+
+- Studio discovers `assets/characters/catalog.json` automatically when a game is
+  opened; `--morph-catalog` remains available as an override.
+- **Import character asset…** previews the selected GLB and validates its
+  current rigid-wearable mapping.
+- **Add to this game** writes `source.glb`, `source.morph.json`,
+  `runtime.morphpack`, and `thumbnail.png` under the project, upserts the local
+  catalog entry, and registers the pack in the live Studio renderer.
+- Local import does not require authentication or make a network request.
+
+The remaining authoring UI work is the classification step for new skinned
+bodies, wearable parts, and full outfits. The current importer intentionally
+starts with the already-supported rigid wearable contract while that mapping
+UI and its stricter body validation are added.
+
+## Target developer workflow
 
 1. Run `studio --path /path/to/my-game`. Studio treats that directory as the
    active project, even when the Luau source lives in a separate repository.
@@ -33,9 +49,10 @@ silently stored.
    its occupied slots and fit profiles; a full outfit is represented as a
    composed preset unless it truly replaces the base body.
 4. **Add to this game** writes the source GLB, sidecar, compiled pack, and
-   catalog entry under the game repository. It updates the game manifest or
-   character catalog atomically and reloads the preview. The developer can
-   commit those files normally and the game build can reproduce the pack.
+   catalog entry under the game repository. The current slice updates the
+   character catalog; manifest wiring and reproducible package builds are the
+   next integration step. The developer can commit the generated files
+   normally.
 5. An optional **Share with community** action appears only after local
    validation. It requires sign-in, asks for a license and attribution, shows
    exactly what will be public, then uploads an immutable version. The game
@@ -61,9 +78,10 @@ my-game/
 ```
 
 `source.glb` and its sidecar are editable source. `runtime.morphpack` and the
-thumbnail are derived, content-addressed build outputs. Luau and the manifest
-refer to stable asset IDs, not absolute filesystem paths. Studio should watch
-the source files and regenerate or mark derived files stale when they change.
+thumbnail are derived build outputs; the release pipeline can later place them
+under content-addressed paths. Luau and the manifest refer to stable asset IDs,
+not absolute filesystem paths. Studio should watch the source files and
+regenerate or mark derived files stale when they change.
 
 ## Authentication flow
 
@@ -97,4 +115,3 @@ The callback accepts only the registered app scheme or a localhost callback at
 - Community assets should be opt-in in the Studio library, visually distinct
   from built-in and project-local assets, and never mixed into a game's source
   directory without an explicit **Add to this game** action.
-

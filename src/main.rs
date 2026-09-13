@@ -91,6 +91,7 @@ struct ImageAtlas {
 }
 
 struct GameSources {
+    project_root: PathBuf,
     root: PathBuf,
     manifest_source: String,
     script_source: String,
@@ -132,6 +133,7 @@ struct LocalMorphPreset {
 }
 
 struct StudioApp {
+    project_root: PathBuf,
     game_root: PathBuf,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
@@ -171,8 +173,11 @@ impl StudioApp {
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
+        let project_root = sources.project_root;
         let standalone_preview = sources.standalone_preview;
         let temporary_package = sources.temporary_package;
+        let morph_catalog_path =
+            morph_catalog_path.or_else(|| discover_project_morph_catalog(&project_root));
         let local_morph_catalog = morph_catalog_path
             .as_deref()
             .map(load_local_morph_catalog)
@@ -202,6 +207,7 @@ impl StudioApp {
         }
 
         Ok(Self {
+            project_root,
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             game_root,
             standalone_preview,
@@ -269,7 +275,8 @@ impl StudioApp {
             }
         }
 
-        let shell = StudioShell::new(&window, &renderer);
+        let mut shell = StudioShell::new(&window, &renderer);
+        shell.set_project_asset_available(!self.standalone_preview);
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.shell = Some(shell);
@@ -399,6 +406,13 @@ impl StudioApp {
             .is_some_and(StudioShell::take_morph_sidecar_import_request);
         if sidecar_import_requested {
             self.import_morph_sidecar();
+        }
+        let project_add_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_morph_project_add_request);
+        if project_add_requested {
+            self.add_morph_to_game();
         }
         let pack_import_requested = self
             .shell
@@ -726,6 +740,57 @@ impl StudioApp {
         let result = result.and_then(|(_, _, pack)| self.activate_morph_pack(&pack));
         if let Some(shell) = &mut self.shell {
             shell.set_morph_publish_result(result);
+        }
+        self.request_redraw();
+    }
+
+    fn add_morph_to_game(&mut self) {
+        let result = if self.standalone_preview {
+            Err("Open a game project before adding a character asset to it.".to_owned())
+        } else {
+            self.shell
+                .as_ref()
+                .map(StudioShell::morph_project_payload)
+                .unwrap_or_else(|| Err("Studio shell is not ready.".to_owned()))
+                .and_then(|(source_path, manifest_json, preview)| {
+                    let glb = fs::read(&source_path)
+                        .map_err(|error| format!("Could not read {}: {error}", source_path))?;
+                    let manifest_json =
+                        rewrite_manifest_geometry_file(&manifest_json, "source.glb")?;
+                    let asset = source_manifest_asset(&manifest_json)
+                        .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                    let asset_id = asset.id.to_string();
+                    let slug = project_asset_slug(&asset_id)?;
+                    let asset_directory = self.project_root.join("assets/characters").join(&slug);
+                    fs::create_dir_all(&asset_directory).map_err(|error| {
+                        format!(
+                            "Could not create character asset directory {}: {error}",
+                            asset_directory.display()
+                        )
+                    })?;
+                    let (pack, _) = compile_source_morph_pack(&manifest_json, &glb)
+                        .map_err(|diagnostics| Self::format_morph_diagnostics(&diagnostics))?;
+                    let thumbnail = encode_morph_thumbnail_png(&preview)?;
+                    write_atomic(&asset_directory.join("source.glb"), &glb)?;
+                    write_atomic(
+                        &asset_directory.join("source.morph.json"),
+                        manifest_json.as_bytes(),
+                    )?;
+                    write_atomic(&asset_directory.join("runtime.morphpack"), &pack)?;
+                    write_atomic(&asset_directory.join("thumbnail.png"), &thumbnail)?;
+
+                    let catalog_path = self.project_root.join("assets/characters/catalog.json");
+                    update_project_morph_catalog(
+                        &catalog_path,
+                        &asset_id,
+                        &format!("{slug}/source.morph.json"),
+                    )?;
+                    let activated = self.activate_morph_pack(&pack)?;
+                    Ok(activated)
+                })
+        };
+        if let Some(shell) = &mut self.shell {
+            shell.set_morph_project_result(result);
         }
         self.request_redraw();
     }
@@ -1099,6 +1164,7 @@ impl Drop for StudioApp {
 fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn Error>> {
     let Some(game_root) = game_root else {
         return Ok(GameSources {
+            project_root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
             root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
             manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             script_source: STANDALONE_PREVIEW_SCRIPT.to_owned(),
@@ -1119,6 +1185,7 @@ fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn 
     };
 
     Ok(GameSources {
+        project_root: game_root,
         root: package_root.clone(),
         manifest_source: read_utf8_file(&package_root.join("manifest.json"), "manifest")?,
         script_source: read_utf8_file(&package_root.join("game.luau"), "script")?,
@@ -1184,6 +1251,103 @@ fn read_utf8_file(path: &Path, kind: &str) -> Result<String, Box<dyn Error>> {
     })
 }
 
+fn discover_project_morph_catalog(project_root: &Path) -> Option<PathBuf> {
+    let path = project_root.join("assets/characters/catalog.json");
+    path.is_file().then_some(path)
+}
+
+fn rewrite_manifest_geometry_file(source: &str, geometry_file: &str) -> Result<String, String> {
+    let mut root: Value = serde_json::from_str(source)
+        .map_err(|error| format!("the generated morph sidecar is invalid JSON: {error}"))?;
+    root.get_mut("geometry")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "the generated morph sidecar has no geometry object".to_owned())?
+        .insert("file".to_owned(), Value::String(geometry_file.to_owned()));
+    root.get_mut("asset")
+        .and_then(Value::as_object_mut)
+        .and_then(|asset| asset.get_mut("source"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "the generated morph sidecar has no asset source object".to_owned())?
+        .insert(
+            "geometry".to_owned(),
+            Value::String(geometry_file.to_owned()),
+        );
+    serde_json::to_string_pretty(&root)
+        .map_err(|error| format!("could not serialize the morph sidecar: {error}"))
+}
+
+fn project_asset_slug(asset_id: &str) -> Result<String, String> {
+    let mut slug = String::new();
+    for byte in asset_id.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            slug.push(char::from(byte).to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_matches('-').to_owned();
+    if slug.is_empty() || slug.len() > 96 {
+        return Err("the character asset ID cannot become a safe project folder name".to_owned());
+    }
+    Ok(slug)
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("file has no parent directory: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("file has no safe name: {}", path.display()))?;
+    let temporary = parent.join(format!(".{file_name}.studio-{}", std::process::id()));
+    fs::write(&temporary, bytes)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            fs::remove_file(path).map_err(|remove_error| {
+                format!("could not replace {}: {remove_error}", path.display())
+            })?;
+            fs::rename(&temporary, path).map_err(|rename_error| {
+                format!("could not replace {}: {rename_error}", path.display())
+            })
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(format!("could not finalize {}: {error}", path.display()))
+        }
+    }
+}
+
+fn update_project_morph_catalog(path: &Path, asset_id: &str, source: &str) -> Result<(), String> {
+    let mut catalog: Value = if path.is_file() {
+        let source = fs::read_to_string(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        serde_json::from_str(&source)
+            .map_err(|error| format!("{} is not valid JSON: {error}", path.display()))?
+    } else {
+        serde_json::json!({ "schemaVersion": 1, "assets": [] })
+    };
+    if catalog.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+        return Err(format!(
+            "{} must use morph catalog schema 1",
+            path.display()
+        ));
+    }
+    let assets = catalog
+        .get_mut("assets")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| format!("{} must contain an assets array", path.display()))?;
+    assets.retain(|entry| entry.get("id").and_then(Value::as_str) != Some(asset_id));
+    assets.push(serde_json::json!({ "id": asset_id, "source": source }));
+    let serialized = serde_json::to_string_pretty(&catalog)
+        .map_err(|error| format!("could not serialize {}: {error}", path.display()))?;
+    write_atomic(path, serialized.as_bytes())
+}
+
 fn load_local_morph_catalog(path: &Path) -> Result<LocalMorphCatalog, Box<dyn Error>> {
     let catalog_source = read_utf8_file(path, "morph catalog")?;
     let definition: LocalMorphCatalogFile =
@@ -1207,24 +1371,24 @@ fn load_local_morph_catalog(path: &Path) -> Result<LocalMorphCatalog, Box<dyn Er
         ))) as Box<dyn Error>
     })?;
     let mut assets = Vec::new();
-    if let Some(builtins) = definition.builtins.as_deref() {
+    let builtins_source = if let Some(builtins) = definition.builtins.as_deref() {
         let builtins_path = local_catalog_file(catalog_root, builtins, "built-in catalog")?;
-        let builtins_source = read_utf8_file(&builtins_path, "built-in morph catalog")?;
-        let builtins =
-            cubacadabra_morphs::parse_catalog(&builtins_source).map_err(|diagnostics| {
-                Box::new(StudioError(format!(
-                    "built-in morph catalog {} is invalid: {}",
-                    builtins_path.display(),
-                    StudioApp::format_morph_diagnostics(&diagnostics)
-                ))) as Box<dyn Error>
-            })?;
-        assets.extend(
-            builtins
-                .assets
-                .into_iter()
-                .filter(|asset| !definition.exclude_builtin_kinds.contains(&asset.kind)),
-        );
-    }
+        read_utf8_file(&builtins_path, "built-in morph catalog")?
+    } else {
+        include_str!("../../rust/assets/characters/morph_catalog.json").to_owned()
+    };
+    let builtins = cubacadabra_morphs::parse_catalog(&builtins_source).map_err(|diagnostics| {
+        Box::new(StudioError(format!(
+            "built-in morph catalog is invalid: {}",
+            StudioApp::format_morph_diagnostics(&diagnostics)
+        ))) as Box<dyn Error>
+    })?;
+    assets.extend(
+        builtins
+            .assets
+            .into_iter()
+            .filter(|asset| !definition.exclude_builtin_kinds.contains(&asset.kind)),
+    );
 
     let mut packs = BTreeMap::new();
     for local_asset in definition.assets {
@@ -1708,10 +1872,10 @@ fn validate_project(game_path: PathBuf) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        joystick_movement, load_game_sources, load_local_morph_catalog,
-        should_forward_gameplay_keyboard,
+        joystick_movement, load_game_sources, load_local_morph_catalog, project_asset_slug,
+        should_forward_gameplay_keyboard, update_project_morph_catalog,
     };
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     #[test]
     fn standalone_sources_load_as_a_default_person_preview() {
@@ -1773,6 +1937,41 @@ mod tests {
                 .thumbnails
                 .get("thumbnails/person-05.png")
                 .is_some_and(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
+        );
+    }
+
+    #[test]
+    fn project_catalog_upserts_a_stable_source_reference() {
+        let root = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-catalog-test-{}",
+            std::process::id()
+        ));
+        let path = root.join("assets/characters/catalog.json");
+        let _ = fs::remove_dir_all(&root);
+        update_project_morph_catalog(
+            &path,
+            "cuba:headwear/test-hat.v1",
+            "test-hat/source.morph.json",
+        )
+        .expect("project catalog should be written");
+        update_project_morph_catalog(
+            &path,
+            "cuba:headwear/test-hat.v1",
+            "test-hat/source.morph.json",
+        )
+        .expect("project catalog should upsert");
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["assets"].as_array().unwrap().len(), 1);
+        assert_eq!(value["assets"][0]["source"], "test-hat/source.morph.json");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_asset_slugs_are_safe_and_deterministic() {
+        assert_eq!(
+            project_asset_slug("cuba:headwear/test-hat.v1").unwrap(),
+            "cuba-headwear-test-hat-v1"
         );
     }
 
