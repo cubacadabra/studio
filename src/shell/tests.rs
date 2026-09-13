@@ -1,5 +1,87 @@
 use super::*;
 
+#[test]
+fn world_is_the_default_workspace() {
+    assert_eq!(Workspace::default(), Workspace::World);
+}
+
+#[test]
+fn scene_outline_uses_artist_facing_manifest_content() {
+    let outline = SceneOutline::parse(
+        r#"{
+            "id": "gallery-game",
+            "displayName": "Gallery Game",
+            "version": "1.2.3",
+            "lobby": false,
+            "startWorld": "lobby",
+            "launch": { "destinationWorld": "gallery" },
+            "package": { "entry": "game.luau" },
+            "assets": {
+                "images": { "gallery-banner": { "path": "assets/gallery.png" } },
+                "audio": { "room-tone": { "path": "assets/room.wav" } }
+            },
+            "world": { "spawn": [0, 1, 2], "clouds": [] },
+            "avatars": {
+                "player": { "character": { "body": "cuba:person.v1", "face": "happy" } }
+            },
+            "worlds": {
+                "gallery": {
+                    "world": { "groundSize": 64, "spawn": [2, 0, 8] },
+                    "materials": { "paintedWood": { "image": "wood", "tileU": 4 } },
+                    "blocks": [{ "position": [1, 2, 3], "color": "paintedWood" }],
+                    "signs": [{ "text": "Welcome artists", "position": [0, 2, 0] }],
+                    "interactions": [{ "id": "open-gallery", "label": "Open Gallery" }],
+                    "server": { "ambientNpcs": { "entities": [{ "id": "curator", "username": "Curator" }] } }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(outline.root.label, "Gallery Game");
+    assert_eq!(outline.initial_selection, "world/gallery");
+    assert!(outline.initial_expanded.contains("world/gallery"));
+    assert_eq!(
+        outline.root.find("world/gallery/blocks/0").unwrap().label,
+        "Block 1"
+    );
+    assert_eq!(
+        outline.root.find("world/gallery/signs/0").unwrap().label,
+        "Welcome artists"
+    );
+    assert_eq!(
+        outline
+            .root
+            .find("world/gallery/characters/0")
+            .unwrap()
+            .label,
+        "Curator"
+    );
+    assert!(outline.root.find("game/characters/player").is_some());
+    assert!(
+        outline
+            .assets
+            .iter()
+            .any(|asset| asset.name == "gallery-banner" && asset.kind == "IMAGE")
+    );
+    assert!(
+        outline
+            .assets
+            .iter()
+            .any(|asset| asset.name == "paintedWood" && asset.kind == "MATERIAL")
+    );
+    assert!(!outline.assets.iter().any(|asset| asset.name == "castle"));
+    assert!(!scene_text(&outline.root).contains("luau"));
+}
+
+fn scene_text(node: &SceneNode) -> String {
+    let mut text = format!("{} {} {:?}", node.label, node.kind, node.properties);
+    for child in &node.children {
+        text.push_str(&scene_text(child));
+    }
+    text
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_system_font_uses_the_wider_text_optical_cut() {

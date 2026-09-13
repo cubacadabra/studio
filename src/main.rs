@@ -136,6 +136,7 @@ struct LocalMorphPreset {
 struct StudioApp {
     project_root: PathBuf,
     game_root: PathBuf,
+    manifest_source: String,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
     network: BackendClient,
@@ -210,6 +211,7 @@ impl StudioApp {
         Ok(Self {
             project_root,
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
+            manifest_source,
             game_root,
             standalone_preview,
             temporary_package,
@@ -276,7 +278,7 @@ impl StudioApp {
             }
         }
 
-        let mut shell = StudioShell::new(&window, &renderer);
+        let mut shell = StudioShell::new(&window, &renderer, &self.manifest_source);
         shell.set_project_asset_available(!self.standalone_preview);
         if let Ok(parent) = env::current_dir() {
             shell.set_new_project_parent(parent);
@@ -987,6 +989,7 @@ impl StudioApp {
         let old_temporary_package = self.temporary_package.take();
         self.project_root = project_root;
         self.game_root = root;
+        self.manifest_source = manifest_source;
         self.standalone_preview = false;
         self.temporary_package = temporary_package;
         self.image_atlas = image_atlas;
@@ -1013,7 +1016,7 @@ impl StudioApp {
                 .renderer
                 .as_ref()
                 .ok_or_else(|| "Studio renderer is not ready.".to_owned())?;
-            StudioShell::new(window, renderer)
+            StudioShell::new(window, renderer, &self.manifest_source)
         };
         shell.set_project_asset_available(true);
         if let Some(parent) = self.project_root.parent() {

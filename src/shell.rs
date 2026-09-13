@@ -14,6 +14,7 @@ use egui::{
 };
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor, wgpu};
 use egui_winit::State as EguiState;
+use serde_json::Value;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::{
@@ -152,8 +153,6 @@ struct Palette {
     asset_selection_stroke: Color32,
     live: Color32,
     axis_x: Color32,
-    axis_y: Color32,
-    axis_z: Color32,
 }
 
 const DARK_PALETTE: Palette = Palette {
@@ -175,8 +174,6 @@ const DARK_PALETTE: Palette = Palette {
     asset_selection_stroke: Color32::from_rgb(78, 96, 114),
     live: Color32::from_rgb(120, 166, 137),
     axis_x: Color32::from_rgb(218, 105, 105),
-    axis_y: Color32::from_rgb(112, 193, 126),
-    axis_z: Color32::from_rgb(103, 151, 218),
 };
 
 const LIGHT_PALETTE: Palette = Palette {
@@ -198,8 +195,6 @@ const LIGHT_PALETTE: Palette = Palette {
     asset_selection_stroke: Color32::from_rgb(118, 145, 171),
     live: Color32::from_rgb(54, 128, 79),
     axis_x: Color32::from_rgb(180, 55, 55),
-    axis_y: Color32::from_rgb(39, 128, 62),
-    axis_z: Color32::from_rgb(42, 98, 173),
 };
 const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 
@@ -317,6 +312,490 @@ impl Workspace {
     }
 }
 
+#[derive(Clone, Debug)]
+struct SceneNode {
+    id: String,
+    label: String,
+    kind: &'static str,
+    icon: Icon,
+    detail: Option<String>,
+    properties: Vec<(String, String)>,
+    children: Vec<SceneNode>,
+}
+
+impl SceneNode {
+    fn find(&self, id: &str) -> Option<&Self> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children.iter().find_map(|child| child.find(id))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SceneOutline {
+    root: SceneNode,
+    assets: Vec<ManifestAsset>,
+    initial_selection: String,
+    initial_expanded: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug)]
+struct ManifestAsset {
+    name: String,
+    kind: &'static str,
+    icon: Icon,
+}
+
+impl SceneOutline {
+    fn parse(source: &str) -> Result<Self, serde_json::Error> {
+        let manifest: Value = serde_json::from_str(source)?;
+        let assets = manifest_assets(&manifest);
+        let game_name = manifest
+            .get("displayName")
+            .and_then(Value::as_str)
+            .or_else(|| manifest.get("id").and_then(Value::as_str))
+            .unwrap_or("Game")
+            .to_owned();
+        let game_id = manifest.get("id").and_then(Value::as_str).unwrap_or("game");
+        let start_world = manifest
+            .get("startWorld")
+            .and_then(Value::as_str)
+            .unwrap_or("lobby");
+        let lobby_enabled = manifest
+            .get("lobby")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let active_world = if lobby_enabled || start_world != "lobby" {
+            start_world
+        } else {
+            manifest
+                .pointer("/launch/destinationWorld")
+                .and_then(Value::as_str)
+                .unwrap_or(start_world)
+        };
+
+        let mut worlds = vec![world_node("lobby", &manifest, active_world == "lobby")];
+        if let Some(entries) = manifest.get("worlds").and_then(Value::as_object) {
+            for (world_id, definition) in entries {
+                if world_id != "lobby" {
+                    worlds.push(world_node(world_id, definition, active_world == world_id));
+                }
+            }
+        }
+
+        let world_count = worlds.len();
+        let mut root_children = worlds;
+        if let Some(avatars) = manifest.get("avatars").and_then(Value::as_object) {
+            let mut characters = Vec::new();
+            if let Some(player) = avatars.get("player").filter(|value| value.is_object()) {
+                characters.push(SceneNode {
+                    id: "game/characters/player".to_owned(),
+                    label: "Player".to_owned(),
+                    kind: "Character",
+                    icon: Icon::Character,
+                    detail: None,
+                    properties: avatar_properties(player),
+                    children: Vec::new(),
+                });
+            }
+            if let Some(npcs) = avatars.get("npcs").and_then(Value::as_array) {
+                characters.extend(npcs.iter().enumerate().map(|(index, npc)| SceneNode {
+                    id: format!("game/characters/npc/{index}"),
+                    label: item_label(npc, "Character", index),
+                    kind: "Character",
+                    icon: Icon::Character,
+                    detail: None,
+                    properties: avatar_properties(npc),
+                    children: Vec::new(),
+                }));
+            }
+            if !characters.is_empty() {
+                root_children.push(SceneNode {
+                    id: "game/characters".to_owned(),
+                    label: "Characters".to_owned(),
+                    kind: "Collection",
+                    icon: Icon::Folder,
+                    detail: Some(characters.len().to_string()),
+                    properties: Vec::new(),
+                    children: characters,
+                });
+            }
+        }
+
+        let mut root_properties = vec![
+            ("Identifier".to_owned(), game_id.to_owned()),
+            ("Start world".to_owned(), humanize_identifier(active_world)),
+        ];
+        if let Some(version) = manifest.get("version").and_then(Value::as_str) {
+            root_properties.push(("Version".to_owned(), version.to_owned()));
+        }
+        if let Some(value) = manifest
+            .pointer("/scene/maxPlayers")
+            .and_then(compact_value)
+        {
+            root_properties.push(("Max players".to_owned(), value));
+        }
+
+        let root_id = "game".to_owned();
+        let initial_selection = root_children
+            .iter()
+            .take(world_count)
+            .find(|world| world.detail.as_deref() == Some("Start"))
+            .map(|world| world.id.clone())
+            .unwrap_or_else(|| root_id.clone());
+        let initial_expanded = BTreeSet::from([root_id.clone(), initial_selection.clone()]);
+
+        Ok(Self {
+            root: SceneNode {
+                id: root_id,
+                label: game_name,
+                kind: "Game",
+                icon: Icon::World,
+                detail: Some(format!(
+                    "{world_count} {}",
+                    if world_count == 1 { "world" } else { "worlds" }
+                )),
+                properties: root_properties,
+                children: root_children,
+            },
+            assets,
+            initial_selection,
+            initial_expanded,
+        })
+    }
+
+    fn empty() -> Self {
+        let root = SceneNode {
+            id: "game".to_owned(),
+            label: "Game".to_owned(),
+            kind: "Game",
+            icon: Icon::World,
+            detail: None,
+            properties: Vec::new(),
+            children: Vec::new(),
+        };
+        Self {
+            initial_selection: root.id.clone(),
+            initial_expanded: BTreeSet::from([root.id.clone()]),
+            assets: Vec::new(),
+            root,
+        }
+    }
+}
+
+const WORLD_COLLECTIONS: [(&str, &str, &str, Icon); 11] = [
+    ("launchPads", "Launch Pads", "Launch Pad", Icon::Object),
+    ("blocks", "Blocks", "Block", Icon::Object),
+    ("portals", "Portals", "Portal", Icon::Object),
+    ("signs", "Signs", "Sign", Icon::Object),
+    ("billboards", "Billboards", "Billboard", Icon::Image),
+    ("interactions", "Interactions", "Interaction", Icon::Object),
+    ("ladders", "Ladders", "Ladder", Icon::Object),
+    ("checkpoints", "Checkpoints", "Checkpoint", Icon::Object),
+    ("hazards", "Hazards", "Hazard", Icon::Object),
+    ("safeZones", "Safe Zones", "Safe Zone", Icon::Object),
+    ("clouds", "Clouds", "Cloud", Icon::Object),
+];
+
+fn world_node(world_id: &str, definition: &Value, active: bool) -> SceneNode {
+    let id = format!("world/{world_id}");
+    let settings = definition.get("world").unwrap_or(&Value::Null);
+    let mut properties = vec![("Identifier".to_owned(), world_id.to_owned())];
+    for (pointer, label) in [
+        ("/groundSize", "Ground size"),
+        ("/gridSize", "Grid size"),
+        ("/gridDivisions", "Grid divisions"),
+        ("/spawn", "Spawn"),
+        ("/physics/gravity", "Gravity"),
+        ("/health/max", "Max health"),
+    ] {
+        if let Some(value) = settings.pointer(pointer).and_then(compact_value) {
+            properties.push((label.to_owned(), value));
+        }
+    }
+
+    let mut children = Vec::new();
+    if settings.is_object() {
+        let mut environment_children = Vec::new();
+        if let Some(spawn) = settings.get("spawn").and_then(compact_value) {
+            environment_children.push(SceneNode {
+                id: format!("{id}/environment/spawn"),
+                label: "Spawn".to_owned(),
+                kind: "Spawn Point",
+                icon: Icon::Object,
+                detail: None,
+                properties: vec![("Position".to_owned(), spawn)],
+                children: Vec::new(),
+            });
+        }
+        if let Some(clouds) = settings
+            .get("clouds")
+            .and_then(Value::as_array)
+            .filter(|clouds| !clouds.is_empty())
+        {
+            environment_children.push(collection_node(
+                &format!("{id}/environment"),
+                "clouds",
+                "Clouds",
+                "Cloud",
+                Icon::Object,
+                clouds,
+            ));
+        }
+        if !environment_children.is_empty() {
+            children.push(SceneNode {
+                id: format!("{id}/environment"),
+                label: "Environment".to_owned(),
+                kind: "Collection",
+                icon: Icon::Folder,
+                detail: Some(environment_children.len().to_string()),
+                properties: Vec::new(),
+                children: environment_children,
+            });
+        }
+    }
+
+    if let Some(materials) = definition
+        .get("materials")
+        .and_then(Value::as_object)
+        .filter(|materials| !materials.is_empty())
+    {
+        let material_children = materials
+            .iter()
+            .map(|(name, value)| SceneNode {
+                id: format!("{id}/materials/{name}"),
+                label: humanize_identifier(name),
+                kind: "Material",
+                icon: Icon::Material,
+                detail: None,
+                properties: object_properties(value),
+                children: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        children.push(SceneNode {
+            id: format!("{id}/materials"),
+            label: "Materials".to_owned(),
+            kind: "Collection",
+            icon: Icon::Folder,
+            detail: Some(material_children.len().to_string()),
+            properties: Vec::new(),
+            children: material_children,
+        });
+    }
+
+    for (key, plural, singular, icon) in WORLD_COLLECTIONS {
+        if key == "clouds" {
+            continue;
+        }
+        if let Some(items) = definition
+            .get(key)
+            .and_then(Value::as_array)
+            .filter(|items| !items.is_empty())
+        {
+            children.push(collection_node(&id, key, plural, singular, icon, items));
+        }
+    }
+
+    if let Some(entities) = definition
+        .pointer("/server/ambientNpcs/entities")
+        .and_then(Value::as_array)
+        .filter(|entities| !entities.is_empty())
+    {
+        children.push(collection_node(
+            &id,
+            "characters",
+            "Characters",
+            "Character",
+            Icon::Character,
+            entities,
+        ));
+    }
+
+    SceneNode {
+        id,
+        label: humanize_identifier(world_id),
+        kind: "World",
+        icon: Icon::World,
+        detail: active.then(|| "Start".to_owned()),
+        properties,
+        children,
+    }
+}
+
+fn collection_node(
+    parent_id: &str,
+    key: &str,
+    plural: &str,
+    singular: &'static str,
+    icon: Icon,
+    items: &[Value],
+) -> SceneNode {
+    let id = format!("{parent_id}/{key}");
+    let children = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| SceneNode {
+            id: format!("{id}/{index}"),
+            label: item_label(item, singular, index),
+            kind: singular,
+            icon,
+            detail: None,
+            properties: object_properties(item),
+            children: Vec::new(),
+        })
+        .collect();
+    SceneNode {
+        id,
+        label: plural.to_owned(),
+        kind: "Collection",
+        icon: Icon::Folder,
+        detail: Some(items.len().to_string()),
+        properties: Vec::new(),
+        children,
+    }
+}
+
+fn item_label(item: &Value, fallback: &str, index: usize) -> String {
+    for key in ["label", "name", "username", "id", "text", "image"] {
+        if let Some(value) = item.get(key).and_then(Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return if key == "id" {
+                    humanize_identifier(value)
+                } else {
+                    value.to_owned()
+                };
+            }
+        }
+    }
+    format!("{fallback} {}", index + 1)
+}
+
+fn object_properties(value: &Value) -> Vec<(String, String)> {
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| {
+            compact_value(value).map(|value| (humanize_identifier(key), value))
+        })
+        .collect()
+}
+
+fn avatar_properties(value: &Value) -> Vec<(String, String)> {
+    let mut properties = object_properties(value);
+    if let Some(character) = value.get("character").and_then(Value::as_object) {
+        for key in ["body", "base", "face", "outfit", "parts", "revision"] {
+            if let Some(value) = character.get(key).and_then(compact_value) {
+                properties.push((humanize_identifier(key), value));
+            }
+        }
+    }
+    properties
+}
+
+fn manifest_assets(manifest: &Value) -> Vec<ManifestAsset> {
+    let mut assets = BTreeMap::<(String, String), ManifestAsset>::new();
+    if let Some(groups) = manifest.get("assets").and_then(Value::as_object) {
+        for (group, definitions) in groups {
+            let Some(definitions) = definitions.as_object() else {
+                continue;
+            };
+            let (kind, icon) = match group.as_str() {
+                "images" => ("IMAGE", Icon::Image),
+                "audio" => ("AUDIO", Icon::Object),
+                "models" => ("MODEL", Icon::Object),
+                "characters" | "morphs" => ("CHARACTER", Icon::Character),
+                _ => ("ASSET", Icon::Assets),
+            };
+            for name in definitions.keys() {
+                assets.insert(
+                    (kind.to_owned(), name.clone()),
+                    ManifestAsset {
+                        name: name.clone(),
+                        kind,
+                        icon,
+                    },
+                );
+            }
+        }
+    }
+
+    for definition in std::iter::once(manifest).chain(
+        manifest
+            .get("worlds")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|worlds| worlds.values()),
+    ) {
+        if let Some(materials) = definition.get("materials").and_then(Value::as_object) {
+            for name in materials.keys() {
+                assets.insert(
+                    ("MATERIAL".to_owned(), name.clone()),
+                    ManifestAsset {
+                        name: name.clone(),
+                        kind: "MATERIAL",
+                        icon: Icon::Material,
+                    },
+                );
+            }
+        }
+    }
+
+    assets.into_values().collect()
+}
+
+fn compact_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(if *value { "Yes" } else { "No" }.to_owned()),
+        Value::Array(values)
+            if values
+                .iter()
+                .all(|value| !value.is_array() && !value.is_object()) =>
+        {
+            Some(
+                values
+                    .iter()
+                    .filter_map(compact_value)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn humanize_identifier(value: &str) -> String {
+    let mut output = String::new();
+    let mut previous_lowercase = false;
+    for character in value.chars() {
+        if character == '-' || character == '_' {
+            output.push(' ');
+            previous_lowercase = false;
+        } else {
+            if character.is_uppercase() && previous_lowercase {
+                output.push(' ');
+            }
+            output.push(character);
+            previous_lowercase = character.is_lowercase() || character.is_ascii_digit();
+        }
+    }
+    output
+        .split_whitespace()
+        .map(|word| {
+            let mut characters = word.chars();
+            match characters.next() {
+                Some(first) => first.to_uppercase().chain(characters).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
 const MORPH_LIBRARY_KINDS: [MorphAssetKind; 17] = [
     MorphAssetKind::Base,
     MorphAssetKind::Face,
@@ -365,7 +844,10 @@ pub(crate) struct StudioShell {
     renderer: EguiRenderer,
     workspace: Workspace,
     runtime_viewport: Rect,
-    selected_scene: &'static str,
+    scene_outline: SceneOutline,
+    expanded_scene: BTreeSet<String>,
+    selected_scene: String,
+    selected_world_asset: String,
     selected_asset: &'static str,
     test_tool: &'static str,
     asset_filter: &'static str,
@@ -421,15 +903,16 @@ pub(crate) struct StudioShell {
     #[cfg(not(target_os = "macos"))]
     new_project_title_focus_requested: bool,
     logo_texture: egui::TextureHandle,
-    position: [f32; 3],
-    rotation: f32,
-    scale: f32,
     roughness: f32,
     pending_textures_delta: egui::TexturesDelta,
 }
 
 impl StudioShell {
-    pub(crate) fn new(window: &Window, game_renderer: &GameRenderer) -> Self {
+    pub(crate) fn new(
+        window: &Window,
+        game_renderer: &GameRenderer,
+        manifest_source: &str,
+    ) -> Self {
         let context = egui::Context::default();
         configure_context(&context);
         let state = EguiState::new(
@@ -447,18 +930,40 @@ impl StudioShell {
         );
         #[cfg(target_os = "macos")]
         install_system_icon_textures(&context);
-        Self::from_egui(context, state, renderer)
+        Self::from_egui_with_manifest(context, state, renderer, manifest_source)
     }
 
+    #[cfg(test)]
     fn from_egui(context: egui::Context, state: EguiState, renderer: EguiRenderer) -> Self {
+        Self::from_egui_with_manifest(context, state, renderer, "{}")
+    }
+
+    fn from_egui_with_manifest(
+        context: egui::Context,
+        state: EguiState,
+        renderer: EguiRenderer,
+        manifest_source: &str,
+    ) -> Self {
         let logo_texture = load_logo_texture(&context);
+        let scene_outline =
+            SceneOutline::parse(manifest_source).unwrap_or_else(|_| SceneOutline::empty());
+        let selected_scene = scene_outline.initial_selection.clone();
+        let expanded_scene = scene_outline.initial_expanded.clone();
+        let selected_world_asset = scene_outline
+            .assets
+            .first()
+            .map(|asset| asset.name.clone())
+            .unwrap_or_default();
         Self {
             context,
             state,
             renderer,
-            workspace: Workspace::Morphs,
+            workspace: Workspace::default(),
             runtime_viewport: Rect::NOTHING,
-            selected_scene: "Tree 014",
+            scene_outline,
+            expanded_scene,
+            selected_scene,
+            selected_world_asset,
             selected_asset: "forest-grass",
             test_tool: "Sessions",
             asset_filter: "All",
@@ -521,9 +1026,6 @@ impl StudioShell {
             #[cfg(not(target_os = "macos"))]
             new_project_title_focus_requested: false,
             logo_texture,
-            position: [6.4, 0.0, -12.8],
-            rotation: 18.0,
-            scale: 1.0,
             roughness: 0.72,
             pending_textures_delta: egui::TexturesDelta::default(),
         }
@@ -1768,12 +2270,12 @@ impl StudioShell {
                     ui.add_space(10.0);
                     ui.horizontal_wrapped(|ui| {
                         for asset in ["forest-grass", "forest-wood", "campfire", "tree", "castle"] {
-                            asset_tile(
-                                ui,
-                                asset,
-                                self.selected_asset == asset,
-                                &mut self.selected_asset,
-                            );
+                            let (icon, kind) = asset_kind(asset);
+                            if asset_tile(ui, asset, icon, kind, self.selected_asset == asset)
+                                .clicked()
+                            {
+                                self.selected_asset = asset;
+                            }
                         }
                     });
                 });
@@ -2366,60 +2868,21 @@ impl StudioShell {
             icon_button(ui, Icon::Filter, "Filter scene", false);
             icon_button(ui, Icon::Plus, "Add object", false);
         });
-        Frame::NONE
-            .inner_margin(Margin::symmetric(0, 4))
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                scene_row(ui, 0, Icon::World, true, "World", &mut self.selected_scene);
-                scene_row(
-                    ui,
-                    1,
-                    Icon::Folder,
-                    false,
-                    "Environment",
-                    &mut self.selected_scene,
-                );
-                scene_row(
-                    ui,
-                    1,
-                    Icon::Folder,
-                    true,
-                    "Village",
-                    &mut self.selected_scene,
-                );
-                scene_row(
-                    ui,
-                    2,
-                    Icon::Object,
-                    false,
-                    "House 01",
-                    &mut self.selected_scene,
-                );
-                scene_row(ui, 2, Icon::Object, false, "Well", &mut self.selected_scene);
-                scene_row(
-                    ui,
-                    1,
-                    Icon::Folder,
-                    true,
-                    "Forest",
-                    &mut self.selected_scene,
-                );
-                scene_row(
-                    ui,
-                    2,
-                    Icon::Object,
-                    false,
-                    "Tree 013",
-                    &mut self.selected_scene,
-                );
-                scene_row(
-                    ui,
-                    2,
-                    Icon::Object,
-                    false,
-                    "Tree 014",
-                    &mut self.selected_scene,
-                );
+                Frame::NONE
+                    .inner_margin(Margin::symmetric(0, 4))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        show_scene_node(
+                            ui,
+                            &self.scene_outline.root,
+                            0,
+                            &mut self.expanded_scene,
+                            &mut self.selected_scene,
+                        );
+                    });
             });
     }
 
@@ -2428,34 +2891,28 @@ impl StudioShell {
             icon_button(ui, Icon::Lock, "Lock inspector", false);
             icon_button(ui, Icon::More, "Inspector options", false);
         });
+        let selected = self
+            .scene_outline
+            .root
+            .find(&self.selected_scene)
+            .cloned()
+            .unwrap_or_else(|| self.scene_outline.root.clone());
         content_frame().show(ui, |ui| {
-            selected_object_header(ui, self.selected_scene, "Mesh instance");
+            selected_object_header(ui, &selected.label, selected.kind);
             ui.add_space(2.0);
-            property_section(ui, "Transform", |ui| {
-                for (index, (axis, value)) in ["X", "Y", "Z"]
-                    .into_iter()
-                    .zip(&mut self.position)
-                    .enumerate()
-                {
-                    drag_property_row(
-                        ui,
-                        if index == 0 { "Position" } else { "" },
-                        axis,
-                        value,
-                        0.1,
-                        "",
-                    );
-                }
-                ui.add_space(2.0);
-                drag_property_row(ui, "Rotation", "", &mut self.rotation, 0.5, "°");
-                drag_property_row(ui, "Scale", "", &mut self.scale, 0.01, "");
-            });
-            property_section(ui, "Material", |ui| {
-                property_row(ui, "Surface", "forest-wood");
-            });
-            property_section(ui, "Collision", |ui| {
-                property_row(ui, "Mode", "Automatic");
-            });
+            if selected.properties.is_empty() {
+                ui.label(
+                    RichText::new("No properties")
+                        .size(TYPE.secondary)
+                        .color(palette(ui).muted),
+                );
+            } else {
+                property_section(ui, "Manifest", |ui| {
+                    for (label, value) in &selected.properties {
+                        property_row(ui, label, value);
+                    }
+                });
+            }
         });
     }
 
@@ -2484,14 +2941,44 @@ impl StudioShell {
         Frame::NONE
             .inner_margin(Margin::symmetric(8, 8))
             .show(ui, |ui| {
+                let query = self.search_query.trim().to_lowercase();
+                let assets = self
+                    .scene_outline
+                    .assets
+                    .iter()
+                    .filter(|asset| match self.asset_filter {
+                        "Images" => asset.kind == "IMAGE",
+                        "Materials" => asset.kind == "MATERIAL",
+                        "Characters" => asset.kind == "CHARACTER",
+                        _ => true,
+                    })
+                    .filter(|asset| query.is_empty() || asset.name.to_lowercase().contains(&query))
+                    .cloned()
+                    .collect::<Vec<_>>();
                 ui.horizontal_wrapped(|ui| {
-                    for asset in ["forest-grass", "forest-wood", "campfire", "tree", "castle"] {
-                        asset_tile(
-                            ui,
-                            asset,
-                            self.selected_asset == asset,
-                            &mut self.selected_asset,
+                    if assets.is_empty() {
+                        ui.label(
+                            RichText::new(if query.is_empty() {
+                                "No assets in this game."
+                            } else {
+                                "No matching assets."
+                            })
+                            .size(TYPE.secondary)
+                            .color(colors.muted),
                         );
+                    }
+                    for asset in assets {
+                        if asset_tile(
+                            ui,
+                            &asset.name,
+                            asset.icon,
+                            asset.kind,
+                            self.selected_world_asset == asset.name,
+                        )
+                        .clicked()
+                        {
+                            self.selected_world_asset = asset.name;
+                        }
                     }
                 });
             });
@@ -3152,7 +3639,8 @@ fn property_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.put(
         field.shrink2(egui::vec2(6.0, 0.0)),
         egui::Label::new(RichText::new(value).size(TYPE.secondary).color(colors.text)).truncate(),
-    );
+    )
+    .on_hover_text(value);
 }
 
 fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
@@ -3161,7 +3649,7 @@ fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
         egui::vec2(ui.available_width(), CONTROL_HEIGHT),
         Sense::hover(),
     );
-    let label_width = 64.0;
+    let label_width = 84.0;
     ui.painter().text(
         egui::pos2(row.min.x + label_width - 8.0, row.center().y),
         Align2::RIGHT_CENTER,
@@ -3172,59 +3660,26 @@ fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
     Rect::from_min_max(row.min + egui::vec2(label_width, 0.0), row.max)
 }
 
-fn drag_property_row(
+fn show_scene_node(
     ui: &mut egui::Ui,
-    label: &str,
-    axis: &str,
-    value: &mut f32,
-    speed: f64,
-    suffix: &str,
-) {
-    let colors = palette(ui);
-    let field = property_field(ui, label);
-    ui.painter().rect_filled(field, UI.radius, colors.field);
-    let mut value_rect = field;
-    if !axis.is_empty() {
-        value_rect.min.x += 20.0;
-        ui.painter().text(
-            field.left_center() + egui::vec2(10.0, 0.0),
-            Align2::CENTER_CENTER,
-            axis,
-            FontId::proportional(TYPE.meta),
-            axis_color(axis, colors),
-        );
-    }
-    ui.push_id((label, axis), |ui| {
-        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
-        ui.put(
-            value_rect,
-            egui::DragValue::new(value)
-                .speed(speed)
-                .suffix(suffix)
-                .min_decimals(2)
-                .update_while_editing(false),
-        )
-        .on_hover_text(format!(
-            "{} {axis} · drag to adjust; double-click to type (preview)",
-            if label.is_empty() { "Position" } else { label }
-        ));
-    });
-}
-
-fn scene_row(
-    ui: &mut egui::Ui,
+    node: &SceneNode,
     depth: usize,
-    icon: Icon,
-    expanded: bool,
-    name: &'static str,
-    selected: &mut &'static str,
+    expanded_nodes: &mut BTreeSet<String>,
+    selected: &mut String,
 ) {
+    let expanded = expanded_nodes.contains(&node.id);
+    let has_children = !node.children.is_empty();
     let colors = palette(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
-    let is_selected = *selected == name;
+    let is_selected = *selected == node.id;
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, is_selected, name)
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            is_selected,
+            &node.label,
+        )
     });
     if is_selected || response.hovered() {
         ui.painter().rect_filled(
@@ -3239,10 +3694,19 @@ fn scene_row(
     }
     paint_focus(ui, &response);
     let x = rect.min.x + UI.inset + depth as f32 * 12.0;
-    if matches!(icon, Icon::Folder | Icon::World) {
+    let disclosure_rect =
+        Rect::from_center_size(egui::pos2(x + 5.0, rect.center().y), Vec2::splat(14.0));
+    let disclosure = has_children.then(|| {
+        ui.interact(
+            disclosure_rect,
+            ui.id().with(("scene-disclosure", &node.id)),
+            Sense::click(),
+        )
+    });
+    if has_children {
         paint_icon(
             ui.painter(),
-            Rect::from_center_size(egui::pos2(x + 5.0, rect.center().y), Vec2::splat(10.0)),
+            disclosure_rect.shrink(2.0),
             if expanded {
                 Icon::ChevronDown
             } else {
@@ -3254,48 +3718,90 @@ fn scene_row(
     paint_icon(
         ui.painter(),
         Rect::from_center_size(egui::pos2(x + 19.0, rect.center().y), Vec2::splat(UI.icon)),
-        icon,
+        node.icon,
         if is_selected {
             colors.text
         } else {
             colors.faint
         },
     );
-    let label_font = if is_selected || matches!(icon, Icon::Folder | Icon::World) {
+    let label_font = if is_selected || has_children {
         medium_font(TYPE.primary)
     } else {
         FontId::proportional(TYPE.primary)
     };
-    ui.painter().text(
-        egui::pos2(x + 30.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        label_font,
-        if is_selected {
-            colors.text
-        } else {
-            colors.secondary_text
-        },
-    );
-    paint_icon(
-        ui.painter(),
-        Rect::from_center_size(
+    let detail_width = node.detail.as_ref().map_or(0.0, |detail| {
+        ui.painter()
+            .layout_no_wrap(
+                detail.clone(),
+                FontId::proportional(TYPE.meta),
+                colors.faint,
+            )
+            .size()
+            .x
+            + 12.0
+    });
+    let label_left = x + 28.0;
+    let label_right = (rect.max.x - detail_width).max(label_left);
+    ui.painter()
+        .with_clip_rect(Rect::from_min_max(
+            egui::pos2(label_left, rect.min.y),
+            egui::pos2(label_right, rect.max.y),
+        ))
+        .text(
+            egui::pos2(x + 30.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            &node.label,
+            label_font,
+            if is_selected {
+                colors.text
+            } else {
+                colors.secondary_text
+            },
+        );
+    if let Some(detail) = &node.detail {
+        ui.painter().text(
             rect.right_center() - egui::vec2(8.0, 0.0),
-            Vec2::splat(UI.icon),
-        ),
-        Icon::Eye,
-        if response.hovered() || is_selected {
-            colors.muted
+            Align2::RIGHT_CENTER,
+            detail,
+            FontId::proportional(TYPE.meta),
+            if is_selected {
+                colors.text
+            } else {
+                colors.faint
+            },
+        );
+    }
+    if disclosure.is_some_and(|response| response.clicked()) {
+        if expanded {
+            expanded_nodes.remove(&node.id);
         } else {
-            colors.surface
-        },
-    );
-    if response.clicked() {
-        *selected = name;
+            expanded_nodes.insert(node.id.clone());
+        }
+    } else if response.clicked() {
+        *selected = node.id.clone();
+        if has_children && response.double_clicked() {
+            if expanded {
+                expanded_nodes.remove(&node.id);
+            } else {
+                expanded_nodes.insert(node.id.clone());
+            }
+        }
+    }
+    if expanded {
+        for child in &node.children {
+            show_scene_node(ui, child, depth + 1, expanded_nodes, selected);
+        }
     }
 }
 
-fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: &mut &'static str) {
+fn asset_tile(
+    ui: &mut egui::Ui,
+    name: &str,
+    asset_icon: Icon,
+    kind: &'static str,
+    selected: bool,
+) -> egui::Response {
     let colors = palette(ui);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(76.0, 62.0), Sense::click());
     response.widget_info(|| {
@@ -3324,20 +3830,24 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
         egui::pos2(rect.max.x - 6.0, rect.max.y - 17.0),
     );
     ui.painter().rect_filled(preview, UI.radius, colors.surface);
-    let (asset_icon, kind) = asset_kind(name);
     paint_icon(
         ui.painter(),
         Rect::from_center_size(preview.center(), Vec2::splat(22.0)),
         asset_icon,
         colors.muted,
     );
-    ui.painter().text(
-        egui::pos2(rect.center().x, rect.max.y - 8.0),
-        Align2::CENTER_CENTER,
-        name,
-        FontId::proportional(TYPE.meta),
-        if selected { colors.text } else { colors.muted },
-    );
+    ui.painter()
+        .with_clip_rect(Rect::from_min_max(
+            egui::pos2(rect.min.x + 4.0, rect.max.y - 16.0),
+            egui::pos2(rect.max.x - 4.0, rect.max.y),
+        ))
+        .text(
+            egui::pos2(rect.center().x, rect.max.y - 8.0),
+            Align2::CENTER_CENTER,
+            name,
+            FontId::proportional(TYPE.meta),
+            if selected { colors.text } else { colors.muted },
+        );
     ui.painter().rect_stroke(
         rect,
         UI.radius,
@@ -3345,10 +3855,7 @@ fn asset_tile(ui: &mut egui::Ui, name: &'static str, selected: bool, selection: 
         StrokeKind::Inside,
     );
     paint_focus(ui, &response);
-    if response.clicked() {
-        *selection = name;
-    }
-    response.on_hover_text(format!("{name} · {} preview", kind.to_lowercase()));
+    response.on_hover_text(format!("{name} · {} preview", kind.to_lowercase()))
 }
 
 fn compact_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
@@ -3683,15 +4190,6 @@ fn paint_down_chevron(ui: &mut egui::Ui) {
     let colors = palette(ui);
     let response = ui.allocate_response(Vec2::splat(UI.icon), Sense::hover());
     paint_icon(ui.painter(), response.rect, Icon::ChevronDown, colors.faint);
-}
-
-fn axis_color(axis: &str, colors: Palette) -> Color32 {
-    match axis {
-        "X" => colors.axis_x,
-        "Y" => colors.axis_y,
-        "Z" => colors.axis_z,
-        _ => colors.muted,
-    }
 }
 
 fn tool_icon(tool: &str) -> Icon {
