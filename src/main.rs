@@ -368,7 +368,7 @@ impl StudioApp {
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
         self.last_frame = now;
 
-        let project_name = game_name(&self.game_root);
+        let project_name = game_name(&self.project_root);
         if let Some(shell) = &mut self.shell {
             shell.set_active_morph_loadout(&self.morph_loadout);
         }
@@ -891,7 +891,11 @@ impl StudioApp {
             return;
         };
 
-        let result = project_manifest(&project).and_then(|_| self.open_created_project(&project));
+        let result = project_manifest(&project).and_then(|_| {
+            let sources =
+                load_game_sources(Some(project.clone())).map_err(|error| error.to_string())?;
+            self.open_project_sources(sources)
+        });
         match result {
             Ok(()) => {
                 if let Some(shell) = &mut self.shell {
@@ -919,21 +923,53 @@ impl StudioApp {
     }
 
     fn open_created_project(&mut self, project: &Path) -> Result<(), String> {
-        let manifest_source = read_utf8_file(&project.join("manifest.json"), "manifest")
-            .map_err(|error| error.to_string())?;
-        let script_source = read_utf8_file(&project.join("src/main.luau"), "source")
-            .map_err(|error| error.to_string())?;
-        let image_atlas =
-            load_image_atlas(project, &manifest_source).map_err(|error| error.to_string())?;
-        let morph_catalog_path = discover_project_morph_catalog(project);
-        let local_morph_catalog = morph_catalog_path
-            .as_deref()
-            .map(load_local_morph_catalog)
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        let client = ClientSession::load(&manifest_source, &script_source)
-            .map_err(|error| error.to_string())?;
-        let network = BackendClient::new(client.game_id())?;
+        let sources = GameSources {
+            project_root: project.to_path_buf(),
+            root: project.to_path_buf(),
+            manifest_source: read_utf8_file(&project.join("manifest.json"), "manifest")
+                .map_err(|error| error.to_string())?,
+            script_source: read_utf8_file(&project.join("src/main.luau"), "source")
+                .map_err(|error| error.to_string())?,
+            standalone_preview: false,
+            temporary_package: None,
+        };
+        self.open_project_sources(sources)
+    }
+
+    fn open_project_sources(&mut self, sources: GameSources) -> Result<(), String> {
+        let GameSources {
+            project_root,
+            root,
+            manifest_source,
+            script_source,
+            standalone_preview,
+            temporary_package,
+        } = sources;
+        debug_assert!(!standalone_preview);
+
+        let prepared = (|| {
+            let image_atlas =
+                load_image_atlas(&root, &manifest_source).map_err(|error| error.to_string())?;
+            let morph_catalog_path = discover_project_morph_catalog(&project_root);
+            let local_morph_catalog = morph_catalog_path
+                .as_deref()
+                .map(load_local_morph_catalog)
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let client = ClientSession::load(&manifest_source, &script_source)
+                .map_err(|error| error.to_string())?;
+            let network = BackendClient::new(client.game_id())?;
+            Ok::<_, String>((image_atlas, local_morph_catalog, client, network))
+        })();
+        let (image_atlas, local_morph_catalog, client, network) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if let Some(package) = temporary_package {
+                    let _ = fs::remove_dir_all(package);
+                }
+                return Err(error);
+            }
+        };
 
         if let (Some(renderer), Some(atlas)) = (&mut self.renderer, &image_atlas)
             && !renderer.set_package_image_atlas(
@@ -943,13 +979,16 @@ impl StudioApp {
                 atlas.regions.clone(),
             )
         {
+            if let Some(package) = temporary_package {
+                let _ = fs::remove_dir_all(package);
+            }
             return Err("the new game's image atlas could not be uploaded".to_owned());
         }
         let old_temporary_package = self.temporary_package.take();
-        self.project_root = project.to_path_buf();
-        self.game_root = project.to_path_buf();
+        self.project_root = project_root;
+        self.game_root = root;
         self.standalone_preview = false;
-        self.temporary_package = None;
+        self.temporary_package = temporary_package;
         self.image_atlas = image_atlas;
         self.network = network;
         self.client = client;
@@ -962,7 +1001,7 @@ impl StudioApp {
         if let Some(window) = &self.window {
             window.set_title(&format!(
                 "Cubacadabra Studio — {}",
-                game_name(&self.game_root)
+                game_name(&self.project_root)
             ));
         }
         let mut shell = {
@@ -977,7 +1016,7 @@ impl StudioApp {
             StudioShell::new(window, renderer)
         };
         shell.set_project_asset_available(true);
-        if let Some(parent) = project.parent() {
+        if let Some(parent) = self.project_root.parent() {
             shell.set_new_project_parent(parent.to_path_buf());
         }
         self.shell = Some(shell);
