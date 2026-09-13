@@ -5,4 +5,5 @@ on:
 jobs:
   compatibility:
     uses: cubacadabra/tools/.github/workflows/compatibility-reusable.yml@main
-    with: { studio_ref: ${{ github.sha }} }
+    with:
+      studio_ref: ${{ github.sha }}
