@@ -2156,10 +2156,18 @@ impl StudioShell {
                     .on_hover_text(project_root);
                     ui.separator();
 
+                    // Keep the composer in the panel's visible region. With
+                    // `auto_shrink(false)`, an unconstrained scroll area
+                    // consumes all remaining height and lays the composer
+                    // out below the panel clip rect.
+                    let reserved_chat_controls_height = 124.0;
+                    let messages_height =
+                        (ui.available_height() - reserved_chat_controls_height).max(64.0);
                     egui::ScrollArea::vertical()
                         .id_salt("codex_chat_messages")
                         .stick_to_bottom(true)
                         .auto_shrink([false, false])
+                        .max_height(messages_height)
                         .show(ui, |ui| {
                             if self.codex_chat_messages.is_empty() {
                                 ui.add_space(12.0);
