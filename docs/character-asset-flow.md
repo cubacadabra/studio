@@ -37,23 +37,29 @@ UI and its stricter body validation are added.
 
 ## Target developer workflow
 
-1. Run `studio --path /path/to/my-game`. Studio treats that directory as the
-   active project, even when the Luau source lives in a separate repository.
-2. In Assets or the character workspace, choose **Import character asset…** and
+1. Start a project from **File → New Project…** when there is no repository
+   yet. Enter a title and choose the parent folder. Studio creates the same
+   starter layout as `create-game`, embeds the current Luau SDK modules, and
+   opens the new project immediately. No Python installation or external CLI
+   is needed.
+2. Alternatively, run `studio --path /path/to/my-game`. Studio treats that
+   directory as the active project, even when the Luau source lives in a
+   separate repository.
+3. In Assets or the character workspace, choose **Import character asset…** and
    select a GLB. The first dialog asks what the file is: **new body**,
    **wearable part**, or **full outfit**. It also shows the detected rig,
    nodes, materials, and triangle counts before writing anything.
-3. Studio maps the file to the canonical rig, selects Near/Mid/Far nodes,
+4. Studio maps the file to the canonical rig, selects Near/Mid/Far nodes,
    previews it in the real renderer, and reports actionable validation errors.
    A new body must provide a compatible skinned base; a wearable must declare
    its occupied slots and fit profiles; a full outfit is represented as a
    composed preset unless it truly replaces the base body.
-4. **Add to this game** writes the source GLB, sidecar, compiled pack, and
+5. **Add to this game** writes the source GLB, sidecar, compiled pack, and
    catalog entry under the game repository. The current slice updates the
    character catalog; manifest wiring and reproducible package builds are the
    next integration step. The developer can commit the generated files
    normally.
-5. An optional **Share with community** action appears only after local
+6. An optional **Share with community** action appears only after local
    validation. It requires sign-in, asks for a license and attribution, shows
    exactly what will be public, then uploads an immutable version. The game
    still references a pinned asset ID/version; publishing never changes the

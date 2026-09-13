@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -338,6 +339,7 @@ const MORPH_LIBRARY_KINDS: [MorphAssetKind; 17] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StudioCommand {
+    NewProject,
     OpenProject,
     Save,
     RevealProject,
@@ -407,6 +409,12 @@ pub(crate) struct StudioShell {
     auth_requested: bool,
     auth_pending: bool,
     auth_user: Option<crate::network::AuthUser>,
+    new_project_dialog_open: bool,
+    new_project_title: String,
+    new_project_parent: PathBuf,
+    new_project_folder_requested: bool,
+    new_project_create_requested: bool,
+    new_project_error: Option<String>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
@@ -496,6 +504,12 @@ impl StudioShell {
             auth_requested: false,
             auth_pending: false,
             auth_user: None,
+            new_project_dialog_open: false,
+            new_project_title: String::new(),
+            new_project_parent: PathBuf::from("."),
+            new_project_folder_requested: false,
+            new_project_create_requested: false,
+            new_project_error: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
@@ -546,6 +560,35 @@ impl StudioShell {
 
     pub(crate) fn set_project_asset_available(&mut self, available: bool) {
         self.project_asset_available = available;
+    }
+
+    pub(crate) fn set_new_project_parent(&mut self, parent: PathBuf) {
+        self.new_project_parent = parent;
+    }
+
+    pub(crate) fn take_new_project_folder_request(&mut self) -> bool {
+        std::mem::take(&mut self.new_project_folder_requested)
+    }
+
+    pub(crate) fn take_new_project_request(&mut self) -> Option<(String, PathBuf)> {
+        if !std::mem::take(&mut self.new_project_create_requested) {
+            return None;
+        }
+        Some((
+            self.new_project_title.trim().to_owned(),
+            self.new_project_parent.clone(),
+        ))
+    }
+
+    pub(crate) fn set_new_project_error(&mut self, message: String) {
+        self.new_project_dialog_open = true;
+        self.new_project_error = Some(message);
+    }
+
+    pub(crate) fn set_new_project_created(&mut self, project: &Path) {
+        self.new_project_dialog_open = false;
+        self.new_project_error = None;
+        self.notice = format!("Created {}", project.display());
     }
 
     pub(crate) fn set_remote_morph_catalog(&mut self, source: &str) -> Result<usize, String> {
@@ -1162,6 +1205,11 @@ impl StudioShell {
 
     pub(crate) fn execute_command(&mut self, command: StudioCommand) {
         match command {
+            StudioCommand::NewProject => {
+                self.new_project_dialog_open = true;
+                self.new_project_title.clear();
+                self.new_project_error = None;
+            }
             StudioCommand::OpenProject => {
                 self.notice = "Open Project is a layout preview".to_owned();
             }
@@ -1273,7 +1321,66 @@ impl StudioShell {
             Workspace::Morphs => self.show_morphs(ui),
             Workspace::Test => self.show_test(ui),
         }
+        self.show_new_project_dialog(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn show_new_project_dialog(&mut self, context: &egui::Context) {
+        if !self.new_project_dialog_open {
+            return;
+        }
+        let mut open = true;
+        let mut close_requested = false;
+        egui::Window::new("New Project")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(context, |ui| {
+                ui.label("Create a starter game project with its manifest, Luau entry point, and local SDK.");
+                ui.add_space(8.0);
+                ui.label("Game title");
+                let title_response = ui.add(
+                    egui::TextEdit::singleline(&mut self.new_project_title)
+                        .hint_text("The Wild West")
+                        .desired_width(ui.available_width()),
+                );
+                ui.add_space(6.0);
+                ui.label("Parent folder");
+                ui.horizontal(|ui| {
+                    ui.monospace(self.new_project_parent.display().to_string());
+                    if ui.button("Choose…").clicked() {
+                        self.new_project_folder_requested = true;
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Studio will create a new folder from the title and will not overwrite an existing game.")
+                        .size(TYPE.meta)
+                        .color(palette(ui).secondary_text),
+                );
+                if let Some(error) = &self.new_project_error {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(error).size(TYPE.meta).color(palette(ui).axis_x));
+                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        close_requested = true;
+                    }
+                    let create = ui.add_enabled(
+                        !self.new_project_title.trim().is_empty(),
+                        egui::Button::new("Create project"),
+                    );
+                    if create.clicked() || (title_response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))) {
+                        self.new_project_create_requested = true;
+                        close_requested = true;
+                    }
+                });
+            });
+        if close_requested || !open {
+            self.new_project_dialog_open = false;
+        }
     }
 
     fn show_top_bar(&mut self, root: &mut egui::Ui, project_name: &str) {
@@ -1293,6 +1400,11 @@ impl StudioShell {
                     {
                         ui.menu_button(RichText::new("File").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
+                            if menu_entry(ui, Icon::Plus, "New Project…", "Ctrl+N", true).clicked()
+                            {
+                                self.execute_command(StudioCommand::NewProject);
+                                ui.close();
+                            }
                             if menu_entry(ui, Icon::Open, "Open Project…", "Ctrl+O", true).clicked()
                             {
                                 self.execute_command(StudioCommand::OpenProject);

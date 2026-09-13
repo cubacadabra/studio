@@ -10,6 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Instant,
 };
+mod game_creator;
 #[cfg(target_os = "macos")]
 mod macos;
 mod morph_application;
@@ -277,6 +278,9 @@ impl StudioApp {
 
         let mut shell = StudioShell::new(&window, &renderer);
         shell.set_project_asset_available(!self.standalone_preview);
+        if let Ok(parent) = env::current_dir() {
+            shell.set_new_project_parent(parent);
+        }
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.shell = Some(shell);
@@ -406,6 +410,27 @@ impl StudioApp {
             .is_some_and(StudioShell::take_morph_sidecar_import_request);
         if sidecar_import_requested {
             self.import_morph_sidecar();
+        }
+        let new_project_folder_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_new_project_folder_request);
+        if new_project_folder_requested {
+            if let Some(parent) = rfd::FileDialog::new()
+                .set_title("Choose where to create the game")
+                .pick_folder()
+            {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_new_project_parent(parent);
+                }
+            }
+        }
+        let new_project_request = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_new_project_request);
+        if let Some((title, parent)) = new_project_request {
+            self.create_new_project(&title, &parent);
         }
         let project_add_requested = self
             .shell
@@ -793,6 +818,106 @@ impl StudioApp {
             shell.set_morph_project_result(result);
         }
         self.request_redraw();
+    }
+
+    fn create_new_project(&mut self, title: &str, parent: &Path) {
+        let result = game_creator::create_game(title, parent);
+        match result {
+            Ok(created) => match self.open_created_project(&created.project) {
+                Ok(()) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_new_project_created(&created.project);
+                    }
+                }
+                Err(error) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_new_project_error(format!(
+                            "Created {} but could not open it: {error}",
+                            created.project.display()
+                        ));
+                    }
+                }
+            },
+            Err(error) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_new_project_error(error);
+                }
+            }
+        }
+        self.request_redraw();
+    }
+
+    fn open_created_project(&mut self, project: &Path) -> Result<(), String> {
+        let manifest_source = read_utf8_file(&project.join("manifest.json"), "manifest")
+            .map_err(|error| error.to_string())?;
+        let script_source = read_utf8_file(&project.join("src/main.luau"), "source")
+            .map_err(|error| error.to_string())?;
+        let image_atlas =
+            load_image_atlas(project, &manifest_source).map_err(|error| error.to_string())?;
+        let morph_catalog_path = discover_project_morph_catalog(project);
+        let local_morph_catalog = morph_catalog_path
+            .as_deref()
+            .map(load_local_morph_catalog)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let client = ClientSession::load(&manifest_source, &script_source)
+            .map_err(|error| error.to_string())?;
+        let network = BackendClient::new(client.game_id())?;
+
+        if let (Some(renderer), Some(atlas)) = (&mut self.renderer, &image_atlas)
+            && !renderer.set_package_image_atlas(
+                atlas.width,
+                atlas.height,
+                &atlas.pixels,
+                atlas.regions.clone(),
+            )
+        {
+            return Err("the new game's image atlas could not be uploaded".to_owned());
+        }
+        let old_temporary_package = self.temporary_package.take();
+        self.project_root = project.to_path_buf();
+        self.game_root = project.to_path_buf();
+        self.standalone_preview = false;
+        self.temporary_package = None;
+        self.image_atlas = image_atlas;
+        self.network = network;
+        self.client = client;
+        self.local_morph_catalog = local_morph_catalog;
+        self.morph_loadout = default_morph_loadout();
+        self.morph_request_serial = 0;
+        self.pending_morph = None;
+        self.registered_morphs.clear();
+        self.pressed_keys.clear();
+        if let Some(window) = &self.window {
+            window.set_title(&format!(
+                "Cubacadabra Studio — {}",
+                game_name(&self.game_root)
+            ));
+        }
+        let mut shell = {
+            let window = self
+                .window
+                .as_ref()
+                .ok_or_else(|| "Studio window is not ready.".to_owned())?;
+            let renderer = self
+                .renderer
+                .as_ref()
+                .ok_or_else(|| "Studio renderer is not ready.".to_owned())?;
+            StudioShell::new(window, renderer)
+        };
+        shell.set_project_asset_available(true);
+        if let Some(parent) = project.parent() {
+            shell.set_new_project_parent(parent.to_path_buf());
+        }
+        self.shell = Some(shell);
+        if let Some(local_catalog) = self.local_morph_catalog.take() {
+            self.install_local_morphs(local_catalog)?;
+        }
+        if let Some(package) = old_temporary_package {
+            let _ = fs::remove_dir_all(package);
+        }
+        self.update_viewport();
+        Ok(())
     }
 
     fn import_morph_pack(&mut self) {

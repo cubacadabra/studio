@@ -14,13 +14,14 @@ use objc2_foundation::{NSData, NSDictionary, NSObject, NSString, ns_string};
 use crate::shell::StudioCommand;
 
 const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
-const OPEN_PROJECT_TAG: isize = 1;
-const SAVE_TAG: isize = 2;
-const REVEAL_PROJECT_TAG: isize = 3;
-const PREFERENCES_TAG: isize = 4;
-const MAXIMIZE_VIEWPORT_TAG: isize = 5;
-const RESET_LAYOUT_TAG: isize = 6;
-const COPY_TAG: isize = 7;
+const NEW_PROJECT_TAG: isize = 1;
+const OPEN_PROJECT_TAG: isize = 2;
+const SAVE_TAG: isize = 3;
+const REVEAL_PROJECT_TAG: isize = 4;
+const PREFERENCES_TAG: isize = 5;
+const MAXIMIZE_VIEWPORT_TAG: isize = 6;
+const RESET_LAYOUT_TAG: isize = 7;
+const COPY_TAG: isize = 8;
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -162,6 +163,14 @@ fn configure_application_menu(menu: &NSMenu, main_thread: MainThreadMarker, targ
 fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: &AnyObject) {
     let menu = NSMenu::new(main_thread);
     menu.setTitle(ns_string!("File"));
+    menu.addItem(&studio_menu_item(
+        main_thread,
+        target,
+        ns_string!("New Project…"),
+        ns_string!("n"),
+        NEW_PROJECT_TAG,
+        None,
+    ));
     menu.addItem(&studio_menu_item(
         main_thread,
         target,
@@ -359,6 +368,7 @@ fn main_thread_marker() -> MainThreadMarker {
 
 fn command_for_tag(tag: isize) -> Option<StudioCommand> {
     match tag {
+        NEW_PROJECT_TAG => Some(StudioCommand::NewProject),
         OPEN_PROJECT_TAG => Some(StudioCommand::OpenProject),
         SAVE_TAG => Some(StudioCommand::Save),
         REVEAL_PROJECT_TAG => Some(StudioCommand::RevealProject),
