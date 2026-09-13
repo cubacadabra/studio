@@ -56,6 +56,10 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build Studio
+        env:
+          # Embed the production backend as the default for release binaries.
+          # Local runs still use 127.0.0.1 unless overridden at runtime.
+          CUBACADABRA_BACKEND_URL: https://api.cubacadabra.com/
         run: cargo build --release --manifest-path studio/Cargo.toml --bin studio --target "${{ matrix.target }}"
 
       - name: Package macOS application

@@ -20,7 +20,10 @@ const WEB_URL_ENV: &str = "CUBACADABRA_WEB_URL";
 const AUTH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const AUTH_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-const DEFAULT_BACKEND_URL: &str = "http://127.0.0.1:8787";
+const DEFAULT_BACKEND_URL: &str = match option_env!("CUBACADABRA_BACKEND_URL") {
+    Some(url) => url,
+    None => "http://127.0.0.1:8787",
+};
 const BACKEND_URL_ENV: &str = "CUBACADABRA_BACKEND_URL";
 const MOVE_SEND_INTERVAL: Duration = Duration::from_millis(83);
 const MOVE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -926,6 +929,15 @@ mod tests {
         assert_eq!(
             socket.as_str(),
             "wss://api.cubacadabra.com/world/real-game?client=web&game=first-game"
+        );
+    }
+
+    #[test]
+    fn production_backend_uses_production_web_login_url() {
+        let backend = parse_backend_url("https://api.cubacadabra.com").expect("valid backend URL");
+        assert_eq!(
+            web_base_url(&backend).unwrap().as_str(),
+            "https://cubacadabra.com/login/"
         );
     }
 }
