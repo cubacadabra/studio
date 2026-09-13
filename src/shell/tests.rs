@@ -138,6 +138,29 @@ fn editor_headers_keep_their_height_with_actions_at_different_widths() {
 }
 
 #[test]
+fn toolbar_buttons_size_their_hitbox_to_their_label() {
+    let context = egui::Context::default();
+    configure_context(&context);
+    let mut button_rect = Rect::NOTHING;
+    let output = context.run_ui(egui::RawInput::default(), |ui| {
+        button_rect = toolbar_button(ui, Icon::Character, "Sign in", false).rect;
+    });
+    let label_rect = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == "Sign in" => {
+                Some(Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        })
+        .expect("the toolbar button should paint its label");
+
+    assert!(button_rect.width() > 54.0);
+    assert!(button_rect.contains(label_rect.right_center()));
+}
+
+#[test]
 fn morph_preview_detects_screen_space_slivers() {
     assert!(
         projected_triangle_area([

@@ -1603,10 +1603,12 @@ impl StudioShell {
                                     .size(TYPE.meta)
                                     .color(colors.secondary_text),
                             );
-                        } else if toolbar_button(ui, Icon::Open, "Sign in", false).clicked() {
+                        } else if toolbar_button(ui, Icon::Character, "Sign in", false).clicked() {
                             self.auth_requested = true;
                         }
-                        if ui.available_width() >= 130.0 {
+                        let play_label = if self.playing { "Stop" } else { "Play" };
+                        let play_width = toolbar_button_width(ui, play_label);
+                        if ui.available_width() >= play_width + 48.0 {
                             let live = ui.allocate_response(
                                 egui::vec2(40.0, CONTROL_HEIGHT),
                                 Sense::hover(),
@@ -1614,7 +1616,6 @@ impl StudioShell {
                             paint_status_label(ui, live.rect, colors.live, "Live");
                         }
                         let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
-                        let play_label = if self.playing { "Stop" } else { "Play" };
                         if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
                             self.playing = !self.playing;
                             self.notice = if self.playing {
@@ -1623,13 +1624,19 @@ impl StudioShell {
                                 "Play session paused".to_owned()
                             };
                         }
-                        if ui.available_width() > 180.0 {
+                        let project_width = (ui.available_width() - 17.0).min(180.0);
+                        if project_width >= 72.0 {
                             vertical_separator(ui, 14.0);
-                            ui.label(
-                                RichText::new(project_name)
-                                    .size(TYPE.secondary)
-                                    .color(colors.secondary_text),
-                            );
+                            ui.add_sized(
+                                [project_width, CONTROL_HEIGHT],
+                                egui::Label::new(
+                                    RichText::new(project_name)
+                                        .size(TYPE.secondary)
+                                        .color(colors.secondary_text),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(project_name);
                         }
                     });
                 });
@@ -1646,11 +1653,17 @@ impl StudioShell {
                     ui.set_height(STATUS_BAR_HEIGHT);
                     ui.spacing_mut().interact_size.y = 16.0;
                     inline_icon(ui, Icon::Check, colors.muted);
-                    ui.label(
-                        RichText::new(&self.notice)
-                            .size(TYPE.meta)
-                            .color(colors.muted),
-                    );
+                    let notice_width = (ui.available_width() - 124.0).max(40.0);
+                    ui.add_sized(
+                        [notice_width, 16.0],
+                        egui::Label::new(
+                            RichText::new(&self.notice)
+                                .size(TYPE.meta)
+                                .color(colors.muted),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(&self.notice);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new("Layout preview")
@@ -1838,6 +1851,7 @@ impl StudioShell {
                 });
                 content_frame().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                         if ui.button("Import character asset…").clicked() {
                             self.morph_import_requested = true;
                             self.morph_import_error = None;
@@ -3547,7 +3561,9 @@ fn menu_entry(
 
 fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> egui::Response {
     let colors = palette(ui);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(54.0, CONTROL_HEIGHT), Sense::click());
+    let width = toolbar_button_width(ui, label);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     if active || response.hovered() {
         ui.painter().rect_filled(
@@ -3578,6 +3594,19 @@ fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> e
     );
     paint_focus(ui, &response);
     response
+}
+
+fn toolbar_button_width(ui: &egui::Ui, label: &str) -> f32 {
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            medium_font(TYPE.secondary),
+            Color32::WHITE,
+        )
+        .size()
+        .x;
+    (label_width + 30.0).ceil().max(44.0)
 }
 
 fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str, active: bool) -> egui::Response {
