@@ -1582,16 +1582,20 @@ fn next_power_of_two(value: u32) -> u32 {
 
 struct StudioOptions {
     game_path: Option<PathBuf>,
+    validate_project_path: Option<PathBuf>,
     morph_catalog_path: Option<PathBuf>,
 }
 
 fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
     let mut args = env::args_os().skip(1);
     let mut game_path = None;
+    let mut validate_project_path = None;
     let mut morph_catalog_path = None;
     while let Some(argument) = args.next() {
         if argument == "--help" || argument == "-h" {
-            println!("Usage: studio [--path <game-directory>] [--morph-catalog <catalog.json>]");
+            println!(
+                "Usage: studio [--path <game-directory>] [--validate-project <game-directory>] [--morph-catalog <catalog.json>]"
+            );
             println!();
             println!(
                 "Open a local Cubacadabra game package, or launch the standalone morph preview."
@@ -1603,6 +1607,10 @@ fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
                 args.next()
                     .ok_or_else(|| StudioError("--path expects a game directory".to_owned()))?,
             );
+        } else if argument == "--validate-project" {
+            validate_project_path = Some(args.next().ok_or_else(|| {
+                StudioError("--validate-project expects a game directory".to_owned())
+            })?);
         } else if argument == "--morph-catalog" {
             morph_catalog_path = Some(args.next().ok_or_else(|| {
                 StudioError("--morph-catalog expects a catalog JSON file".to_owned())
@@ -1626,6 +1634,18 @@ fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
             path.display()
         ))));
     }
+    let validate_project_path = validate_project_path
+        .map(PathBuf::from)
+        .map(|path| path.canonicalize())
+        .transpose()?;
+    if let Some(path) = &validate_project_path
+        && !path.is_dir()
+    {
+        return Err(Box::new(StudioError(format!(
+            "project path is not a directory: {}",
+            path.display()
+        ))));
+    }
     let morph_catalog_path = morph_catalog_path
         .map(PathBuf::from)
         .map(|path| path.canonicalize())
@@ -1640,8 +1660,20 @@ fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
     }
     Ok(StudioOptions {
         game_path,
+        validate_project_path,
         morph_catalog_path,
     })
+}
+
+fn validate_project(game_path: PathBuf) -> Result<(), Box<dyn Error>> {
+    let sources = load_game_sources(Some(game_path.clone()))?;
+    let client = ClientSession::load(&sources.manifest_source, &sources.script_source)?;
+    println!(
+        "Validated {} ({}) through the shared game builder.",
+        game_path.display(),
+        client.game_id()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1663,6 +1695,20 @@ mod tests {
         .expect("standalone client");
         assert_eq!(client.game_id(), "studio-morph-preview");
         assert_eq!(client.engine().active_world_id(), Some("lobby"));
+    }
+
+    #[test]
+    fn raw_game_projects_load_through_the_shared_builder() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
+        let sources = load_game_sources(Some(path)).expect("raw game project");
+        let client = cubacadabra_client::ClientSession::load(
+            &sources.manifest_source,
+            &sources.script_source,
+        )
+        .expect("built raw project");
+        assert_eq!(client.game_id(), "first-game");
+        assert!(sources.script_source.contains("begin module: round.luau"));
+        assert!(!sources.script_source.contains("@include"));
     }
 
     #[test]
@@ -1727,6 +1773,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     debug!("Studio debug logging initialized");
     let options = parse_options()?;
+    if let Some(path) = options.validate_project_path {
+        return validate_project(path);
+    }
     let mut app = StudioApp::load(options.game_path, options.morph_catalog_path)?;
     let mut event_loop_builder = EventLoop::builder();
     #[cfg(target_os = "macos")]
