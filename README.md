@@ -60,7 +60,7 @@ The resulting binary can be invoked as:
 Controls:
 
 - `World`, `Assets`, `Materials`, and `Test`: switch workspace previews
-- `Connect ChatGPT`: connect the user's ChatGPT subscription through Codex App Server
+- `ChatGPT · <plan>`: open the in-window Codex chat for the current project
 - `Play`: enable or pause game input
 - `WASD` or arrow keys: move
 - `Shift`: sprint
@@ -73,8 +73,12 @@ Controls:
 
 Studio launches `codex app-server` over its default stdio transport, reads any
 cached ChatGPT account, and opens the browser flow when the user selects
-`Connect ChatGPT`. Codex owns and refreshes the ChatGPT credentials; Studio
-only keeps the account email and plan label in memory for connection status.
+`Connect ChatGPT`. Once connected, select the account label in the top bar to
+open the in-window Codex chat. Each conversation and turn uses the currently
+open project as its working directory, can write only inside that project, and
+has network access disabled by default. Codex owns and refreshes the ChatGPT
+credentials; Studio only keeps the account email and plan label in memory for
+connection status.
 
 Packaged builds should place the pinned Codex executable next to the Studio
 executable on Windows and Linux, or in `Contents/Resources/codex` on macOS.

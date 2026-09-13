@@ -852,6 +852,17 @@ pub(crate) struct PreparedShell {
     screen: ScreenDescriptor,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CodexChatRole {
+    User,
+    Assistant,
+}
+
+struct CodexChatMessage {
+    role: CodexChatRole,
+    text: String,
+}
+
 pub(crate) struct StudioShell {
     context: egui::Context,
     state: EguiState,
@@ -910,6 +921,15 @@ pub(crate) struct StudioShell {
     chatgpt_available: bool,
     chatgpt_account: Option<ChatGptAccount>,
     chatgpt_error: Option<String>,
+    codex_project_root: PathBuf,
+    codex_chat_open: bool,
+    codex_chat_open_requested: bool,
+    codex_chat_send_requested: Option<String>,
+    codex_chat_messages: Vec<CodexChatMessage>,
+    codex_chat_draft: String,
+    codex_chat_ready: bool,
+    codex_chat_busy: bool,
+    codex_chat_error: Option<String>,
     open_project_requested: bool,
     project_loading: Option<ProjectLoadingState>,
     new_project_dialog_open: bool,
@@ -1039,6 +1059,15 @@ impl StudioShell {
             chatgpt_available: true,
             chatgpt_account: None,
             chatgpt_error: None,
+            codex_project_root: PathBuf::new(),
+            codex_chat_open: false,
+            codex_chat_open_requested: false,
+            codex_chat_send_requested: None,
+            codex_chat_messages: Vec::new(),
+            codex_chat_draft: String::new(),
+            codex_chat_ready: false,
+            codex_chat_busy: false,
+            codex_chat_error: None,
             open_project_requested: false,
             project_loading: None,
             new_project_dialog_open: false,
@@ -1098,6 +1127,63 @@ impl StudioShell {
 
     pub(crate) fn take_chatgpt_auth_request(&mut self) -> bool {
         std::mem::take(&mut self.chatgpt_auth_requested)
+    }
+
+    pub(crate) fn set_codex_project_root(&mut self, project_root: PathBuf) {
+        self.codex_project_root = project_root;
+    }
+
+    pub(crate) fn take_codex_chat_open_request(&mut self) -> bool {
+        std::mem::take(&mut self.codex_chat_open_requested)
+    }
+
+    pub(crate) fn take_codex_chat_send_request(&mut self) -> Option<String> {
+        self.codex_chat_send_requested.take()
+    }
+
+    pub(crate) fn set_codex_chat_ready(&mut self) {
+        self.codex_chat_ready = true;
+        self.codex_chat_error = None;
+    }
+
+    pub(crate) fn set_codex_chat_delta(&mut self, delta: String) {
+        self.codex_chat_busy = true;
+        if let Some(message) = self
+            .codex_chat_messages
+            .last_mut()
+            .filter(|message| message.role == CodexChatRole::Assistant)
+        {
+            message.text.push_str(&delta);
+        } else {
+            self.codex_chat_messages.push(CodexChatMessage {
+                role: CodexChatRole::Assistant,
+                text: delta,
+            });
+        }
+    }
+
+    pub(crate) fn set_codex_chat_message(&mut self, text: String) {
+        if let Some(message) = self
+            .codex_chat_messages
+            .last_mut()
+            .filter(|message| message.role == CodexChatRole::Assistant)
+        {
+            message.text = text;
+        } else if !text.is_empty() {
+            self.codex_chat_messages.push(CodexChatMessage {
+                role: CodexChatRole::Assistant,
+                text,
+            });
+        }
+    }
+
+    pub(crate) fn set_codex_chat_completed(&mut self) {
+        self.codex_chat_busy = false;
+    }
+
+    pub(crate) fn set_codex_chat_error(&mut self, message: String) {
+        self.codex_chat_busy = false;
+        self.codex_chat_error = Some(message);
     }
 
     pub(crate) fn set_chatgpt_pending(&mut self) {
@@ -1986,6 +2072,9 @@ impl StudioShell {
         self.runtime_viewport = Rect::NOTHING;
         self.show_top_bar(ui, project_name);
         self.show_status_bar(ui);
+        if self.codex_chat_open {
+            self.show_codex_chat(ui);
+        }
         match self.workspace {
             Workspace::World => self.show_world(ui),
             Workspace::Assets => self.show_assets(ui),
@@ -2030,6 +2119,138 @@ impl StudioShell {
                         .desired_width(ui.available_width())
                         .show_percentage(),
                 );
+            });
+    }
+
+    fn show_codex_chat(&mut self, root: &mut egui::Ui) {
+        let colors = palette(root);
+        egui::Panel::right("codex_chat_panel")
+            .resizable(true)
+            .default_size(360.0)
+            .size_range(280.0..=480.0)
+            .frame(editor_frame(colors.panel_raised))
+            .show(root, |ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Codex chat")
+                                .font(semibold_font(TYPE.primary))
+                                .color(colors.text),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .button(RichText::new("×").size(TYPE.primary))
+                                .on_hover_text("Close Codex chat")
+                                .clicked()
+                            {
+                                self.codex_chat_open = false;
+                            }
+                        });
+                    });
+                    let project_root = self.codex_project_root.display().to_string();
+                    ui.label(
+                        RichText::new(format!("Working in {project_root}"))
+                            .size(TYPE.meta)
+                            .color(colors.muted),
+                    )
+                    .on_hover_text(project_root);
+                    ui.separator();
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("codex_chat_messages")
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if self.codex_chat_messages.is_empty() {
+                                ui.add_space(12.0);
+                                ui.label(
+                                    RichText::new("Ask Codex to inspect or change this project.")
+                                        .size(TYPE.secondary)
+                                        .color(colors.secondary_text),
+                                );
+                            }
+                            for message in &self.codex_chat_messages {
+                                let (label, color) = match message.role {
+                                    CodexChatRole::User => ("You", colors.accent),
+                                    CodexChatRole::Assistant => ("Codex", colors.secondary_text),
+                                };
+                                ui.label(
+                                    RichText::new(label)
+                                        .font(semibold_font(TYPE.meta))
+                                        .color(color),
+                                );
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&message.text)
+                                            .size(TYPE.secondary)
+                                            .color(colors.text),
+                                    )
+                                    .wrap(),
+                                );
+                                ui.add_space(12.0);
+                            }
+                            if self.codex_chat_busy
+                                && self
+                                    .codex_chat_messages
+                                    .last()
+                                    .is_none_or(|message| message.role == CodexChatRole::User)
+                            {
+                                ui.label(
+                                    RichText::new("Codex is working…")
+                                        .size(TYPE.meta)
+                                        .color(colors.muted),
+                                );
+                            }
+                        });
+
+                    if !self.codex_chat_ready {
+                        ui.label(
+                            RichText::new("Starting Codex…")
+                                .size(TYPE.meta)
+                                .color(colors.muted),
+                        );
+                    }
+                    if let Some(error) = &self.codex_chat_error {
+                        ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
+                    }
+                    ui.separator();
+                    let can_send = self.codex_chat_ready
+                        && !self.codex_chat_busy
+                        && self.chatgpt_account.is_some();
+                    ui.add_enabled_ui(can_send, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.codex_chat_draft)
+                                .desired_rows(3)
+                                .hint_text("Ask Codex to make a change…")
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("Changes stay inside this project")
+                                    .size(TYPE.meta)
+                                    .color(colors.muted),
+                            );
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui
+                                    .add_sized([68.0, 28.0], egui::Button::new("Send"))
+                                    .clicked()
+                                {
+                                    let message = self.codex_chat_draft.trim().to_owned();
+                                    if !message.is_empty() {
+                                        self.codex_chat_messages.push(CodexChatMessage {
+                                            role: CodexChatRole::User,
+                                            text: message.clone(),
+                                        });
+                                        self.codex_chat_draft.clear();
+                                        self.codex_chat_busy = true;
+                                        self.codex_chat_error = None;
+                                        self.codex_chat_send_requested = Some(message);
+                                    }
+                                }
+                            });
+                        });
+                    });
+                });
             });
     }
 
@@ -2328,8 +2549,14 @@ impl StudioShell {
                 .as_deref()
                 .map(|email| format!("ChatGPT connected as {email}"))
                 .unwrap_or_else(|| "ChatGPT connected".to_owned());
-            toolbar_status(ui, Icon::Sparkles, &label, colors.secondary_text)
-                .on_hover_text(tooltip);
+            if toolbar_button(ui, Icon::Sparkles, &label, self.codex_chat_open)
+                .on_hover_text(format!("{tooltip}. Open Codex chat"))
+                .clicked()
+            {
+                self.codex_chat_open = true;
+                self.codex_chat_open_requested = true;
+                self.codex_chat_error = None;
+            }
             return;
         }
 

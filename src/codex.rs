@@ -24,12 +24,20 @@ pub enum CodexEvent {
     AccountStatus(Option<ChatGptAccount>),
     BrowserOpened,
     LoginCompleted(ChatGptAccount),
+    ChatReady,
+    AssistantDelta(String),
+    AssistantMessage(String),
+    ChatTurnCompleted,
+    ChatError(String),
     Error(String),
     Unavailable(String),
 }
 
 enum CodexCommand {
     BeginChatGptLogin,
+    OpenChat,
+    SendChatMessage(String),
+    SetProjectRoot(PathBuf),
     Shutdown,
 }
 
@@ -44,26 +52,40 @@ enum PendingRequest {
     Initialize,
     Account { completes_login: bool },
     Login,
+    ThreadStart,
+    TurnStart,
 }
 
 struct ProtocolState {
     stdin: ChildStdin,
     next_id: u64,
     pending: BTreeMap<u64, PendingRequest>,
+    project_root: PathBuf,
     initialized: bool,
     queued_login: bool,
     login_active: bool,
+    chat_requested: bool,
+    queued_messages: Vec<String>,
+    thread_id: Option<String>,
+    thread_start_pending: bool,
+    turn_active: bool,
 }
 
 impl ProtocolState {
-    fn new(stdin: ChildStdin) -> Self {
+    fn new(stdin: ChildStdin, project_root: PathBuf) -> Self {
         Self {
             stdin,
             next_id: 1,
             pending: BTreeMap::new(),
+            project_root,
             initialized: false,
             queued_login: false,
             login_active: false,
+            chat_requested: false,
+            queued_messages: Vec::new(),
+            thread_id: None,
+            thread_start_pending: false,
+            turn_active: false,
         }
     }
 
@@ -131,6 +153,94 @@ impl ProtocolState {
         }
         Ok(())
     }
+
+    fn open_chat(&mut self) -> Result<(), String> {
+        self.chat_requested = true;
+        self.ensure_thread()
+    }
+
+    fn queue_chat_message(&mut self, message: String) -> Result<(), String> {
+        self.chat_requested = true;
+        self.queued_messages.push(message);
+        self.ensure_thread()?;
+        self.start_queued_turn()
+    }
+
+    fn ensure_thread(&mut self) -> Result<(), String> {
+        if !self.chat_requested
+            || !self.initialized
+            || self.thread_id.is_some()
+            || self.thread_start_pending
+        {
+            return Ok(());
+        }
+        self.thread_start_pending = true;
+        let cwd = self.project_root.to_string_lossy().into_owned();
+        if let Err(error) = self.request(
+            "thread/start",
+            json!({
+                "cwd": cwd,
+                "approvalPolicy": "never",
+                "sandbox": "workspace-write",
+                "serviceName": "cubacadabra_studio",
+            }),
+            PendingRequest::ThreadStart,
+        ) {
+            self.thread_start_pending = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn start_queued_turn(&mut self) -> Result<(), String> {
+        if !self.initialized || self.turn_active {
+            return Ok(());
+        }
+        let Some(thread_id) = self.thread_id.clone() else {
+            return Ok(());
+        };
+        let Some(message) = self.queued_messages.first().cloned() else {
+            return Ok(());
+        };
+        self.turn_active = true;
+        let cwd = self.project_root.to_string_lossy().into_owned();
+        if let Err(error) = self.request(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "input": [{ "type": "text", "text": message }],
+                "cwd": cwd,
+                "approvalPolicy": "never",
+                "sandboxPolicy": {
+                    "type": "workspaceWrite",
+                    "writableRoots": [cwd],
+                    "networkAccess": false,
+                },
+                "summary": "concise",
+            }),
+            PendingRequest::TurnStart,
+        ) {
+            self.turn_active = false;
+            return Err(error);
+        }
+        self.queued_messages.remove(0);
+        Ok(())
+    }
+
+    fn set_project_root(&mut self, project_root: PathBuf) -> Result<(), String> {
+        self.project_root = project_root;
+        self.thread_id = None;
+        self.thread_start_pending = false;
+        self.turn_active = false;
+        self.queued_messages.clear();
+        self.pending.retain(|_, pending| {
+            !matches!(
+                pending,
+                PendingRequest::ThreadStart | PendingRequest::TurnStart
+            )
+        });
+        self.ensure_thread()
+    }
 }
 
 pub struct CodexClient {
@@ -162,6 +272,24 @@ impl CodexClient {
             .map_err(|_| {
                 "ChatGPT connection is unavailable. Restart Studio and try again.".to_owned()
             })
+    }
+
+    pub fn open_chat(&self) -> Result<(), String> {
+        self.commands
+            .send(CodexCommand::OpenChat)
+            .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
+    }
+
+    pub fn send_chat_message(&self, message: String) -> Result<(), String> {
+        self.commands
+            .send(CodexCommand::SendChatMessage(message))
+            .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
+    }
+
+    pub fn set_project_root(&self, project_root: &Path) -> Result<(), String> {
+        self.commands
+            .send(CodexCommand::SetProjectRoot(project_root.to_owned()))
+            .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
     }
 
     pub fn try_recv(&self) -> Option<CodexEvent> {
@@ -206,7 +334,7 @@ fn run_worker(project_root: &Path, commands: Receiver<CodexCommand>, events: Sen
         .name("studio-codex-output".to_owned())
         .spawn(move || read_app_server_output(stdout, output_sender));
 
-    let mut protocol = ProtocolState::new(stdin);
+    let mut protocol = ProtocolState::new(stdin, project_root.to_owned());
     if let Err(message) = protocol.initialize() {
         let _ = events.send(CodexEvent::Unavailable(message));
         let _ = child.kill();
@@ -222,6 +350,26 @@ fn run_worker(project_root: &Path, commands: Receiver<CodexCommand>, events: Sen
                     }
                 }
                 Ok(CodexCommand::BeginChatGptLogin) => protocol.queued_login = true,
+                Ok(CodexCommand::OpenChat) if protocol.initialized => {
+                    if let Err(message) = protocol.open_chat() {
+                        let _ = events.send(CodexEvent::ChatError(message));
+                    }
+                }
+                Ok(CodexCommand::OpenChat) => protocol.chat_requested = true,
+                Ok(CodexCommand::SendChatMessage(message)) if protocol.initialized => {
+                    if let Err(message) = protocol.queue_chat_message(message) {
+                        let _ = events.send(CodexEvent::ChatError(message));
+                    }
+                }
+                Ok(CodexCommand::SendChatMessage(message)) => {
+                    protocol.chat_requested = true;
+                    protocol.queued_messages.push(message);
+                }
+                Ok(CodexCommand::SetProjectRoot(project_root)) => {
+                    if let Err(message) = protocol.set_project_root(project_root) {
+                        let _ = events.send(CodexEvent::ChatError(message));
+                    }
+                }
                 Ok(CodexCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -360,10 +508,18 @@ fn handle_app_server_message(
             return Ok(());
         };
         if let Some(error) = message.get("error") {
-            if matches!(pending, PendingRequest::Login) {
-                protocol.login_active = false;
+            let detail = format_pending_error(pending, error);
+            match pending {
+                PendingRequest::Login => protocol.login_active = false,
+                PendingRequest::ThreadStart | PendingRequest::TurnStart => {
+                    protocol.thread_start_pending = false;
+                    protocol.turn_active = false;
+                    let _ = events.send(CodexEvent::ChatError(detail));
+                    return Ok(());
+                }
+                PendingRequest::Initialize | PendingRequest::Account { .. } => {}
             }
-            return Err(format_pending_error(pending, error));
+            return Err(detail);
         }
         let result = message
             .get("result")
@@ -417,6 +573,23 @@ fn handle_app_server_message(
                 let _ = events.send(CodexEvent::BrowserOpened);
                 Ok(())
             }
+            PendingRequest::ThreadStart => {
+                let thread_id = result
+                    .pointer("/thread/id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        "Codex App Server returned an incomplete chat thread.".to_owned()
+                    })?;
+                protocol.thread_start_pending = false;
+                protocol.thread_id = Some(thread_id.to_owned());
+                let _ = events.send(CodexEvent::ChatReady);
+                if let Err(message) = protocol.start_queued_turn() {
+                    let _ = events.send(CodexEvent::ChatError(message));
+                }
+                Ok(())
+            }
+            PendingRequest::TurnStart => Ok(()),
         };
     }
 
@@ -442,6 +615,45 @@ fn handle_app_server_message(
             } else if !protocol.login_active {
                 let _ = events.send(CodexEvent::AccountStatus(None));
             }
+        }
+        Some("item/agentMessage/delta") => {
+            if let Some(delta) = message
+                .pointer("/params/delta")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                let _ = events.send(CodexEvent::AssistantDelta(delta.to_owned()));
+            }
+        }
+        Some("item/completed") => {
+            if message.pointer("/params/item/type").and_then(Value::as_str) == Some("agentMessage")
+                && let Some(text) = message.pointer("/params/item/text").and_then(Value::as_str)
+            {
+                let _ = events.send(CodexEvent::AssistantMessage(text.to_owned()));
+            }
+        }
+        Some("turn/completed") => {
+            protocol.turn_active = false;
+            let status = message
+                .pointer("/params/turn/status")
+                .and_then(Value::as_str);
+            if status == Some("failed") {
+                let detail = message
+                    .pointer("/params/turn/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Codex could not complete that request.");
+                let _ = events.send(CodexEvent::ChatError(detail.to_owned()));
+            } else {
+                let _ = events.send(CodexEvent::ChatTurnCompleted);
+            }
+            protocol.start_queued_turn()?;
+        }
+        Some("error") => {
+            let detail = message
+                .pointer("/params/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Codex returned an error.");
+            let _ = events.send(CodexEvent::ChatError(detail.to_owned()));
         }
         _ => {}
     }
@@ -483,6 +695,8 @@ fn format_pending_error(pending: PendingRequest, error: &Value) -> String {
         PendingRequest::Initialize => "initialize Codex App Server",
         PendingRequest::Account { .. } => "read the ChatGPT account",
         PendingRequest::Login => "start ChatGPT sign-in",
+        PendingRequest::ThreadStart => "start the Codex chat",
+        PendingRequest::TurnStart => "send the Codex message",
     };
     format!("Could not {action}: {detail}")
 }

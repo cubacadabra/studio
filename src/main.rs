@@ -315,6 +315,7 @@ impl StudioApp {
 
         let mut shell = StudioShell::new(&window, &renderer, &self.manifest_source);
         shell.set_project_asset_available(!self.standalone_preview);
+        shell.set_codex_project_root(self.project_root.clone());
         if let Ok(parent) = env::current_dir() {
             shell.set_new_project_parent(parent);
         }
@@ -457,6 +458,25 @@ impl StudioApp {
             {
                 shell.set_chatgpt_error(message);
             }
+        }
+        let codex_chat_open_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_codex_chat_open_request);
+        if codex_chat_open_requested
+            && let Err(message) = self.codex.open_chat()
+            && let Some(shell) = &mut self.shell
+        {
+            shell.set_codex_chat_error(message);
+        }
+        if let Some(message) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_codex_chat_send_request)
+            && let Err(message) = self.codex.send_chat_message(message)
+            && let Some(shell) = &mut self.shell
+        {
+            shell.set_codex_chat_error(message);
         }
         let draft_export_requested = self
             .shell
@@ -1152,6 +1172,10 @@ impl StudioApp {
             StudioShell::new(window, renderer, &self.manifest_source)
         };
         shell.set_project_asset_available(true);
+        shell.set_codex_project_root(self.project_root.clone());
+        if let Err(message) = self.codex.set_project_root(&self.project_root) {
+            shell.set_codex_chat_error(message);
+        }
         if let Some(parent) = self.project_root.parent() {
             shell.set_new_project_parent(parent.to_path_buf());
         }
@@ -1520,6 +1544,11 @@ impl StudioApp {
                 CodexEvent::AccountStatus(account) => shell.set_chatgpt_account(account),
                 CodexEvent::BrowserOpened => shell.set_chatgpt_browser_opened(),
                 CodexEvent::LoginCompleted(account) => shell.set_chatgpt_connected(account),
+                CodexEvent::ChatReady => shell.set_codex_chat_ready(),
+                CodexEvent::AssistantDelta(delta) => shell.set_codex_chat_delta(delta),
+                CodexEvent::AssistantMessage(message) => shell.set_codex_chat_message(message),
+                CodexEvent::ChatTurnCompleted => shell.set_codex_chat_completed(),
+                CodexEvent::ChatError(message) => shell.set_codex_chat_error(message),
                 CodexEvent::Error(message) => shell.set_chatgpt_error(message),
                 CodexEvent::Unavailable(message) => shell.set_chatgpt_unavailable(message),
             }
