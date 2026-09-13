@@ -10,6 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Instant,
 };
+mod codex;
 mod game_creator;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -20,6 +21,7 @@ mod shell;
 mod wardrobe;
 #[cfg(test)]
 mod wardrobe_tests;
+use codex::{CodexClient, CodexEvent};
 use cubacadabra_morphs::decode_morph_pack;
 use morphs::{
     MorphGlbPreviewMesh, compile_source_morph_pack, decode_source_glb_preview,
@@ -139,6 +141,7 @@ struct StudioApp {
     manifest_source: String,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
+    codex: CodexClient,
     network: BackendClient,
     client: ClientSession,
     image_atlas: Option<ImageAtlas>,
@@ -198,6 +201,7 @@ impl StudioApp {
             }
         }
         let network = BackendClient::new(client.game_id()).map_err(StudioError)?;
+        let codex = CodexClient::new(&project_root).map_err(StudioError)?;
         info!(
             "studio loaded: game_id={} standalone_preview={} root={}",
             client.game_id(),
@@ -215,6 +219,7 @@ impl StudioApp {
             game_root,
             standalone_preview,
             temporary_package,
+            codex,
             network,
             client,
             window: None,
@@ -340,6 +345,7 @@ impl StudioApp {
 
     fn render(&mut self) {
         self.drain_backend_events();
+        self.drain_codex_events();
         #[cfg(target_os = "macos")]
         while let Some(command) = macos::take_menu_action() {
             if let Some(shell) = &mut self.shell {
@@ -404,6 +410,20 @@ impl StudioApp {
                 shell.set_notice("Opening browser for sign-in…".to_owned());
             }
             self.network.begin_browser_auth();
+        }
+        let chatgpt_auth_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_chatgpt_auth_request);
+        if chatgpt_auth_requested {
+            if let Some(shell) = &mut self.shell {
+                shell.set_chatgpt_pending();
+            }
+            if let Err(message) = self.codex.begin_chatgpt_login()
+                && let Some(shell) = &mut self.shell
+            {
+                shell.set_chatgpt_error(message);
+            }
         }
         let draft_export_requested = self
             .shell
@@ -1374,6 +1394,21 @@ impl StudioApp {
                         shell.set_auth_error(message);
                     }
                 }
+            }
+        }
+    }
+
+    fn drain_codex_events(&mut self) {
+        while let Some(event) = self.codex.try_recv() {
+            let Some(shell) = &mut self.shell else {
+                continue;
+            };
+            match event {
+                CodexEvent::AccountStatus(account) => shell.set_chatgpt_account(account),
+                CodexEvent::BrowserOpened => shell.set_chatgpt_browser_opened(),
+                CodexEvent::LoginCompleted(account) => shell.set_chatgpt_connected(account),
+                CodexEvent::Error(message) => shell.set_chatgpt_error(message),
+                CodexEvent::Unavailable(message) => shell.set_chatgpt_unavailable(message),
             }
         }
     }

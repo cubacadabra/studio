@@ -60,6 +60,7 @@ The resulting binary can be invoked as:
 Controls:
 
 - `World`, `Assets`, `Materials`, and `Test`: switch workspace previews
+- `Connect ChatGPT`: connect the user's ChatGPT subscription through Codex App Server
 - `Play`: enable or pause game input
 - `WASD` or arrow keys: move
 - `Shift`: sprint
@@ -67,6 +68,23 @@ Controls:
 - drag with the left mouse button: orbit the camera
 - mouse wheel: zoom
 - `Escape`: quit
+
+## ChatGPT connection
+
+Studio launches `codex app-server` over its default stdio transport, reads any
+cached ChatGPT account, and opens the browser flow when the user selects
+`Connect ChatGPT`. Codex owns and refreshes the ChatGPT credentials; Studio
+only keeps the account email and plan label in memory for connection status.
+
+Packaged builds should place the pinned Codex executable next to the Studio
+executable on Windows and Linux, or in `Contents/Resources/codex` on macOS.
+Development builds fall back to `codex` on `PATH`. Set
+`CUBACADABRA_CODEX_PATH` to test a specific executable:
+
+```sh
+CUBACADABRA_CODEX_PATH=/absolute/path/to/codex \
+  cargo run --release -- --path /Users/aa/test-for-studio
+```
 
 Studio currently expects the sibling engine repository at `../rust` at build
 time. For local source-project fallback, it can use the sibling `../tools`

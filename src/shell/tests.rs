@@ -243,6 +243,21 @@ fn toolbar_buttons_size_their_hitbox_to_their_label() {
 }
 
 #[test]
+fn chatgpt_status_uses_readable_plan_names() {
+    let account = ChatGptAccount {
+        email: Some("player@example.com".to_owned()),
+        plan_type: Some("self_serve_business_usage_based".to_owned()),
+    };
+    assert_eq!(chatgpt_account_label(&account), "ChatGPT · Business");
+
+    let unknown_plan = ChatGptAccount {
+        email: None,
+        plan_type: Some("unknown".to_owned()),
+    };
+    assert_eq!(chatgpt_account_label(&unknown_plan), "ChatGPT");
+}
+
+#[test]
 fn morph_preview_detects_screen_space_slivers() {
     assert!(
         projected_triangle_area([

@@ -1,7 +1,10 @@
-use crate::morphs::{
-    MorphDraftDocument, MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
-    build_morph_draft_json, build_source_manifest_json, default_rigid_accessory_asset,
-    fit_rigid_headwear_to_person, morph_mesh_bounds,
+use crate::{
+    codex::ChatGptAccount,
+    morphs::{
+        MorphDraftDocument, MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
+        build_morph_draft_json, build_source_manifest_json, default_rigid_accessory_asset,
+        fit_rigid_headwear_to_person, morph_mesh_bounds,
+    },
 };
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
@@ -208,6 +211,7 @@ enum Icon {
     Object,
     Image,
     Character,
+    Sparkles,
     Search,
     Filter,
     Grid,
@@ -246,6 +250,7 @@ const MACOS_SYSTEM_SYMBOLS: &[(Icon, &str)] = &[
     (Icon::Object, "cube"),
     (Icon::Image, "photo"),
     (Icon::Character, "person"),
+    (Icon::Sparkles, "sparkles"),
     (Icon::Search, "magnifyingglass"),
     (Icon::Filter, "line.3.horizontal.decrease"),
     (Icon::Grid, "square.grid.2x2"),
@@ -891,6 +896,11 @@ pub(crate) struct StudioShell {
     auth_requested: bool,
     auth_pending: bool,
     auth_user: Option<crate::network::AuthUser>,
+    chatgpt_auth_requested: bool,
+    chatgpt_pending: bool,
+    chatgpt_available: bool,
+    chatgpt_account: Option<ChatGptAccount>,
+    chatgpt_error: Option<String>,
     open_project_requested: bool,
     new_project_dialog_open: bool,
     new_project_title: String,
@@ -1014,6 +1024,11 @@ impl StudioShell {
             auth_requested: false,
             auth_pending: false,
             auth_user: None,
+            chatgpt_auth_requested: false,
+            chatgpt_pending: false,
+            chatgpt_available: true,
+            chatgpt_account: None,
+            chatgpt_error: None,
             open_project_requested: false,
             new_project_dialog_open: false,
             new_project_title: String::new(),
@@ -1068,6 +1083,63 @@ impl StudioShell {
     pub(crate) fn set_auth_error(&mut self, message: String) {
         self.auth_pending = false;
         self.notice = message;
+    }
+
+    pub(crate) fn take_chatgpt_auth_request(&mut self) -> bool {
+        std::mem::take(&mut self.chatgpt_auth_requested)
+    }
+
+    pub(crate) fn set_chatgpt_pending(&mut self) {
+        self.chatgpt_pending = true;
+        self.chatgpt_available = true;
+        self.chatgpt_error = None;
+        self.notice = "Opening browser for ChatGPT sign-in…".to_owned();
+    }
+
+    pub(crate) fn set_chatgpt_account(&mut self, account: Option<ChatGptAccount>) {
+        if self.chatgpt_pending {
+            return;
+        }
+        self.chatgpt_available = true;
+        self.chatgpt_account = account;
+        self.chatgpt_error = None;
+    }
+
+    pub(crate) fn set_chatgpt_browser_opened(&mut self) {
+        self.chatgpt_pending = true;
+        self.notice =
+            "Finish signing in with ChatGPT in your browser. Studio will continue automatically."
+                .to_owned();
+    }
+
+    pub(crate) fn set_chatgpt_connected(&mut self, account: ChatGptAccount) {
+        self.chatgpt_pending = false;
+        self.chatgpt_available = true;
+        self.chatgpt_error = None;
+        self.notice = account
+            .email
+            .as_deref()
+            .map(|email| format!("ChatGPT connected as {email}"))
+            .unwrap_or_else(|| "ChatGPT connected".to_owned());
+        self.chatgpt_account = Some(account);
+    }
+
+    pub(crate) fn set_chatgpt_error(&mut self, message: String) {
+        self.chatgpt_pending = false;
+        self.chatgpt_available = true;
+        self.chatgpt_error = Some(message.clone());
+        self.notice = message;
+    }
+
+    pub(crate) fn set_chatgpt_unavailable(&mut self, message: String) {
+        let was_pending = self.chatgpt_pending;
+        self.chatgpt_pending = false;
+        self.chatgpt_available = false;
+        self.chatgpt_account = None;
+        self.chatgpt_error = Some(message.clone());
+        if was_pending {
+            self.notice = message;
+        }
     }
 
     pub(crate) fn set_project_asset_available(&mut self, available: bool) {
@@ -2115,6 +2187,8 @@ impl StudioShell {
                         } else if toolbar_button(ui, Icon::Character, "Sign in", false).clicked() {
                             self.auth_requested = true;
                         }
+                        vertical_separator(ui, 14.0);
+                        self.show_chatgpt_control(ui, colors);
                         let play_label = if self.playing { "Stop" } else { "Play" };
                         let play_width = toolbar_button_width(ui, play_label);
                         if ui.available_width() >= play_width + 48.0 {
@@ -2150,6 +2224,43 @@ impl StudioShell {
                     });
                 });
             });
+    }
+
+    fn show_chatgpt_control(&mut self, ui: &mut egui::Ui, colors: Palette) {
+        if self.chatgpt_pending {
+            toolbar_status(ui, Icon::Sparkles, "Connecting ChatGPT…", colors.muted)
+                .on_hover_text("Finish signing in with ChatGPT in your browser");
+            return;
+        }
+
+        if let Some(account) = &self.chatgpt_account {
+            let label = chatgpt_account_label(account);
+            let tooltip = account
+                .email
+                .as_deref()
+                .map(|email| format!("ChatGPT connected as {email}"))
+                .unwrap_or_else(|| "ChatGPT connected".to_owned());
+            toolbar_status(ui, Icon::Sparkles, &label, colors.secondary_text)
+                .on_hover_text(tooltip);
+            return;
+        }
+
+        if self.chatgpt_available {
+            if toolbar_button(ui, Icon::Sparkles, "Connect ChatGPT", false)
+                .on_hover_text("Use your ChatGPT subscription with Codex in Studio")
+                .clicked()
+            {
+                self.chatgpt_auth_requested = true;
+                self.set_chatgpt_pending();
+            }
+            return;
+        }
+
+        toolbar_status(ui, Icon::Sparkles, "ChatGPT unavailable", colors.faint).on_hover_text(
+            self.chatgpt_error
+                .as_deref()
+                .unwrap_or("Codex App Server is unavailable"),
+        );
     }
 
     fn show_status_bar(&mut self, root: &mut egui::Ui) {
@@ -4110,6 +4221,50 @@ fn toolbar_button(ui: &mut egui::Ui, icon: Icon, label: &str, active: bool) -> e
     response
 }
 
+fn toolbar_status(ui: &mut egui::Ui, icon: Icon, label: &str, color: Color32) -> egui::Response {
+    let width = toolbar_button_width(ui, label);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    paint_icon(
+        ui.painter(),
+        Rect::from_center_size(
+            rect.left_center() + egui::vec2(12.0, 0.0),
+            Vec2::splat(UI.icon),
+        ),
+        icon,
+        color,
+    );
+    ui.painter().text(
+        rect.left_center() + egui::vec2(22.0, 0.0),
+        Align2::LEFT_CENTER,
+        label,
+        medium_font(TYPE.secondary),
+        color,
+    );
+    response
+}
+
+fn chatgpt_account_label(account: &ChatGptAccount) -> String {
+    let plan = match account.plan_type.as_deref() {
+        Some("free") => Some("Free"),
+        Some("go") => Some("Go"),
+        Some("plus") => Some("Plus"),
+        Some("pro" | "prolite") => Some("Pro"),
+        Some("team" | "self_serve_business_prolite" | "self_serve_business_usage_based") => {
+            Some("Business")
+        }
+        Some("business") => Some("Business"),
+        Some("ent26" | "enterprise_cbp_automation" | "enterprise_cbp_usage_based") => {
+            Some("Enterprise")
+        }
+        Some("enterprise") => Some("Enterprise"),
+        Some("edu" | "edu_plus" | "edu_pro") => Some("Edu"),
+        _ => None,
+    };
+    plan.map_or_else(|| "ChatGPT".to_owned(), |plan| format!("ChatGPT · {plan}"))
+}
+
 fn toolbar_button_width(ui: &egui::Ui, label: &str) -> f32 {
     let label_width = ui
         .painter()
@@ -4379,6 +4534,38 @@ fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 [
                     egui::pos2(left + r * 0.18, c.y + r * 0.2),
                     egui::pos2(right - r * 0.18, c.y + r * 0.2),
+                ],
+                stroke,
+            );
+        }
+        Icon::Sparkles => {
+            let large = c - egui::vec2(r * 0.2, r * 0.12);
+            painter.line_segment(
+                [
+                    egui::pos2(large.x, top),
+                    egui::pos2(large.x, bottom - r * 0.08),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(left + r * 0.08, large.y),
+                    egui::pos2(right - r * 0.35, large.y),
+                ],
+                stroke,
+            );
+            let small = c + egui::vec2(r * 0.55, r * 0.5);
+            painter.line_segment(
+                [
+                    small - egui::vec2(0.0, r * 0.26),
+                    small + egui::vec2(0.0, r * 0.26),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    small - egui::vec2(r * 0.26, 0.0),
+                    small + egui::vec2(r * 0.26, 0.0),
                 ],
                 stroke,
             );
