@@ -345,6 +345,15 @@ struct SceneOutline {
     initial_expanded: BTreeSet<String>,
 }
 
+struct ProjectLoadingState {
+    progress: f32,
+    previous_outline: SceneOutline,
+    previous_expanded: BTreeSet<String>,
+    previous_selection: String,
+    previous_world_asset: String,
+    previous_workspace: Workspace,
+}
+
 #[derive(Clone, Debug)]
 struct ManifestAsset {
     name: String,
@@ -902,6 +911,7 @@ pub(crate) struct StudioShell {
     chatgpt_account: Option<ChatGptAccount>,
     chatgpt_error: Option<String>,
     open_project_requested: bool,
+    project_loading: Option<ProjectLoadingState>,
     new_project_dialog_open: bool,
     new_project_title: String,
     new_project_parent: PathBuf,
@@ -1030,6 +1040,7 @@ impl StudioShell {
             chatgpt_account: None,
             chatgpt_error: None,
             open_project_requested: false,
+            project_loading: None,
             new_project_dialog_open: false,
             new_project_title: String::new(),
             new_project_parent: PathBuf::from("."),
@@ -1148,6 +1159,45 @@ impl StudioShell {
 
     pub(crate) fn take_open_project_request(&mut self) -> bool {
         std::mem::take(&mut self.open_project_requested)
+    }
+
+    pub(crate) fn begin_project_loading(&mut self) {
+        if self.project_loading.is_some() {
+            return;
+        }
+        let empty = SceneOutline::empty();
+        let empty_selection = empty.initial_selection.clone();
+        let empty_expanded = empty.initial_expanded.clone();
+        self.project_loading = Some(ProjectLoadingState {
+            progress: 0.0,
+            previous_outline: std::mem::replace(&mut self.scene_outline, empty),
+            previous_expanded: std::mem::replace(&mut self.expanded_scene, empty_expanded),
+            previous_selection: std::mem::replace(&mut self.selected_scene, empty_selection),
+            previous_world_asset: std::mem::take(&mut self.selected_world_asset),
+            previous_workspace: std::mem::replace(&mut self.workspace, Workspace::World),
+        });
+        self.notice = "Loading project…".to_owned();
+    }
+
+    pub(crate) fn set_project_loading_progress(&mut self, progress: f32) {
+        if let Some(loading) = &mut self.project_loading {
+            loading.progress = loading.progress.max(progress.clamp(0.0, 1.0));
+        }
+    }
+
+    pub(crate) fn cancel_project_loading(&mut self) {
+        let Some(loading) = self.project_loading.take() else {
+            return;
+        };
+        self.scene_outline = loading.previous_outline;
+        self.expanded_scene = loading.previous_expanded;
+        self.selected_scene = loading.previous_selection;
+        self.selected_world_asset = loading.previous_world_asset;
+        self.workspace = loading.previous_workspace;
+    }
+
+    pub(crate) fn is_project_loading(&self) -> bool {
+        self.project_loading.is_some()
     }
 
     pub(crate) fn set_new_project_parent(&mut self, parent: PathBuf) {
@@ -1818,6 +1868,9 @@ impl StudioShell {
     }
 
     pub(crate) fn execute_command(&mut self, command: StudioCommand) {
+        if self.project_loading.is_some() {
+            return;
+        }
         match command {
             StudioCommand::NewProject => {
                 self.new_project_dialog_open = true;
@@ -1942,7 +1995,42 @@ impl StudioShell {
         }
         #[cfg(not(target_os = "macos"))]
         self.show_new_project_dialog(ui.ctx());
+        self.show_project_loading(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn show_project_loading(&self, context: &egui::Context) {
+        let Some(loading) = &self.project_loading else {
+            return;
+        };
+        let colors = if context.style_of(context.theme()).visuals.dark_mode {
+            DARK_PALETTE
+        } else {
+            LIGHT_PALETTE
+        };
+        egui::Modal::new(egui::Id::new("project_loading"))
+            .backdrop_color(Color32::from_black_alpha(120))
+            .frame(
+                Frame::NONE
+                    .fill(colors.panel_raised)
+                    .stroke(Stroke::new(1.0, colors.border_strong))
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::same(20)),
+            )
+            .show(context, |ui| {
+                ui.set_width(280.0);
+                ui.label(
+                    RichText::new("Loading...")
+                        .font(semibold_font(TYPE.primary))
+                        .color(colors.text),
+                );
+                ui.add_space(10.0);
+                ui.add(
+                    egui::ProgressBar::new(loading.progress)
+                        .desired_width(ui.available_width())
+                        .show_percentage(),
+                );
+            });
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1956,14 +2044,14 @@ impl StudioShell {
             .backdrop_color(Color32::from_black_alpha(128))
             .frame(
                 Frame::NONE
-                    .fill(if context.style().visuals.dark_mode {
+                    .fill(if context.style_of(context.theme()).visuals.dark_mode {
                         DARK_PALETTE.panel_raised
                     } else {
                         LIGHT_PALETTE.surface_deep
                     })
                     .stroke(Stroke::new(
                         1.0,
-                        if context.style().visuals.dark_mode {
+                        if context.style_of(context.theme()).visuals.dark_mode {
                             DARK_PALETTE.border_strong
                         } else {
                             LIGHT_PALETTE.border
@@ -2975,6 +3063,9 @@ impl StudioShell {
     }
 
     fn scene_tree(&mut self, ui: &mut egui::Ui) {
+        if self.project_loading.is_some() {
+            return;
+        }
         panel_header(ui, Icon::World, "Scene", |ui| {
             icon_button(ui, Icon::Filter, "Filter scene", false);
             icon_button(ui, Icon::Plus, "Add object", false);

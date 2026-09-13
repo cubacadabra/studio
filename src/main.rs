@@ -8,6 +8,8 @@ use std::{
     error::Error,
     fmt, fs,
     path::{Component, Path, PathBuf},
+    sync::mpsc,
+    thread,
     time::Instant,
 };
 mod codex;
@@ -102,6 +104,28 @@ struct GameSources {
     temporary_package: Option<PathBuf>,
 }
 
+struct BackgroundProjectLoad {
+    sources: GameSources,
+    image_atlas: Option<ImageAtlas>,
+    local_morph_catalog: Option<LocalMorphCatalog>,
+}
+
+struct PreparedProjectLoad {
+    background: BackgroundProjectLoad,
+    client: ClientSession,
+    network: BackendClient,
+}
+
+enum ProjectLoadEvent {
+    Progress(f32),
+    Finished(Result<BackgroundProjectLoad, String>),
+}
+
+struct PendingProjectLoad {
+    project: PathBuf,
+    receiver: mpsc::Receiver<ProjectLoadEvent>,
+}
+
 struct LocalMorphCatalog {
     catalog: cubacadabra_morphs::MorphCatalog,
     packs: BTreeMap<cubacadabra_morphs::MorphAssetId, Vec<u8>>,
@@ -148,6 +172,9 @@ struct StudioApp {
     window: Option<Window>,
     renderer: Option<Renderer>,
     shell: Option<StudioShell>,
+    pending_project_load: Option<PendingProjectLoad>,
+    background_project_ready: Option<(PathBuf, Result<BackgroundProjectLoad, String>)>,
+    prepared_project_ready: Option<(PathBuf, Result<PreparedProjectLoad, String>)>,
     local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
@@ -225,6 +252,9 @@ impl StudioApp {
             window: None,
             renderer: None,
             shell: None,
+            pending_project_load: None,
+            background_project_ready: None,
+            prepared_project_ready: None,
             local_morph_catalog,
             pressed_keys: HashSet::new(),
             jump_queued: false,
@@ -346,6 +376,9 @@ impl StudioApp {
     fn render(&mut self) {
         self.drain_backend_events();
         self.drain_codex_events();
+        self.commit_ready_project_load();
+        self.prepare_ready_project_runtime();
+        self.poll_project_load();
         #[cfg(target_os = "macos")]
         while let Some(command) = macos::take_menu_action() {
             if let Some(shell) = &mut self.shell {
@@ -507,11 +540,16 @@ impl StudioApp {
             self.generate_morph_thumbnail();
         }
         self.update_viewport();
-        let playing = self.shell.as_ref().is_none_or(StudioShell::is_playing);
-        let morph_preview = self
+        let project_loading = self
             .shell
             .as_ref()
-            .is_some_and(StudioShell::is_morphs_workspace);
+            .is_some_and(StudioShell::is_project_loading);
+        let playing = !project_loading && self.shell.as_ref().is_none_or(StudioShell::is_playing);
+        let morph_preview = !project_loading
+            && self
+                .shell
+                .as_ref()
+                .is_some_and(StudioShell::is_morphs_workspace);
         let controls_active = playing || morph_preview;
 
         let mut forward = if controls_active {
@@ -869,21 +907,12 @@ impl StudioApp {
     fn create_new_project(&mut self, title: &str, parent: &Path) {
         let result = game_creator::create_game(title, parent);
         match result {
-            Ok(created) => match self.open_created_project(&created.project) {
-                Ok(()) => {
-                    if let Some(shell) = &mut self.shell {
-                        shell.set_new_project_created(&created.project);
-                    }
+            Ok(created) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_new_project_created(&created.project);
                 }
-                Err(error) => {
-                    if let Some(shell) = &mut self.shell {
-                        shell.set_new_project_error(format!(
-                            "Created {} but could not open it: {error}",
-                            created.project.display()
-                        ));
-                    }
-                }
-            },
+                self.start_project_load(created.project);
+            }
             Err(error) => {
                 if let Some(shell) = &mut self.shell {
                     shell.set_new_project_error(error);
@@ -912,21 +941,134 @@ impl StudioApp {
         let Some(project) = dialog.pick_folder() else {
             return;
         };
+        self.start_project_load(project);
+    }
 
-        let result = project_manifest(&project).and_then(|_| {
-            let sources =
-                load_game_sources(Some(project.clone())).map_err(|error| error.to_string())?;
-            self.open_project_sources(sources)
-        });
+    fn start_project_load(&mut self, project: PathBuf) {
+        if self.pending_project_load.is_some()
+            || self.background_project_ready.is_some()
+            || self.prepared_project_ready.is_some()
+        {
+            return;
+        }
+        if let Some(shell) = &mut self.shell {
+            shell.begin_project_loading();
+            shell.set_project_loading_progress(0.01);
+        }
+        let (sender, receiver) = mpsc::channel();
+        let worker_project = project.clone();
+        let spawn = thread::Builder::new()
+            .name("studio-project-loader".to_owned())
+            .spawn(move || {
+                let progress_sender = sender.clone();
+                let result = load_project_in_background(&worker_project, move |progress| {
+                    let _ = progress_sender.send(ProjectLoadEvent::Progress(progress));
+                });
+                let _ = sender.send(ProjectLoadEvent::Finished(result));
+            });
+        match spawn {
+            Ok(_) => {
+                self.pending_project_load = Some(PendingProjectLoad { project, receiver });
+            }
+            Err(error) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.cancel_project_loading();
+                }
+                self.show_open_project_error(&format!(
+                    "Could not start the project loader: {error}"
+                ));
+            }
+        }
+        self.request_redraw();
+    }
+
+    fn poll_project_load(&mut self) {
+        let mut finished = None;
+        loop {
+            let event = self
+                .pending_project_load
+                .as_ref()
+                .map(|load| load.receiver.try_recv());
+            match event {
+                Some(Ok(ProjectLoadEvent::Progress(progress))) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_project_loading_progress(progress);
+                    }
+                }
+                Some(Ok(ProjectLoadEvent::Finished(result))) => {
+                    finished = Some(result);
+                    break;
+                }
+                Some(Err(mpsc::TryRecvError::Empty)) | None => break,
+                Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                    finished = Some(Err("The project loader stopped unexpectedly.".to_owned()));
+                    break;
+                }
+            }
+        }
+        if let Some(result) = finished {
+            let project = self
+                .pending_project_load
+                .take()
+                .map(|load| load.project)
+                .unwrap_or_default();
+            self.background_project_ready = Some((project, result));
+        }
+    }
+
+    fn prepare_ready_project_runtime(&mut self) {
+        let Some((project, result)) = self.background_project_ready.take() else {
+            return;
+        };
+        let result = match result {
+            Ok(background) => match ClientSession::load(
+                &background.sources.manifest_source,
+                &background.sources.script_source,
+            ) {
+                Ok(client) => match BackendClient::new(client.game_id()) {
+                    Ok(network) => Ok(PreparedProjectLoad {
+                        background,
+                        client,
+                        network,
+                    }),
+                    Err(error) => {
+                        remove_temporary_package(&background.sources);
+                        Err(error)
+                    }
+                },
+                Err(error) => {
+                    remove_temporary_package(&background.sources);
+                    Err(error.to_string())
+                }
+            },
+            Err(error) => Err(error),
+        };
+        if result.is_ok()
+            && let Some(shell) = &mut self.shell
+        {
+            shell.set_project_loading_progress(0.93);
+        }
+        self.prepared_project_ready = Some((project, result));
+    }
+
+    fn commit_ready_project_load(&mut self) {
+        let Some((project, result)) = self.prepared_project_ready.take() else {
+            return;
+        };
+        let result = result.and_then(|prepared| self.commit_project_load(prepared));
         match result {
             Ok(()) => {
                 if let Some(shell) = &mut self.shell {
                     shell.set_notice(format!("Opened {}", project.display()));
                 }
             }
-            Err(message) => self.show_open_project_error(&message),
+            Err(message) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.cancel_project_loading();
+                }
+                self.show_open_project_error(&message);
+            }
         }
-        self.request_redraw();
     }
 
     fn show_open_project_error(&mut self, message: &str) {
@@ -944,54 +1086,25 @@ impl StudioApp {
         dialog.show();
     }
 
-    fn open_created_project(&mut self, project: &Path) -> Result<(), String> {
-        let sources = GameSources {
-            project_root: project.to_path_buf(),
-            root: project.to_path_buf(),
-            manifest_source: read_utf8_file(&project.join("manifest.json"), "manifest")
-                .map_err(|error| error.to_string())?,
-            script_source: read_utf8_file(&project.join("src/main.luau"), "source")
-                .map_err(|error| error.to_string())?,
-            standalone_preview: false,
-            temporary_package: None,
-        };
-        self.open_project_sources(sources)
-    }
-
-    fn open_project_sources(&mut self, sources: GameSources) -> Result<(), String> {
-        let GameSources {
-            project_root,
-            root,
-            manifest_source,
-            script_source,
-            standalone_preview,
-            temporary_package,
-        } = sources;
-        debug_assert!(!standalone_preview);
-
-        let prepared = (|| {
-            let image_atlas =
-                load_image_atlas(&root, &manifest_source).map_err(|error| error.to_string())?;
-            let morph_catalog_path = discover_project_morph_catalog(&project_root);
-            let local_morph_catalog = morph_catalog_path
-                .as_deref()
-                .map(load_local_morph_catalog)
-                .transpose()
-                .map_err(|error| error.to_string())?;
-            let client = ClientSession::load(&manifest_source, &script_source)
-                .map_err(|error| error.to_string())?;
-            let network = BackendClient::new(client.game_id())?;
-            Ok::<_, String>((image_atlas, local_morph_catalog, client, network))
-        })();
-        let (image_atlas, local_morph_catalog, client, network) = match prepared {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                if let Some(package) = temporary_package {
-                    let _ = fs::remove_dir_all(package);
-                }
-                return Err(error);
-            }
-        };
+    fn commit_project_load(&mut self, prepared: PreparedProjectLoad) -> Result<(), String> {
+        let PreparedProjectLoad {
+            background:
+                BackgroundProjectLoad {
+                    sources:
+                        GameSources {
+                            project_root,
+                            root,
+                            manifest_source,
+                            script_source: _,
+                            standalone_preview,
+                            temporary_package,
+                        },
+                    image_atlas,
+                    local_morph_catalog,
+                },
+            client,
+            network,
+        } = prepared;
 
         if let (Some(renderer), Some(atlas)) = (&mut self.renderer, &image_atlas)
             && !renderer.set_package_image_atlas(
@@ -1010,7 +1123,7 @@ impl StudioApp {
         self.project_root = project_root;
         self.game_root = root;
         self.manifest_source = manifest_source;
-        self.standalone_preview = false;
+        self.standalone_preview = standalone_preview;
         self.temporary_package = temporary_package;
         self.image_atlas = image_atlas;
         self.network = network;
@@ -1434,6 +1547,55 @@ impl Drop for StudioApp {
     }
 }
 
+fn load_project_in_background(
+    project: &Path,
+    mut progress: impl FnMut(f32),
+) -> Result<BackgroundProjectLoad, String> {
+    project_manifest(project)?;
+    progress(0.04);
+    let sources =
+        load_game_sources(Some(project.to_path_buf())).map_err(|error| error.to_string())?;
+    progress(0.44);
+
+    let prepared = (|| {
+        let image_atlas = load_image_atlas_with_progress(
+            &sources.root,
+            &sources.manifest_source,
+            |image_progress| progress(0.44 + image_progress * 0.30),
+        )
+        .map_err(|error| error.to_string())?;
+        progress(0.76);
+        let morph_catalog_path = discover_project_morph_catalog(&sources.project_root);
+        let local_morph_catalog = morph_catalog_path
+            .as_deref()
+            .map(load_local_morph_catalog)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        progress(0.88);
+        Ok::<_, String>((image_atlas, local_morph_catalog))
+    })();
+
+    match prepared {
+        Ok((image_atlas, local_morph_catalog)) => Ok(BackgroundProjectLoad {
+            sources,
+            image_atlas,
+            local_morph_catalog,
+        }),
+        Err(error) => {
+            if let Some(package) = &sources.temporary_package {
+                let _ = fs::remove_dir_all(package);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn remove_temporary_package(sources: &GameSources) {
+    if let Some(package) = &sources.temporary_package {
+        let _ = fs::remove_dir_all(package);
+    }
+}
+
 fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn Error>> {
     let Some(game_root) = game_root else {
         return Ok(GameSources {
@@ -1853,7 +2015,10 @@ impl ApplicationHandler for StudioApp {
         // after the editor's search field or another shell control had focus;
         // letting that stale focus consume W/A/S/D, arrows, Shift, or Space
         // makes the running game appear completely unresponsive.
-        let playing = self.shell.as_ref().is_some_and(StudioShell::is_playing);
+        let playing = self
+            .shell
+            .as_ref()
+            .is_some_and(|shell| shell.is_playing() && !shell.is_project_loading());
         let runtime_hovered = self
             .pointer_position
             .is_some_and(|(x, y)| self.runtime_pointer(x, y, true).is_some());
@@ -1932,20 +2097,30 @@ fn load_image_atlas(
     root: &Path,
     manifest_source: &str,
 ) -> Result<Option<ImageAtlas>, Box<dyn Error>> {
+    load_image_atlas_with_progress(root, manifest_source, |_| {})
+}
+
+fn load_image_atlas_with_progress(
+    root: &Path,
+    manifest_source: &str,
+    mut progress: impl FnMut(f32),
+) -> Result<Option<ImageAtlas>, Box<dyn Error>> {
     let manifest: Value = serde_json::from_str(manifest_source)?;
     let Some(images) = manifest
         .get("assets")
         .and_then(|assets| assets.get("images"))
         .and_then(Value::as_object)
     else {
+        progress(1.0);
         return Ok(None);
     };
     if images.is_empty() {
+        progress(1.0);
         return Ok(None);
     }
 
     let mut loaded = Vec::with_capacity(images.len());
-    for (id, definition) in images {
+    for (index, (id, definition)) in images.iter().enumerate() {
         let relative = definition
             .get("path")
             .and_then(Value::as_str)
@@ -1963,6 +2138,7 @@ fn load_image_atlas(
             );
         }
         loaded.push((id.clone(), image));
+        progress((index + 1) as f32 / images.len() as f32 * 0.72);
     }
 
     let mut placements = Vec::with_capacity(loaded.len());
@@ -1995,7 +2171,7 @@ fn load_image_atlas(
     let height = next_power_of_two((y + row_height + ATLAS_PADDING).max(1));
     let mut atlas = RgbaImage::new(MAX_ATLAS_DIMENSION, height.min(MAX_ATLAS_DIMENSION));
     let mut regions = std::collections::BTreeMap::new();
-    for ((id, image), (_, left, top)) in loaded.iter().zip(&placements) {
+    for (index, ((id, image), (_, left, top))) in loaded.iter().zip(&placements).enumerate() {
         atlas.copy_from(image, *left, *top)?;
         regions.insert(
             id.clone(),
@@ -2006,6 +2182,7 @@ fn load_image_atlas(
                 (image.height().saturating_sub(1).max(1)) as f32 / atlas.height() as f32,
             ],
         );
+        progress(0.72 + (index + 1) as f32 / loaded.len() as f32 * 0.28);
     }
     Ok(Some(ImageAtlas {
         width: atlas.width(),
@@ -2159,8 +2336,9 @@ fn validate_project(game_path: PathBuf) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        joystick_movement, load_game_sources, load_local_morph_catalog, project_asset_slug,
-        project_manifest, should_forward_gameplay_keyboard, update_project_morph_catalog,
+        STANDALONE_PREVIEW_MANIFEST, joystick_movement, load_game_sources,
+        load_local_morph_catalog, load_project_in_background, project_asset_slug, project_manifest,
+        should_forward_gameplay_keyboard, update_project_morph_catalog,
     };
     use std::{fs, path::Path};
 
@@ -2208,6 +2386,26 @@ mod tests {
         let error = project_manifest(&missing).unwrap_err();
         assert!(error.contains("containing manifest.json"));
         let _ = fs::remove_dir(missing);
+    }
+
+    #[test]
+    fn background_project_loader_reports_monotonic_real_phases() {
+        let project = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-progress-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&project);
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("manifest.json"), STANDALONE_PREVIEW_MANIFEST).unwrap();
+        fs::write(project.join("game.luau"), "return {}").unwrap();
+
+        let mut progress = Vec::new();
+        let result = load_project_in_background(&project, |value| progress.push(value));
+        assert!(result.is_ok());
+        assert!(progress.windows(2).all(|values| values[0] <= values[1]));
+        assert_eq!(progress.first().copied(), Some(0.04));
+        assert_eq!(progress.last().copied(), Some(0.88));
+        let _ = fs::remove_dir_all(project);
     }
 
     #[test]
