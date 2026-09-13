@@ -212,7 +212,7 @@ fn published_catalog_validates_complete_recipes_and_immutable_delivery() {
     });
     let parsed = PublishedCatalog::parse(&document.to_string()).unwrap();
     assert_eq!(parsed.catalog.presets.len(), 24);
-    assert_eq!(parsed.artifacts.len(), 20);
+    assert_eq!(parsed.artifacts.len(), 41);
     assert_eq!(
         parsed.catalog.presets[16].parameters,
         presets[16].parameters
