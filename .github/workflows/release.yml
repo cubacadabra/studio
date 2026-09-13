@@ -89,6 +89,19 @@ jobs:
             > "${app_root}/Contents/Info.plist"
           chmod +x "${app_root}/Contents/MacOS/studio"
 
+          # Ad-hoc signing gives the executable and enclosing app bundle a
+          # consistent code signature without requiring an Apple Developer
+          # account. This does not provide Developer ID trust or notarization.
+          codesign --force \
+            --sign - \
+            --timestamp=none \
+            "${app_root}/Contents/MacOS/studio"
+          codesign --force \
+            --sign - \
+            --timestamp=none \
+            "${app_root}"
+          codesign --verify --deep --strict --verbose=2 "${app_root}"
+
           ditto -c -k --sequesterRsrc --keepParent "${app_root}" "dist/${archive}"
 
       - name: Package Windows application
