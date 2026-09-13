@@ -361,6 +361,17 @@ impl StudioApp {
         if import_requested {
             self.import_morph_glb();
         }
+        let auth_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_auth_request);
+        if auth_requested {
+            if let Some(shell) = &mut self.shell {
+                shell.set_auth_pending(true);
+                shell.set_notice("Opening browser for sign-in…".to_owned());
+            }
+            self.network.begin_browser_auth();
+        }
         let draft_export_requested = self
             .shell
             .as_mut()
@@ -1040,6 +1051,24 @@ impl StudioApp {
                 BackendEvent::MorphThumbnail { url, bytes } => {
                     if let Some(shell) = &mut self.shell {
                         shell.set_morph_thumbnail(url, &bytes);
+                    }
+                }
+                BackendEvent::AuthStarted => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_notice(
+                            "Finish signing in in your browser. Studio will continue automatically."
+                                .to_owned(),
+                        );
+                    }
+                }
+                BackendEvent::AuthCompleted { user } => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_auth_completed(user);
+                    }
+                }
+                BackendEvent::AuthError(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_auth_error(message);
                     }
                 }
             }

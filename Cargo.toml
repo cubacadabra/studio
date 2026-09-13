@@ -16,6 +16,7 @@ egui = "0.35"
 egui-wgpu = { version = "0.35", default-features = false }
 egui-winit = "0.35"
 env_logger = "0.11"
+getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log = "0.4"
 rfd = "0.15"

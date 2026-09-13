@@ -402,6 +402,9 @@ pub(crate) struct StudioShell {
     morph_publish_requested: bool,
     morph_thumbnail_requested: bool,
     morph_import_error: Option<String>,
+    auth_requested: bool,
+    auth_pending: bool,
+    auth_user: Option<crate::network::AuthUser>,
     logo_texture: egui::TextureHandle,
     position: [f32; 3],
     rotation: f32,
@@ -486,6 +489,9 @@ impl StudioShell {
             morph_publish_requested: false,
             morph_thumbnail_requested: false,
             morph_import_error: None,
+            auth_requested: false,
+            auth_pending: false,
+            auth_user: None,
             logo_texture,
             position: [6.4, 0.0, -12.8],
             rotation: 18.0,
@@ -513,6 +519,25 @@ impl StudioShell {
 
     pub(crate) fn set_notice(&mut self, notice: String) {
         self.notice = notice;
+    }
+
+    pub(crate) fn take_auth_request(&mut self) -> bool {
+        std::mem::take(&mut self.auth_requested)
+    }
+
+    pub(crate) fn set_auth_pending(&mut self, pending: bool) {
+        self.auth_pending = pending;
+    }
+
+    pub(crate) fn set_auth_completed(&mut self, user: crate::network::AuthUser) {
+        self.auth_pending = false;
+        self.auth_user = Some(user.clone());
+        self.notice = format!("Signed in as {}", user.name);
+    }
+
+    pub(crate) fn set_auth_error(&mut self, message: String) {
+        self.auth_pending = false;
+        self.notice = message;
     }
 
     pub(crate) fn set_remote_morph_catalog(&mut self, source: &str) -> Result<usize, String> {
@@ -1278,6 +1303,21 @@ impl StudioShell {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
+                        if self.auth_pending {
+                            ui.label(
+                                RichText::new("Signing in…")
+                                    .size(TYPE.meta)
+                                    .color(colors.muted),
+                            );
+                        } else if let Some(user) = &self.auth_user {
+                            ui.label(
+                                RichText::new(&user.name)
+                                    .size(TYPE.meta)
+                                    .color(colors.secondary_text),
+                            );
+                        } else if toolbar_button(ui, Icon::Open, "Sign in", false).clicked() {
+                            self.auth_requested = true;
+                        }
                         if ui.available_width() >= 130.0 {
                             let live = ui.allocate_response(
                                 egui::vec2(40.0, CONTROL_HEIGHT),
