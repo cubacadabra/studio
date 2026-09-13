@@ -344,6 +344,13 @@ impl StudioApp {
                 shell.execute_command(command);
             }
         }
+        if self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_open_project_request)
+        {
+            self.choose_and_open_project();
+        }
         #[cfg(target_os = "macos")]
         if let Some((title, parent, error)) = self
             .shell
@@ -862,6 +869,53 @@ impl StudioApp {
             }
         }
         self.request_redraw();
+    }
+
+    fn choose_and_open_project(&mut self) {
+        let starting_directory = if !self.standalone_preview && self.project_root.is_dir() {
+            self.project_root
+                .parent()
+                .unwrap_or(&self.project_root)
+                .to_path_buf()
+        } else {
+            env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        };
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Open Project")
+            .set_directory(starting_directory)
+            .set_can_create_directories(false);
+        if let Some(window) = &self.window {
+            dialog = dialog.set_parent(window);
+        }
+        let Some(project) = dialog.pick_folder() else {
+            return;
+        };
+
+        let result = project_manifest(&project).and_then(|_| self.open_created_project(&project));
+        match result {
+            Ok(()) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_notice(format!("Opened {}", project.display()));
+                }
+            }
+            Err(message) => self.show_open_project_error(&message),
+        }
+        self.request_redraw();
+    }
+
+    fn show_open_project_error(&mut self, message: &str) {
+        if let Some(shell) = &mut self.shell {
+            shell.set_notice(format!("Could not open project: {message}"));
+        }
+        let mut dialog = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("Couldn’t Open Project")
+            .set_description(message)
+            .set_buttons(rfd::MessageButtons::Ok);
+        if let Some(window) = &self.window {
+            dialog = dialog.set_parent(window);
+        }
+        dialog.show();
     }
 
     fn open_created_project(&mut self, project: &Path) -> Result<(), String> {
@@ -1391,6 +1445,20 @@ fn read_utf8_file(path: &Path, kind: &str) -> Result<String, Box<dyn Error>> {
             path.display()
         ))) as Box<dyn Error>
     })
+}
+
+fn project_manifest(project: &Path) -> Result<PathBuf, String> {
+    if !project.is_dir() {
+        return Err(format!("{} is not a directory.", project.display()));
+    }
+    let manifest = project.join("manifest.json");
+    if !manifest.is_file() {
+        return Err(format!(
+            "Choose a project folder containing manifest.json. No manifest was found in {}.",
+            project.display()
+        ));
+    }
+    Ok(manifest)
 }
 
 fn discover_project_morph_catalog(project_root: &Path) -> Option<PathBuf> {
@@ -2015,7 +2083,7 @@ fn validate_project(game_path: PathBuf) -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::{
         joystick_movement, load_game_sources, load_local_morph_catalog, project_asset_slug,
-        should_forward_gameplay_keyboard, update_project_morph_catalog,
+        project_manifest, should_forward_gameplay_keyboard, update_project_morph_catalog,
     };
     use std::{fs, path::Path};
 
@@ -2044,6 +2112,25 @@ mod tests {
         assert_eq!(client.game_id(), "first-game");
         assert!(sources.script_source.contains("begin module: round.luau"));
         assert!(!sources.script_source.contains("@include"));
+    }
+
+    #[test]
+    fn project_folders_require_a_manifest() {
+        let valid = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
+        assert_eq!(
+            project_manifest(&valid).unwrap(),
+            valid.join("manifest.json")
+        );
+
+        let missing = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-no-manifest-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&missing);
+        fs::create_dir(&missing).unwrap();
+        let error = project_manifest(&missing).unwrap_err();
+        assert!(error.contains("containing manifest.json"));
+        let _ = fs::remove_dir(missing);
     }
 
     #[test]

@@ -409,6 +409,7 @@ pub(crate) struct StudioShell {
     auth_requested: bool,
     auth_pending: bool,
     auth_user: Option<crate::network::AuthUser>,
+    open_project_requested: bool,
     new_project_dialog_open: bool,
     new_project_title: String,
     new_project_parent: PathBuf,
@@ -508,6 +509,7 @@ impl StudioShell {
             auth_requested: false,
             auth_pending: false,
             auth_user: None,
+            open_project_requested: false,
             new_project_dialog_open: false,
             new_project_title: String::new(),
             new_project_parent: PathBuf::from("."),
@@ -568,6 +570,10 @@ impl StudioShell {
 
     pub(crate) fn set_project_asset_available(&mut self, available: bool) {
         self.project_asset_available = available;
+    }
+
+    pub(crate) fn take_open_project_request(&mut self) -> bool {
+        std::mem::take(&mut self.open_project_requested)
     }
 
     pub(crate) fn set_new_project_parent(&mut self, parent: PathBuf) {
@@ -1249,7 +1255,8 @@ impl StudioShell {
                 }
             }
             StudioCommand::OpenProject => {
-                self.notice = "Open Project is a layout preview".to_owned();
+                self.open_project_requested = true;
+                self.notice = "Choose a project folder…".to_owned();
             }
             StudioCommand::Save => {
                 self.notice = "Nothing to save yet".to_owned();
