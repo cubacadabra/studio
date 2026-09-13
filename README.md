@@ -33,11 +33,11 @@ manifest.json
 src/main.luau
 ```
 
-When `--path` points at a raw project, Studio assembles the runtime inputs in
-memory. It recursively expands local `-- @include` directives, expands the
-Cubacadabra SDK includes from the sibling `tools` repository, resolves
-`manifest.effects.source`, and reads assets directly from the project. It does
-not write generated files back into the game directory.
+When `--path` points at a raw project, Studio invokes the installed
+`cubacadabra build-game` command and loads its package from a temporary
+Studio-owned directory. This keeps Studio's raw-project behavior aligned with
+the CLI's module bundling, SDK resolution, manifest validation, and effects
+handling. The temporary package is removed when Studio exits.
 
 From this repository, run:
 
@@ -68,11 +68,11 @@ Controls:
 - mouse wheel: zoom
 - `Escape`: quit
 
-Studio currently expects the sibling engine repository at `../rust` and the
-sibling `../tools` repository at build time for embedded SDK source, matching
-the layout used by the other Cubacadabra clients. The desktop host is a single
-binary crate for now; platform packaging and future editor services can grow
-under `crates/` without making the first window more complex.
+Studio currently expects the sibling engine repository at `../rust` at build
+time. For local source-project fallback, it can use the sibling `../tools`
+repository when the `cubacadabra` command is not installed. The desktop host is
+a single binary crate for now; platform packaging and future editor services
+can grow under `crates/` without making the first window more complex.
 
 Studio connects the running game to the multiplayer Worker over WebSockets.
 The backend defaults to the local Worker at `http://127.0.0.1:8787`; set

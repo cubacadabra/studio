@@ -95,6 +95,7 @@ struct GameSources {
     manifest_source: String,
     script_source: String,
     standalone_preview: bool,
+    temporary_package: Option<PathBuf>,
 }
 
 struct LocalMorphCatalog {
@@ -133,6 +134,7 @@ struct LocalMorphPreset {
 struct StudioApp {
     game_root: PathBuf,
     standalone_preview: bool,
+    temporary_package: Option<PathBuf>,
     network: BackendClient,
     client: ClientSession,
     image_atlas: Option<ImageAtlas>,
@@ -170,6 +172,7 @@ impl StudioApp {
         let script_source = sources.script_source;
         let game_root = sources.root;
         let standalone_preview = sources.standalone_preview;
+        let temporary_package = sources.temporary_package;
         let local_morph_catalog = morph_catalog_path
             .as_deref()
             .map(load_local_morph_catalog)
@@ -202,6 +205,7 @@ impl StudioApp {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             game_root,
             standalone_preview,
+            temporary_package,
             network,
             client,
             window: None,
@@ -1055,6 +1059,14 @@ impl StudioApp {
     }
 }
 
+impl Drop for StudioApp {
+    fn drop(&mut self) {
+        if let Some(package) = self.temporary_package.take() {
+            let _ = fs::remove_dir_all(package);
+        }
+    }
+}
+
 fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn Error>> {
     let Some(game_root) = game_root else {
         return Ok(GameSources {
@@ -1062,21 +1074,14 @@ fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn 
             manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             script_source: STANDALONE_PREVIEW_SCRIPT.to_owned(),
             standalone_preview: true,
+            temporary_package: None,
         });
     };
-    let manifest_path = game_root.join("manifest.json");
-    let manifest_source = read_utf8_file(&manifest_path, "manifest")?;
-
-    let (script_source, source_kind) = if game_root.join("game.luau").is_file() {
-        (
-            read_utf8_file(&game_root.join("game.luau"), "script")?,
-            "built",
-        )
+    let (package_root, temporary_package) = if game_root.join("game.luau").is_file() {
+        (game_root.clone(), None)
     } else if game_root.join("src/main.luau").is_file() {
-        (
-            expand_raw_script(&game_root.join("src"), &game_root.join("src/main.luau"))?,
-            "raw",
-        )
+        let package = build_raw_game_package(&game_root)?;
+        (package.clone(), Some(package))
     } else {
         return Err(Box::new(StudioError(format!(
             "{} is neither a built package nor a raw game project (expected game.luau or src/main.luau)",
@@ -1084,18 +1089,61 @@ fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn 
         ))));
     };
 
-    let manifest_source = if source_kind == "raw" {
-        resolve_effects_source(&game_root, &manifest_source)?
-    } else {
-        manifest_source
-    };
-
     Ok(GameSources {
-        root: game_root,
-        manifest_source,
-        script_source,
+        root: package_root.clone(),
+        manifest_source: read_utf8_file(&package_root.join("manifest.json"), "manifest")?,
+        script_source: read_utf8_file(&package_root.join("game.luau"), "script")?,
         standalone_preview: false,
+        temporary_package,
     })
+}
+
+fn build_raw_game_package(game_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let package = std::env::temp_dir().join(format!(
+        "cubacadabra-studio-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    let mut command = std::process::Command::new("cubacadabra");
+    command.args([
+        "build-game",
+        "--source",
+        game_root.to_str().ok_or_else(|| {
+            Box::new(StudioError("game path is not valid UTF-8".to_owned())) as Box<dyn Error>
+        })?,
+        "--output",
+        package.to_str().ok_or_else(|| {
+            Box::new(StudioError(
+                "temporary package path is not valid UTF-8".to_owned(),
+            )) as Box<dyn Error>
+        })?,
+    ]);
+    let result = command.output().or_else(|_| {
+        let tools_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/src");
+        std::process::Command::new("python3")
+            .env("PYTHONPATH", tools_source)
+            .args([
+                "-m",
+                "cubacadabra",
+                "build-game",
+                "--source",
+                game_root.to_str().unwrap_or_default(),
+                "--output",
+                package.to_str().unwrap_or_default(),
+            ])
+            .output()
+    })?;
+    if !result.status.success() {
+        let details = String::from_utf8_lossy(&result.stderr);
+        return Err(Box::new(StudioError(format!(
+            "could not build raw game project with cubacadabra: {}",
+            details.trim()
+        ))));
+    }
+    Ok(package)
 }
 
 fn read_utf8_file(path: &Path, kind: &str) -> Result<String, Box<dyn Error>> {
@@ -1295,194 +1343,6 @@ fn local_catalog_file(root: &Path, reference: &str, kind: &str) -> Result<PathBu
             path.display()
         ))) as Box<dyn Error>
     })
-}
-
-fn expand_raw_script(source_root: &Path, entry: &Path) -> Result<String, Box<dyn Error>> {
-    let mut stack = Vec::new();
-    expand_source_file(source_root, entry, &mut stack)
-}
-
-fn expand_source_file(
-    source_root: &Path,
-    path: &Path,
-    stack: &mut Vec<PathBuf>,
-) -> Result<String, Box<dyn Error>> {
-    let relative = path
-        .strip_prefix(source_root)
-        .unwrap_or(path)
-        .display()
-        .to_string();
-    let canonical = path.canonicalize().map_err(|error| {
-        Box::new(StudioError(format!(
-            "could not resolve source file {relative}: {error}"
-        ))) as Box<dyn Error>
-    })?;
-    if stack.contains(&canonical) {
-        let chain = stack
-            .iter()
-            .map(|item| {
-                item.strip_prefix(source_root)
-                    .unwrap_or(item)
-                    .display()
-                    .to_string()
-            })
-            .chain(std::iter::once(relative.clone()))
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        return Err(Box::new(StudioError(format!(
-            "cyclic Luau include: {chain}"
-        ))));
-    }
-
-    let source = read_utf8_file(path, "source")?;
-    stack.push(canonical);
-    let mut lines = Vec::new();
-    for (line_number, line) in source.lines().enumerate() {
-        if !stack.is_empty() && stack.len() > 1 && is_top_level_return(line) {
-            return Err(Box::new(StudioError(format!(
-                "{relative}:{}: included files cannot contain a top-level return",
-                line_number + 1
-            ))));
-        }
-
-        let Some(include_value) = parse_include(line) else {
-            lines.push(line.to_owned());
-            continue;
-        };
-
-        if let Some(sdk_source) = sdk_include(include_value)? {
-            lines.push(format!("-- begin SDK include: {include_value}"));
-            lines.push(sdk_source);
-            lines.push(format!("-- end SDK include: {include_value}"));
-            continue;
-        }
-
-        let include_path = safe_source_include(source_root, include_value).map_err(|error| {
-            Box::new(StudioError(format!(
-                "{relative}:{}: {error}",
-                line_number + 1
-            ))) as Box<dyn Error>
-        })?;
-        lines.push(format!("-- begin include: {include_value}"));
-        lines.push(expand_source_file(source_root, &include_path, stack)?);
-        lines.push(format!("-- end include: {include_value}"));
-    }
-    stack.pop();
-    Ok(lines.join("\n"))
-}
-
-fn parse_include(line: &str) -> Option<&str> {
-    let line = line.trim();
-    let line = line.strip_prefix("--")?.trim_start();
-    let line = line.strip_prefix("@include")?.trim_start();
-    let line = line.strip_prefix('"')?;
-    let (value, rest) = line.split_once('"')?;
-    rest.trim().is_empty().then_some(value)
-}
-
-fn is_top_level_return(line: &str) -> bool {
-    line.strip_prefix("return")
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
-}
-
-fn sdk_include(include_value: &str) -> Result<Option<String>, Box<dyn Error>> {
-    let Some(file_name) = include_value.strip_prefix("@cubacadabra/") else {
-        return Ok(None);
-    };
-    let file_name = match file_name {
-        "disclosure-v1.luau" => "disclosure.luau",
-        "obby-v1.luau" => "obby.luau",
-        "survival-v1.luau" => "survival.luau",
-        "cycle-v1.luau" => "cycle.luau",
-        "shared-state-v1.luau" => "shared-state.luau",
-        _ => {
-            return Err(Box::new(StudioError(format!(
-                "unknown Cubacadabra SDK include: {include_value}"
-            ))));
-        }
-    };
-    let source = match file_name {
-        "disclosure.luau" => include_str!("../../tools/src/cubacadabra/sdk/disclosure.luau"),
-        "obby.luau" => include_str!("../../tools/src/cubacadabra/sdk/obby.luau"),
-        "survival.luau" => include_str!("../../tools/src/cubacadabra/sdk/survival.luau"),
-        "cycle.luau" => include_str!("../../tools/src/cubacadabra/sdk/cycle.luau"),
-        "shared-state.luau" => {
-            include_str!("../../tools/src/cubacadabra/sdk/shared-state.luau")
-        }
-        _ => unreachable!(),
-    };
-    Ok(Some(source.to_owned()))
-}
-
-fn safe_source_include(source_root: &Path, include_value: &str) -> Result<PathBuf, String> {
-    let include_path = Path::new(include_value);
-    if include_value.is_empty()
-        || include_path.is_absolute()
-        || include_path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err("include must stay inside src/".to_owned());
-    }
-    let path = source_root.join(include_path);
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| format!("included file could not be read: {error}"))?;
-    let root = source_root
-        .canonicalize()
-        .map_err(|error| format!("source root could not be read: {error}"))?;
-    if !canonical.starts_with(&root) {
-        return Err("include must stay inside src/".to_owned());
-    }
-    if !canonical.is_file() {
-        return Err(format!("included file not found: {include_value}"));
-    }
-    Ok(canonical)
-}
-
-fn resolve_effects_source(root: &Path, manifest_source: &str) -> Result<String, Box<dyn Error>> {
-    let mut manifest: Value = serde_json::from_str(manifest_source).map_err(|error| {
-        Box::new(StudioError(format!("manifest is not valid JSON: {error}"))) as Box<dyn Error>
-    })?;
-    let Some(effects) = manifest.get("effects").and_then(Value::as_object) else {
-        return Ok(manifest_source.to_owned());
-    };
-    let Some(source_value) = effects.get("source") else {
-        return Ok(manifest_source.to_owned());
-    };
-    let Some(relative) = source_value.as_str() else {
-        return Err(Box::new(StudioError(
-            "manifest.effects.source must be a relative JSON path".to_owned(),
-        )));
-    };
-    if effects.len() != 1 || !is_safe_project_path(relative) {
-        return Err(Box::new(StudioError(
-            "manifest.effects.source must be the only effects field and stay inside the game project"
-                .to_owned(),
-        )));
-    }
-    let effects_path = root.join(relative);
-    let effects_source = read_utf8_file(&effects_path, "effects")?;
-    let resolved_effects: Value = serde_json::from_str(&effects_source).map_err(|error| {
-        Box::new(StudioError(format!(
-            "manifest.effects.source is not valid JSON: {error}"
-        ))) as Box<dyn Error>
-    })?;
-    if !resolved_effects.is_object() {
-        return Err(Box::new(StudioError(
-            "manifest.effects.source must contain a JSON object".to_owned(),
-        )));
-    }
-    manifest["effects"] = resolved_effects;
-    Ok(serde_json::to_string_pretty(&manifest)? + "\n")
-}
-
-fn is_safe_project_path(path: &str) -> bool {
-    let path = Path::new(path);
-    !path.is_absolute()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 impl ApplicationHandler for StudioApp {
