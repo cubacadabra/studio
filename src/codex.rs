@@ -36,7 +36,11 @@ pub enum CodexEvent {
 enum CodexCommand {
     BeginChatGptLogin,
     OpenChat,
-    SendChatMessage(String),
+    SendChatMessage {
+        message: String,
+        model: String,
+        reasoning_effort: String,
+    },
     SetProjectRoot(PathBuf),
     Shutdown,
 }
@@ -65,10 +69,17 @@ struct ProtocolState {
     queued_login: bool,
     login_active: bool,
     chat_requested: bool,
-    queued_messages: Vec<String>,
+    queued_messages: Vec<QueuedChatMessage>,
     thread_id: Option<String>,
     thread_start_pending: bool,
     turn_active: bool,
+}
+
+#[derive(Clone)]
+struct QueuedChatMessage {
+    message: String,
+    model: String,
+    reasoning_effort: String,
 }
 
 impl ProtocolState {
@@ -159,9 +170,18 @@ impl ProtocolState {
         self.ensure_thread()
     }
 
-    fn queue_chat_message(&mut self, message: String) -> Result<(), String> {
+    fn queue_chat_message(
+        &mut self,
+        message: String,
+        model: String,
+        reasoning_effort: String,
+    ) -> Result<(), String> {
         self.chat_requested = true;
-        self.queued_messages.push(message);
+        self.queued_messages.push(QueuedChatMessage {
+            message,
+            model,
+            reasoning_effort,
+        });
         self.ensure_thread()?;
         self.start_queued_turn()
     }
@@ -208,7 +228,9 @@ impl ProtocolState {
             "turn/start",
             json!({
                 "threadId": thread_id,
-                "input": [{ "type": "text", "text": message }],
+                "input": [{ "type": "text", "text": message.message }],
+                "model": message.model,
+                "effort": message.reasoning_effort,
                 "cwd": cwd,
                 "approvalPolicy": "never",
                 "sandboxPolicy": {
@@ -280,9 +302,18 @@ impl CodexClient {
             .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
     }
 
-    pub fn send_chat_message(&self, message: String) -> Result<(), String> {
+    pub fn send_chat_message(
+        &self,
+        message: String,
+        model: String,
+        reasoning_effort: String,
+    ) -> Result<(), String> {
         self.commands
-            .send(CodexCommand::SendChatMessage(message))
+            .send(CodexCommand::SendChatMessage {
+                message,
+                model,
+                reasoning_effort,
+            })
             .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
     }
 
@@ -356,14 +387,28 @@ fn run_worker(project_root: &Path, commands: Receiver<CodexCommand>, events: Sen
                     }
                 }
                 Ok(CodexCommand::OpenChat) => protocol.chat_requested = true,
-                Ok(CodexCommand::SendChatMessage(message)) if protocol.initialized => {
-                    if let Err(message) = protocol.queue_chat_message(message) {
+                Ok(CodexCommand::SendChatMessage {
+                    message,
+                    model,
+                    reasoning_effort,
+                }) if protocol.initialized => {
+                    if let Err(message) =
+                        protocol.queue_chat_message(message, model, reasoning_effort)
+                    {
                         let _ = events.send(CodexEvent::ChatError(message));
                     }
                 }
-                Ok(CodexCommand::SendChatMessage(message)) => {
+                Ok(CodexCommand::SendChatMessage {
+                    message,
+                    model,
+                    reasoning_effort,
+                }) => {
                     protocol.chat_requested = true;
-                    protocol.queued_messages.push(message);
+                    protocol.queued_messages.push(QueuedChatMessage {
+                        message,
+                        model,
+                        reasoning_effort,
+                    });
                 }
                 Ok(CodexCommand::SetProjectRoot(project_root)) => {
                     if let Err(message) = protocol.set_project_root(project_root) {

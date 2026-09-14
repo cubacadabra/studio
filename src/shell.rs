@@ -858,9 +858,43 @@ enum CodexChatRole {
     Assistant,
 }
 
+const CODEX_CHAT_DEFAULT_MODEL: &str = "gpt-6-astra";
+const CODEX_CHAT_CURRENT_MODEL: &str = "gpt-5.6-luna";
+const CODEX_CHAT_DEFAULT_EFFORT: &str = "medium";
+const CODEX_CHAT_MODELS: [(&str, &str); 4] = [
+    (
+        "gpt-6-astra",
+        "Our most capable model for complex, demanding work.",
+    ),
+    (
+        "gpt-5.6-sol",
+        "Reliable agentic workhorse for everyday tasks.",
+    ),
+    (
+        "gpt-5.6-terra",
+        "Balanced agentic coding model for everyday work.",
+    ),
+    ("gpt-5.6-luna", "Fast and affordable agentic coding model."),
+];
+const CODEX_CHAT_EFFORTS: [(&str, &str); 4] = [
+    (
+        "medium",
+        "Balances speed and reasoning depth for everyday tasks.",
+    ),
+    ("high", "Greater reasoning depth for complex problems."),
+    ("xhigh", "Extra high reasoning depth for complex problems."),
+    ("max", "Maximum reasoning depth for the hardest problems."),
+];
+
 struct CodexChatMessage {
     role: CodexChatRole,
     text: String,
+}
+
+pub(crate) struct CodexChatSendRequest {
+    pub(crate) message: String,
+    pub(crate) model: &'static str,
+    pub(crate) reasoning_effort: &'static str,
 }
 
 pub(crate) struct StudioShell {
@@ -924,9 +958,11 @@ pub(crate) struct StudioShell {
     codex_project_root: PathBuf,
     codex_chat_open: bool,
     codex_chat_open_requested: bool,
-    codex_chat_send_requested: Option<String>,
+    codex_chat_send_requested: Option<CodexChatSendRequest>,
     codex_chat_messages: Vec<CodexChatMessage>,
     codex_chat_draft: String,
+    codex_chat_model: &'static str,
+    codex_chat_reasoning_effort: &'static str,
     codex_chat_ready: bool,
     codex_chat_busy: bool,
     codex_chat_error: Option<String>,
@@ -1065,6 +1101,8 @@ impl StudioShell {
             codex_chat_send_requested: None,
             codex_chat_messages: Vec::new(),
             codex_chat_draft: String::new(),
+            codex_chat_model: CODEX_CHAT_CURRENT_MODEL,
+            codex_chat_reasoning_effort: CODEX_CHAT_DEFAULT_EFFORT,
             codex_chat_ready: false,
             codex_chat_busy: false,
             codex_chat_error: None,
@@ -1137,7 +1175,7 @@ impl StudioShell {
         std::mem::take(&mut self.codex_chat_open_requested)
     }
 
-    pub(crate) fn take_codex_chat_send_request(&mut self) -> Option<String> {
+    pub(crate) fn take_codex_chat_send_request(&mut self) -> Option<CodexChatSendRequest> {
         self.codex_chat_send_requested.take()
     }
 
@@ -2154,6 +2192,42 @@ impl StudioShell {
                             .color(colors.muted),
                     )
                     .on_hover_text(project_root);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Model").size(TYPE.meta).color(colors.muted));
+                        let selected_model = self.codex_chat_model;
+                        egui::ComboBox::from_id_salt("codex_chat_model")
+                            .selected_text(codex_chat_model_label(selected_model, selected_model))
+                            .width(156.0)
+                            .show_ui(ui, |ui| {
+                                for &(model, description) in &CODEX_CHAT_MODELS {
+                                    ui.selectable_value(
+                                        &mut self.codex_chat_model,
+                                        model,
+                                        codex_chat_model_label(model, selected_model),
+                                    )
+                                    .on_hover_text(description);
+                                }
+                            });
+                        ui.label(RichText::new("Level").size(TYPE.meta).color(colors.muted));
+                        egui::ComboBox::from_id_salt("codex_chat_reasoning_effort")
+                            .selected_text(self.codex_chat_reasoning_effort)
+                            .width(72.0)
+                            .show_ui(ui, |ui| {
+                                for &(effort, description) in &CODEX_CHAT_EFFORTS {
+                                    ui.selectable_value(
+                                        &mut self.codex_chat_reasoning_effort,
+                                        effort,
+                                        effort,
+                                    )
+                                    .on_hover_text(description);
+                                }
+                            });
+                    });
+                    ui.label(
+                        RichText::new(codex_chat_model_description(self.codex_chat_model))
+                            .size(TYPE.meta)
+                            .color(colors.muted),
+                    );
                     ui.separator();
 
                     // Keep the composer in the panel's visible region. With
@@ -2252,7 +2326,12 @@ impl StudioShell {
                                         self.codex_chat_draft.clear();
                                         self.codex_chat_busy = true;
                                         self.codex_chat_error = None;
-                                        self.codex_chat_send_requested = Some(message);
+                                        self.codex_chat_send_requested =
+                                            Some(CodexChatSendRequest {
+                                                message,
+                                                model: self.codex_chat_model,
+                                                reasoning_effort: self.codex_chat_reasoning_effort,
+                                            });
                                     }
                                 }
                             });
@@ -4589,6 +4668,23 @@ fn chatgpt_account_label(account: &ChatGptAccount) -> String {
         _ => None,
     };
     plan.map_or_else(|| "ChatGPT".to_owned(), |plan| format!("ChatGPT · {plan}"))
+}
+
+fn codex_chat_model_label(model: &str, selected_model: &str) -> String {
+    let marker = match (model == CODEX_CHAT_DEFAULT_MODEL, model == selected_model) {
+        (true, true) => " (default · current)",
+        (true, false) => " (default)",
+        (false, true) => " (current)",
+        (false, false) => "",
+    };
+    format!("{model}{marker}")
+}
+
+fn codex_chat_model_description(model: &str) -> &'static str {
+    CODEX_CHAT_MODELS
+        .iter()
+        .find_map(|(candidate, description)| (*candidate == model).then_some(*description))
+        .unwrap_or("Select a Codex model.")
 }
 
 fn toolbar_button_width(ui: &egui::Ui, label: &str) -> f32 {

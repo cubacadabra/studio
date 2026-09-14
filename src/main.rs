@@ -469,11 +469,15 @@ impl StudioApp {
         {
             shell.set_codex_chat_error(message);
         }
-        if let Some(message) = self
+        if let Some(request) = self
             .shell
             .as_mut()
             .and_then(StudioShell::take_codex_chat_send_request)
-            && let Err(message) = self.codex.send_chat_message(message)
+            && let Err(message) = self.codex.send_chat_message(
+                request.message,
+                request.model.to_owned(),
+                request.reasoning_effort.to_owned(),
+            )
             && let Some(shell) = &mut self.shell
         {
             shell.set_codex_chat_error(message);

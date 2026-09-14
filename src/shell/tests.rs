@@ -258,6 +258,41 @@ fn chatgpt_status_uses_readable_plan_names() {
 }
 
 #[test]
+fn codex_chat_picker_exposes_requested_models_and_levels() {
+    assert_eq!(
+        CODEX_CHAT_MODELS
+            .iter()
+            .map(|(model, _)| *model)
+            .collect::<Vec<_>>(),
+        vec![
+            "gpt-6-astra",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+        ]
+    );
+    assert_eq!(
+        CODEX_CHAT_EFFORTS
+            .iter()
+            .map(|(effort, _)| *effort)
+            .collect::<Vec<_>>(),
+        vec!["medium", "high", "xhigh", "max"]
+    );
+    assert_eq!(
+        codex_chat_model_label(CODEX_CHAT_DEFAULT_MODEL, CODEX_CHAT_CURRENT_MODEL),
+        "gpt-6-astra (default)"
+    );
+    assert_eq!(
+        codex_chat_model_label(CODEX_CHAT_CURRENT_MODEL, CODEX_CHAT_CURRENT_MODEL),
+        "gpt-5.6-luna (current)"
+    );
+    assert_eq!(
+        codex_chat_model_description("gpt-5.6-terra"),
+        "Balanced agentic coding model for everyday work."
+    );
+}
+
+#[test]
 fn morph_preview_detects_screen_space_slivers() {
     assert!(
         projected_triangle_area([
