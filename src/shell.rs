@@ -24,7 +24,7 @@ use serde_json::Value;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -307,10 +307,11 @@ pub(crate) struct StudioShell {
     codex_activity: CodexActivity,
     codex_live_excerpt: String,
     codex_live_pending_excerpt: String,
+    codex_live_excerpt_queue: VecDeque<String>,
     codex_live_last_published_at: Option<Instant>,
+    codex_live_last_received_at: Option<Instant>,
     codex_live_needs_separator: bool,
     codex_live_in_code_block: bool,
-    codex_live_update_count: u32,
     codex_cancel_requested: bool,
     codex_cancel_sent: bool,
     codex_chat_error: Option<String>,

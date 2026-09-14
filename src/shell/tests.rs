@@ -341,6 +341,9 @@ fn codex_live_activity_hides_code_and_luau_paths() {
         "src/main.luau"
     ));
     assert!(!super::studio_state::is_human_readable_codex_line(
+        "Reviewing src/main before editing it."
+    ));
+    assert!(!super::studio_state::is_human_readable_codex_line(
         "local timer = 30"
     ));
     assert!(!super::studio_state::is_human_readable_codex_line(
@@ -349,6 +352,39 @@ fn codex_live_activity_hides_code_and_luau_paths() {
     assert!(!super::studio_state::is_human_readable_codex_line(
         "return finish_course()"
     ));
+}
+
+#[test]
+fn codex_live_activity_queues_complete_readable_phrases() {
+    use super::studio_state::{codex_live_chunk_end, codex_live_display_time};
+
+    let activity = "Reviewing the scene layout. Updating the moving sky message next.";
+    let first_end = codex_live_chunk_end(activity, false).expect("complete sentence");
+    assert_eq!(&activity[..first_end], "Reviewing the scene layout.");
+    assert_eq!(
+        codex_live_chunk_end("Still reviewing the current behavior", false),
+        None
+    );
+    assert_eq!(
+        codex_live_chunk_end("Still reviewing the current behavior", true),
+        Some("Still reviewing the current behavior".len())
+    );
+    assert!(codex_live_display_time("A longer readable activity update.") > Duration::from_secs(1));
+}
+
+#[test]
+fn codex_live_activity_never_splits_a_word() {
+    use super::studio_state::codex_live_chunk_end;
+
+    let activity = "Reviewing the existing game behavior and visual layout before making a focused change that preserves everything else in the project safely";
+    let end = codex_live_chunk_end(activity, false).expect("long phrase should be chunked");
+    assert!(
+        activity[..end]
+            .chars()
+            .next_back()
+            .is_some_and(|character| !character.is_whitespace())
+    );
+    assert!(activity[end..].starts_with(' '));
 }
 
 #[test]

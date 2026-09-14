@@ -141,24 +141,16 @@ impl StudioShell {
                                         self.set_codex_chat_cancelling();
                                     }
                                 });
-                                if self.codex_live_update_count > 0 {
+                                if !self.codex_live_excerpt.is_empty() {
                                     ui.add_space(4.0);
                                     ui.label(
-                                        RichText::new(format!(
-                                            "Live activity  ·  {} updates",
-                                            self.codex_live_update_count
-                                        ))
+                                        RichText::new("Live activity")
                                             .size(TYPE.meta)
                                             .color(colors.faint),
                                     );
-                                    let excerpt = if self.codex_live_excerpt.is_empty() {
-                                        "Receiving the requested change…"
-                                    } else {
-                                        &self.codex_live_excerpt
-                                    };
                                     ui.add(
                                         egui::Label::new(
-                                            RichText::new(excerpt)
+                                            RichText::new(&self.codex_live_excerpt)
                                                 .size(TYPE.meta)
                                                 .color(colors.secondary_text),
                                         )

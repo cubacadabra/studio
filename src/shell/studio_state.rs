@@ -174,10 +174,11 @@ impl StudioShell {
         self.codex_chat_draft.clear();
         self.codex_live_excerpt.clear();
         self.codex_live_pending_excerpt.clear();
+        self.codex_live_excerpt_queue.clear();
         self.codex_live_last_published_at = None;
+        self.codex_live_last_received_at = None;
         self.codex_live_needs_separator = false;
         self.codex_live_in_code_block = false;
-        self.codex_live_update_count = 0;
         self.codex_activity = CodexActivity::Thinking;
         self.codex_cancel_requested = false;
         self.codex_cancel_sent = false;
@@ -195,7 +196,6 @@ impl StudioShell {
     }
 
     pub(crate) fn set_codex_chat_delta(&mut self, delta: String) {
-        self.codex_live_update_count = self.codex_live_update_count.saturating_add(1);
         self.append_codex_live_excerpt(&delta);
         self.set_codex_activity(self.codex_activity.after_agent_progress());
     }
@@ -216,7 +216,6 @@ impl StudioShell {
     pub(crate) fn set_codex_chat_message(&mut self, text: String) {
         // An agent-message item can complete while the turn continues with
         // more tool work. Only turn/completed advances Studio to rebuilding.
-        self.codex_live_update_count = self.codex_live_update_count.saturating_add(1);
         self.append_codex_live_excerpt(&text);
         self.set_codex_activity(self.codex_activity.after_agent_progress());
     }
@@ -260,10 +259,11 @@ impl StudioShell {
         self.codex_activity = CodexActivity::Idle;
         self.codex_live_excerpt.clear();
         self.codex_live_pending_excerpt.clear();
+        self.codex_live_excerpt_queue.clear();
         self.codex_live_last_published_at = None;
+        self.codex_live_last_received_at = None;
         self.codex_live_needs_separator = false;
         self.codex_live_in_code_block = false;
-        self.codex_live_update_count = 0;
         if was_active {
             self.codex_chat_messages.push(CodexChatMessage {
                 role: CodexChatRole::Assistant,
@@ -321,47 +321,74 @@ impl StudioShell {
             safe_lines.push((line, needs_separator));
             self.codex_live_needs_separator = has_trailing_whitespace;
         }
+        let mut appended = false;
         for (line, needs_separator) in safe_lines {
             if needs_separator && !self.codex_live_pending_excerpt.is_empty() {
                 self.codex_live_pending_excerpt.push(' ');
             }
             self.codex_live_pending_excerpt.push_str(&line);
+            appended = true;
         }
-        self.publish_codex_live_excerpt();
+        if appended {
+            let now = Instant::now();
+            self.codex_live_last_received_at = Some(now);
+            self.queue_codex_live_excerpts(false);
+            self.publish_codex_live_excerpt(now);
+        }
     }
 
-    fn publish_codex_live_excerpt(&mut self) {
-        const PUBLISH_INTERVAL: Duration = Duration::from_millis(240);
-        const MAX_CHARS_PER_UPDATE: usize = 180;
-        let now = Instant::now();
-        if self.codex_live_pending_excerpt.is_empty()
-            || self
-                .codex_live_last_published_at
-                .is_some_and(|last| now.duration_since(last) < PUBLISH_INTERVAL)
+    fn queue_codex_live_excerpts(&mut self, flush_tail: bool) {
+        while let Some(end) = codex_live_chunk_end(&self.codex_live_pending_excerpt, flush_tail) {
+            let excerpt = self
+                .codex_live_pending_excerpt
+                .get(..end)
+                .unwrap_or(&self.codex_live_pending_excerpt)
+                .trim()
+                .to_owned();
+            self.codex_live_pending_excerpt = self
+                .codex_live_pending_excerpt
+                .get(end..)
+                .unwrap_or_default()
+                .trim_start()
+                .to_owned();
+            if excerpt.is_empty()
+                || !is_human_readable_codex_line(&excerpt)
+                || self.codex_live_excerpt == excerpt
+                || self.codex_live_excerpt_queue.back() == Some(&excerpt)
+            {
+                continue;
+            }
+            self.codex_live_excerpt_queue.push_back(excerpt);
+        }
+    }
+
+    fn publish_codex_live_excerpt(&mut self, now: Instant) {
+        let display_time = codex_live_display_time(&self.codex_live_excerpt);
+        if self
+            .codex_live_last_published_at
+            .is_some_and(|last| now.duration_since(last) < display_time)
         {
             return;
         }
-        let published_count =
-            readable_codex_chunk_end(&self.codex_live_pending_excerpt, MAX_CHARS_PER_UPDATE);
-        let published = self
-            .codex_live_pending_excerpt
-            .get(..published_count)
-            .unwrap_or(&self.codex_live_pending_excerpt)
-            .trim()
-            .to_owned();
-        self.codex_live_pending_excerpt = self
-            .codex_live_pending_excerpt
-            .get(published_count..)
-            .unwrap_or_default()
-            .trim_start()
-            .to_owned();
-        self.codex_live_excerpt = published;
+        let Some(excerpt) = self.codex_live_excerpt_queue.pop_front() else {
+            return;
+        };
+        self.codex_live_excerpt = excerpt;
         self.codex_live_last_published_at = Some(now);
     }
 
     pub(crate) fn advance_codex_live_activity(&mut self) {
         if self.codex_activity.is_active() {
-            self.publish_codex_live_excerpt();
+            const INCOMPLETE_PHRASE_HOLD: Duration = Duration::from_millis(700);
+            let now = Instant::now();
+            let should_flush_tail = self.codex_live_excerpt_queue.is_empty()
+                && self
+                    .codex_live_last_received_at
+                    .is_some_and(|last| now.duration_since(last) >= INCOMPLETE_PHRASE_HOLD);
+            if should_flush_tail {
+                self.queue_codex_live_excerpts(true);
+            }
+            self.publish_codex_live_excerpt(now);
         }
     }
 
@@ -557,7 +584,10 @@ impl StudioShell {
     }
 }
 
-fn readable_codex_chunk_end(text: &str, max_chars: usize) -> usize {
+pub(crate) fn codex_live_chunk_end(text: &str, flush_tail: bool) -> Option<usize> {
+    const MIN_SENTENCE_CHARS: usize = 12;
+    const MIN_TAIL_CHARS: usize = 24;
+    const MAX_CHARS: usize = 120;
     let mut last_boundary = None;
     let mut char_count = 0;
     for (byte_index, character) in text.char_indices() {
@@ -565,18 +595,30 @@ fn readable_codex_chunk_end(text: &str, max_chars: usize) -> usize {
             last_boundary = Some(byte_index);
         }
         char_count += 1;
-        if char_count == max_chars {
-            return last_boundary.unwrap_or_else(|| {
+        if char_count >= MIN_SENTENCE_CHARS && matches!(character, '.' | '!' | '?') {
+            return Some(byte_index + character.len_utf8());
+        }
+        if char_count == MAX_CHARS {
+            return Some(last_boundary.unwrap_or_else(|| {
                 text[byte_index..]
                     .char_indices()
                     .find_map(|(offset, character)| {
                         character.is_whitespace().then_some(byte_index + offset)
                     })
                     .unwrap_or(text.len())
-            });
+            }));
         }
     }
-    text.len()
+    (flush_tail && char_count >= MIN_TAIL_CHARS).then_some(text.len())
+}
+
+pub(crate) fn codex_live_display_time(excerpt: &str) -> Duration {
+    const MIN_DISPLAY_MILLIS: u64 = 1_500;
+    const MAX_DISPLAY_MILLIS: u64 = 3_500;
+    const MILLIS_PER_CHARACTER: u64 = 35;
+    let millis = (excerpt.chars().count() as u64 * MILLIS_PER_CHARACTER)
+        .clamp(MIN_DISPLAY_MILLIS, MAX_DISPLAY_MILLIS);
+    Duration::from_millis(millis)
 }
 
 pub(crate) fn is_human_readable_codex_line(line: &str) -> bool {
@@ -584,7 +626,11 @@ pub(crate) fn is_human_readable_codex_line(line: &str) -> bool {
         return false;
     }
     let lower = line.to_ascii_lowercase();
-    if lower.contains(".luau") || line.contains('`') {
+    if lower.contains(".luau")
+        || lower.contains("src/")
+        || lower.contains("src\\")
+        || line.contains('`')
+    {
         return false;
     }
     let first_word = line.split_whitespace().next().unwrap_or_default();

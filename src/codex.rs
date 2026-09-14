@@ -34,6 +34,7 @@ pub enum CodexEvent {
     LoginCompleted(ChatGptAccount),
     ChatReady,
     WorkStatus(CodexWorkStatus),
+    ActivityDelta(String),
     AssistantDelta(String),
     AssistantMessage(String),
     ChatTurnCompleted,
@@ -758,6 +759,11 @@ fn handle_app_server_message(
                 let _ = events.send(CodexEvent::AssistantDelta(delta.to_owned()));
             }
         }
+        Some("item/reasoning/summaryTextDelta") => {
+            if let Some(delta) = reasoning_summary_delta(&message) {
+                let _ = events.send(CodexEvent::ActivityDelta(delta.to_owned()));
+            }
+        }
         Some("item/started") => {
             if let Some(status) = work_status_for_started_item(&message) {
                 let _ = events.send(CodexEvent::WorkStatus(status));
@@ -812,6 +818,13 @@ fn work_status_for_started_item(message: &Value) -> Option<CodexWorkStatus> {
         Some("mcpToolCall" | "dynamicToolCall" | "webSearch") => Some(CodexWorkStatus::Working),
         _ => None,
     }
+}
+
+fn reasoning_summary_delta(message: &Value) -> Option<&str> {
+    message
+        .pointer("/params/delta")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 fn parse_account_result(result: &Value) -> Result<Option<ChatGptAccount>, String> {
@@ -962,6 +975,18 @@ mod tests {
                 "params": { "item": { "type": "unknown" } }
             })),
             None
+        );
+    }
+
+    #[test]
+    fn reads_user_facing_reasoning_summary_deltas() {
+        let message = json!({
+            "method": "item/reasoning/summaryTextDelta",
+            "params": { "delta": "Reviewing the game layout." }
+        });
+        assert_eq!(
+            reasoning_summary_delta(&message),
+            Some("Reviewing the game layout.")
         );
     }
 }

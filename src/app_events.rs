@@ -101,6 +101,11 @@ impl StudioApp {
                         shell.set_codex_work_status(status);
                     }
                 }
+                CodexEvent::ActivityDelta(delta) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_delta(delta);
+                    }
+                }
                 CodexEvent::AssistantDelta(delta) => {
                     if let Some(shell) = &mut self.shell {
                         shell.set_codex_chat_delta(delta);
