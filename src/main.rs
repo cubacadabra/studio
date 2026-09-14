@@ -288,19 +288,23 @@ mod tests {
 
     #[test]
     fn sign_text_edit_preserves_the_authored_sign_shape() {
-        let mut manifest = serde_json::json!({
-            "worlds": {
-                "course": {
-                    "signs": [{
-                        "text": "Before",
-                        "position": [1, 2, 3],
-                        "yaw": 0.5,
-                        "maxWidth": 4.0,
-                        "color": "paper"
-                    }]
-                }
-            }
-        });
+        let source = r#"{
+  "displayName": "Course",
+  "worlds": {
+    "course": {
+      "signs": [{
+        "text": "Before",
+        "position": [1, 2, 3],
+        "yaw": 0.5,
+        "maxWidth": 4.0,
+        "color": "paper"
+      }]
+    }
+  },
+  "sdkVersion": "0.3.0"
+}"#;
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(source).expect("manifest should parse");
         update_manifest_sign_text(&mut manifest, "world/course/signs/0", "After".to_owned())
             .expect("sign should be editable");
         let sign = &manifest["worlds"]["course"]["signs"][0];
@@ -309,6 +313,11 @@ mod tests {
         assert_eq!(sign["yaw"], 0.5);
         assert_eq!(sign["maxWidth"], 4.0);
         assert_eq!(sign["color"], "paper");
+
+        let rendered = serde_json::to_string_pretty(&manifest).expect("manifest should serialize");
+        assert!(rendered.find("\"displayName\"").unwrap() < rendered.find("\"worlds\"").unwrap());
+        assert!(rendered.find("\"worlds\"").unwrap() < rendered.find("\"sdkVersion\"").unwrap());
+        assert!(rendered.contains("\"text\": \"After\""));
     }
 
     #[test]
