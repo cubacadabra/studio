@@ -28,6 +28,7 @@ pub enum CodexEvent {
     AssistantDelta(String),
     AssistantMessage(String),
     ChatTurnCompleted,
+    ChatTurnCancelled,
     ChatError(String),
     Error(String),
     Unavailable(String),
@@ -41,6 +42,7 @@ enum CodexCommand {
         model: String,
         reasoning_effort: String,
     },
+    CancelChatMessage,
     SetProjectRoot(PathBuf),
     Shutdown,
 }
@@ -58,6 +60,7 @@ enum PendingRequest {
     Login,
     ThreadStart,
     TurnStart,
+    TurnInterrupt,
 }
 
 struct ProtocolState {
@@ -73,6 +76,9 @@ struct ProtocolState {
     thread_id: Option<String>,
     thread_start_pending: bool,
     turn_active: bool,
+    turn_id: Option<String>,
+    turn_interrupt_pending: bool,
+    cancel_requested: bool,
 }
 
 #[derive(Clone)]
@@ -97,6 +103,9 @@ impl ProtocolState {
             thread_id: None,
             thread_start_pending: false,
             turn_active: false,
+            turn_id: None,
+            turn_interrupt_pending: false,
+            cancel_requested: false,
         }
     }
 
@@ -223,6 +232,9 @@ impl ProtocolState {
             return Ok(());
         };
         self.turn_active = true;
+        self.turn_id = None;
+        self.turn_interrupt_pending = false;
+        self.cancel_requested = false;
         let cwd = self.project_root.to_string_lossy().into_owned();
         if let Err(error) = self.request(
             "turn/start",
@@ -249,11 +261,35 @@ impl ProtocolState {
         Ok(())
     }
 
+    fn interrupt_turn(&mut self) -> Result<(), String> {
+        if !self.turn_active || self.turn_interrupt_pending {
+            return Ok(());
+        }
+        let (Some(thread_id), Some(turn_id)) = (self.thread_id.clone(), self.turn_id.clone())
+        else {
+            self.cancel_requested = true;
+            return Ok(());
+        };
+        self.turn_interrupt_pending = true;
+        if let Err(error) = self.request(
+            "turn/interrupt",
+            json!({ "threadId": thread_id, "turnId": turn_id }),
+            PendingRequest::TurnInterrupt,
+        ) {
+            self.turn_interrupt_pending = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn set_project_root(&mut self, project_root: PathBuf) -> Result<(), String> {
         self.project_root = project_root;
         self.thread_id = None;
         self.thread_start_pending = false;
         self.turn_active = false;
+        self.turn_id = None;
+        self.turn_interrupt_pending = false;
+        self.cancel_requested = false;
         self.queued_messages.clear();
         self.pending.retain(|_, pending| {
             !matches!(
@@ -314,6 +350,12 @@ impl CodexClient {
                 model,
                 reasoning_effort,
             })
+            .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
+    }
+
+    pub fn cancel_chat_message(&self) -> Result<(), String> {
+        self.commands
+            .send(CodexCommand::CancelChatMessage)
             .map_err(|_| "Codex chat is unavailable. Restart Studio and try again.".to_owned())
     }
 
@@ -410,6 +452,12 @@ fn run_worker(project_root: &Path, commands: Receiver<CodexCommand>, events: Sen
                         reasoning_effort,
                     });
                 }
+                Ok(CodexCommand::CancelChatMessage) if protocol.initialized => {
+                    if let Err(message) = protocol.interrupt_turn() {
+                        let _ = events.send(CodexEvent::ChatError(message));
+                    }
+                }
+                Ok(CodexCommand::CancelChatMessage) => {}
                 Ok(CodexCommand::SetProjectRoot(project_root)) => {
                     if let Err(message) = protocol.set_project_root(project_root) {
                         let _ = events.send(CodexEvent::ChatError(message));
@@ -556,9 +604,20 @@ fn handle_app_server_message(
             let detail = format_pending_error(pending, error);
             match pending {
                 PendingRequest::Login => protocol.login_active = false,
-                PendingRequest::ThreadStart | PendingRequest::TurnStart => {
+                PendingRequest::ThreadStart => {
                     protocol.thread_start_pending = false;
+                    let _ = events.send(CodexEvent::ChatError(detail));
+                    return Ok(());
+                }
+                PendingRequest::TurnStart => {
                     protocol.turn_active = false;
+                    protocol.turn_id = None;
+                    protocol.cancel_requested = false;
+                    let _ = events.send(CodexEvent::ChatError(detail));
+                    return Ok(());
+                }
+                PendingRequest::TurnInterrupt => {
+                    protocol.turn_interrupt_pending = false;
                     let _ = events.send(CodexEvent::ChatError(detail));
                     return Ok(());
                 }
@@ -634,7 +693,27 @@ fn handle_app_server_message(
                 }
                 Ok(())
             }
-            PendingRequest::TurnStart => Ok(()),
+            PendingRequest::TurnStart => {
+                protocol.turn_id = Some(
+                    result
+                        .pointer("/turn/id")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                        .ok_or_else(|| {
+                            protocol.turn_active = false;
+                            "Codex App Server returned an incomplete turn.".to_owned()
+                        })?,
+                );
+                if protocol.cancel_requested {
+                    protocol.interrupt_turn()?;
+                }
+                Ok(())
+            }
+            PendingRequest::TurnInterrupt => {
+                protocol.turn_interrupt_pending = false;
+                Ok(())
+            }
         };
     }
 
@@ -679,10 +758,15 @@ fn handle_app_server_message(
         }
         Some("turn/completed") => {
             protocol.turn_active = false;
+            protocol.turn_id = None;
+            protocol.turn_interrupt_pending = false;
+            protocol.cancel_requested = false;
             let status = message
                 .pointer("/params/turn/status")
                 .and_then(Value::as_str);
-            if status == Some("failed") {
+            if status == Some("interrupted") {
+                let _ = events.send(CodexEvent::ChatTurnCancelled);
+            } else if status == Some("failed") {
                 let detail = message
                     .pointer("/params/turn/error/message")
                     .and_then(Value::as_str)
@@ -742,6 +826,7 @@ fn format_pending_error(pending: PendingRequest, error: &Value) -> String {
         PendingRequest::Login => "start ChatGPT sign-in",
         PendingRequest::ThreadStart => "start the Codex chat",
         PendingRequest::TurnStart => "send the Codex message",
+        PendingRequest::TurnInterrupt => "cancel the Codex message",
     };
     format!("Could not {action}: {detail}")
 }

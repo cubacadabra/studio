@@ -509,6 +509,20 @@ impl StudioApp {
                 }
             }
         }
+        let cancel_codex_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_codex_cancel_request);
+        if cancel_codex_requested {
+            if let Some(shell) = &mut self.shell {
+                shell.set_codex_chat_cancelling();
+            }
+            if let Err(message) = self.codex.cancel_chat_message()
+                && let Some(shell) = &mut self.shell
+            {
+                shell.set_codex_chat_error(message);
+            }
+        }
         let draft_export_requested = self
             .shell
             .as_mut()
@@ -1936,6 +1950,24 @@ impl StudioApp {
                     }
                     self.refresh_authored_manifest_from_disk();
                     self.start_project_reload();
+                }
+                CodexEvent::ChatTurnCancelled => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_cancelled();
+                        shell.set_notice(
+                            "Codex stopped. The preview was not rebuilt; review or undo the changes."
+                                .to_owned(),
+                        );
+                    }
+                    let changes = self.capture_codex_changes();
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_changes(
+                            changes
+                                .iter()
+                                .map(|change| change.relative_path.display().to_string())
+                                .collect(),
+                        );
+                    }
                 }
                 CodexEvent::ChatError(message) => {
                     if let Some(shell) = &mut self.shell {

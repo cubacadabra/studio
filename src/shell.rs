@@ -1034,6 +1034,8 @@ pub(crate) struct StudioShell {
     codex_chat_reasoning_effort: &'static str,
     codex_chat_ready: bool,
     codex_chat_busy: bool,
+    codex_cancel_requested: bool,
+    codex_cancel_sent: bool,
     codex_chat_error: Option<String>,
     codex_change_files: Option<Vec<String>>,
     codex_source_change_count: usize,
@@ -1189,6 +1191,8 @@ impl StudioShell {
             codex_chat_reasoning_effort: CODEX_CHAT_DEFAULT_EFFORT,
             codex_chat_ready: false,
             codex_chat_busy: false,
+            codex_cancel_requested: false,
+            codex_cancel_sent: false,
             codex_chat_error: None,
             codex_change_files: None,
             codex_source_change_count: 0,
@@ -1378,6 +1382,8 @@ impl StudioShell {
 
     pub(crate) fn set_codex_chat_completed(&mut self) {
         self.codex_chat_busy = false;
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
         if let Some(message) = self
             .codex_chat_messages
             .last_mut()
@@ -1389,7 +1395,34 @@ impl StudioShell {
 
     pub(crate) fn set_codex_chat_error(&mut self, message: String) {
         self.codex_chat_busy = false;
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
         self.codex_chat_error = Some(message);
+    }
+
+    pub(crate) fn set_codex_chat_cancelling(&mut self) {
+        self.codex_cancel_requested = true;
+        if let Some(message) = self
+            .codex_chat_messages
+            .last_mut()
+            .filter(|message| message.role == CodexChatRole::Assistant)
+        {
+            message.text = "Stopping Codex…".to_owned();
+        }
+        self.notice = "Stopping Codex…".to_owned();
+    }
+
+    pub(crate) fn set_codex_chat_cancelled(&mut self) {
+        self.codex_chat_busy = false;
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
+        if let Some(message) = self
+            .codex_chat_messages
+            .last_mut()
+            .filter(|message| message.role == CodexChatRole::Assistant)
+        {
+            message.text = "Codex request cancelled. The preview was not rebuilt.".to_owned();
+        }
     }
 
     pub(crate) fn set_codex_changes(&mut self, files: Vec<String>) {
@@ -1411,6 +1444,14 @@ impl StudioShell {
 
     pub(crate) fn take_codex_undo_request(&mut self) -> bool {
         std::mem::take(&mut self.codex_undo_requested)
+    }
+
+    pub(crate) fn take_codex_cancel_request(&mut self) -> bool {
+        if !self.codex_chat_busy || !self.codex_cancel_requested || self.codex_cancel_sent {
+            return false;
+        }
+        self.codex_cancel_sent = true;
+        true
     }
 
     pub(crate) fn set_chatgpt_pending(&mut self) {
@@ -2469,7 +2510,7 @@ impl StudioShell {
                     // `auto_shrink(false)`, an unconstrained scroll area
                     // consumes all remaining height and lays the composer
                     // out below the panel clip rect.
-                    let reserved_chat_controls_height = 124.0;
+                    let reserved_chat_controls_height = 150.0;
                     let messages_height =
                         (ui.available_height() - reserved_chat_controls_height).max(64.0);
                     egui::ScrollArea::vertical()
@@ -2508,26 +2549,33 @@ impl StudioShell {
                                 );
                                 ui.add_space(12.0);
                             }
-                            if self.codex_chat_busy
-                                && self
-                                    .codex_chat_messages
-                                    .last()
-                                    .is_none_or(|message| message.role == CodexChatRole::User)
-                            {
-                                ui.label(
-                                    RichText::new("Codex is working…")
-                                        .size(TYPE.meta)
-                                        .color(colors.muted),
-                                );
-                            }
                         });
 
                     if !self.codex_chat_ready {
                         ui.label(
                             RichText::new("Starting Codex…")
                                 .size(TYPE.meta)
-                                .color(colors.muted),
+                            .color(colors.muted),
                         );
+                    }
+                    if self.codex_chat_busy {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new());
+                            ui.label(
+                                RichText::new(if self.codex_cancel_requested {
+                                    "Stopping Codex…"
+                                } else {
+                                    "Codex is thinking…"
+                                })
+                                .size(TYPE.meta)
+                                .color(colors.secondary_text),
+                            );
+                            if !self.codex_cancel_requested
+                                && ui.button("Cancel").clicked()
+                            {
+                                self.codex_cancel_requested = true;
+                            }
+                        });
                     }
                     if let Some(error) = &self.codex_chat_error {
                         ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
@@ -2629,6 +2677,8 @@ impl StudioShell {
                                         });
                                         self.codex_chat_draft.clear();
                                         self.codex_chat_busy = true;
+                                        self.codex_cancel_requested = false;
+                                        self.codex_cancel_sent = false;
                                         self.codex_chat_error = None;
                                         self.codex_chat_send_requested =
                                             Some(CodexChatSendRequest {
