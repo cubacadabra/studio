@@ -1,5 +1,5 @@
 use crate::{
-    codex::ChatGptAccount,
+    codex::{ChatGptAccount, CodexWorkStatus},
     morphs::{
         MorphDraftDocument, MorphGlbPreviewMesh, MorphGlbSourceSummary, MorphSourceManifest,
         build_morph_draft_json, build_source_manifest_json, default_rigid_accessory_asset,
@@ -897,6 +897,62 @@ enum CodexChatRole {
     Assistant,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodexActivity {
+    Idle,
+    Thinking,
+    Editing,
+    Checking,
+    Working,
+    Cancelling,
+    Rebuilding,
+}
+
+impl CodexActivity {
+    fn is_active(self) -> bool {
+        self != Self::Idle
+    }
+
+    fn is_cancellable(self) -> bool {
+        matches!(
+            self,
+            Self::Thinking | Self::Editing | Self::Checking | Self::Working
+        )
+    }
+
+    fn after_agent_progress(self) -> Self {
+        if self.is_cancellable() {
+            Self::Working
+        } else {
+            self
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "",
+            Self::Thinking => "Thinking",
+            Self::Editing => "Editing the game",
+            Self::Checking => "Checking the project",
+            Self::Working => "Working",
+            Self::Cancelling => "Stopping",
+            Self::Rebuilding => "Rebuilding preview",
+        }
+    }
+
+    fn detail(self) -> &'static str {
+        match self {
+            Self::Idle => "",
+            Self::Thinking => "Working out the requested game change",
+            Self::Editing => "Applying the requested change",
+            Self::Checking => "Running a project command",
+            Self::Working => "Completing the requested change",
+            Self::Cancelling => "Waiting for Codex to stop safely",
+            Self::Rebuilding => "Validating the change and restarting the game",
+        }
+    }
+}
+
 const CODEX_CHAT_DEFAULT_MODEL: &str = "gpt-6-astra";
 const CODEX_CHAT_CURRENT_MODEL: &str = "gpt-5.6-luna";
 const CODEX_CHAT_DEFAULT_EFFORT: &str = "medium";
@@ -1033,7 +1089,7 @@ pub(crate) struct StudioShell {
     codex_chat_model: &'static str,
     codex_chat_reasoning_effort: &'static str,
     codex_chat_ready: bool,
-    codex_chat_busy: bool,
+    codex_activity: CodexActivity,
     codex_cancel_requested: bool,
     codex_cancel_sent: bool,
     codex_chat_error: Option<String>,
@@ -1190,7 +1246,7 @@ impl StudioShell {
             codex_chat_model: CODEX_CHAT_CURRENT_MODEL,
             codex_chat_reasoning_effort: CODEX_CHAT_DEFAULT_EFFORT,
             codex_chat_ready: false,
-            codex_chat_busy: false,
+            codex_activity: CodexActivity::Idle,
             codex_cancel_requested: false,
             codex_cancel_sent: false,
             codex_chat_error: None,
@@ -1350,51 +1406,44 @@ impl StudioShell {
     }
 
     pub(crate) fn set_codex_chat_delta(&mut self, _delta: String) {
-        self.codex_chat_busy = true;
-        if let Some(message) = self
-            .codex_chat_messages
-            .last_mut()
-            .filter(|message| message.role == CodexChatRole::Assistant)
-        {
-            message.text = "Codex is applying the requested change…".to_owned();
-        } else {
-            self.codex_chat_messages.push(CodexChatMessage {
-                role: CodexChatRole::Assistant,
-                text: "Codex is applying the requested change…".to_owned(),
-            });
+        self.codex_activity = self.codex_activity.after_agent_progress();
+    }
+
+    pub(crate) fn set_codex_work_status(&mut self, status: CodexWorkStatus) {
+        if !self.codex_activity.is_cancellable() {
+            return;
         }
+        self.codex_activity = match status {
+            CodexWorkStatus::Thinking => CodexActivity::Thinking,
+            CodexWorkStatus::Editing => CodexActivity::Editing,
+            CodexWorkStatus::Checking => CodexActivity::Checking,
+            CodexWorkStatus::Working => CodexActivity::Working,
+        };
     }
 
     pub(crate) fn set_codex_chat_message(&mut self, _text: String) {
-        if let Some(message) = self
-            .codex_chat_messages
-            .last_mut()
-            .filter(|message| message.role == CodexChatRole::Assistant)
-        {
-            message.text = "Codex finished the requested change.".to_owned();
-        } else {
-            self.codex_chat_messages.push(CodexChatMessage {
-                role: CodexChatRole::Assistant,
-                text: "Codex finished the requested change.".to_owned(),
-            });
-        }
+        // An agent-message item can complete while the turn continues with
+        // more tool work. Only turn/completed advances Studio to rebuilding.
+        self.codex_activity = self.codex_activity.after_agent_progress();
     }
 
     pub(crate) fn set_codex_chat_completed(&mut self) {
-        self.codex_chat_busy = false;
+        self.codex_activity = CodexActivity::Rebuilding;
         self.codex_cancel_requested = false;
         self.codex_cancel_sent = false;
-        if let Some(message) = self
-            .codex_chat_messages
-            .last_mut()
-            .filter(|message| message.role == CodexChatRole::Assistant)
-        {
-            message.text = "Change applied. Studio is rebuilding the preview…".to_owned();
-        }
+    }
+
+    pub(crate) fn set_codex_preview_rebuilt(&mut self) {
+        self.finish_codex_activity("Done — preview rebuilt and playing.");
+    }
+
+    pub(crate) fn set_codex_preview_rebuild_failed(&mut self, message: &str) {
+        self.finish_codex_activity("The change was made, but the preview could not be rebuilt.");
+        self.codex_chat_error = Some(format!("Rebuild failed: {message}"));
     }
 
     pub(crate) fn set_codex_chat_error(&mut self, message: String) {
-        self.codex_chat_busy = false;
+        self.finish_codex_activity("The request could not be completed.");
         self.codex_cancel_requested = false;
         self.codex_cancel_sent = false;
         self.codex_chat_error = Some(message);
@@ -1402,26 +1451,24 @@ impl StudioShell {
 
     pub(crate) fn set_codex_chat_cancelling(&mut self) {
         self.codex_cancel_requested = true;
-        if let Some(message) = self
-            .codex_chat_messages
-            .last_mut()
-            .filter(|message| message.role == CodexChatRole::Assistant)
-        {
-            message.text = "Stopping Codex…".to_owned();
-        }
+        self.codex_activity = CodexActivity::Cancelling;
         self.notice = "Stopping Codex…".to_owned();
     }
 
     pub(crate) fn set_codex_chat_cancelled(&mut self) {
-        self.codex_chat_busy = false;
+        self.finish_codex_activity("Request cancelled. The preview was not rebuilt.");
         self.codex_cancel_requested = false;
         self.codex_cancel_sent = false;
-        if let Some(message) = self
-            .codex_chat_messages
-            .last_mut()
-            .filter(|message| message.role == CodexChatRole::Assistant)
-        {
-            message.text = "Codex request cancelled. The preview was not rebuilt.".to_owned();
+    }
+
+    fn finish_codex_activity(&mut self, message: &str) {
+        let was_active = self.codex_activity.is_active();
+        self.codex_activity = CodexActivity::Idle;
+        if was_active {
+            self.codex_chat_messages.push(CodexChatMessage {
+                role: CodexChatRole::Assistant,
+                text: message.to_owned(),
+            });
         }
     }
 
@@ -1447,7 +1494,10 @@ impl StudioShell {
     }
 
     pub(crate) fn take_codex_cancel_request(&mut self) -> bool {
-        if !self.codex_chat_busy || !self.codex_cancel_requested || self.codex_cancel_sent {
+        if !self.codex_activity.is_active()
+            || !self.codex_cancel_requested
+            || self.codex_cancel_sent
+        {
             return false;
         }
         self.codex_cancel_sent = true;
@@ -2549,6 +2599,44 @@ impl StudioShell {
                                 );
                                 ui.add_space(12.0);
                             }
+                            if self.codex_activity.is_active() {
+                                ui.label(
+                                    RichText::new("Codex")
+                                        .font(semibold_font(TYPE.meta))
+                                        .color(colors.secondary_text),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::Spinner::new()
+                                            .size(16.0)
+                                            .color(colors.accent),
+                                    );
+                                    ui.label(
+                                        RichText::new(self.codex_activity.label())
+                                            .font(semibold_font(TYPE.secondary))
+                                            .color(colors.text),
+                                    );
+                                    if self.codex_activity.is_cancellable()
+                                        && ui.small_button("Cancel").clicked()
+                                    {
+                                        self.codex_cancel_requested = true;
+                                        self.codex_activity = CodexActivity::Cancelling;
+                                    }
+                                });
+                                ui.label(
+                                    RichText::new(self.codex_activity.detail())
+                                        .size(TYPE.meta)
+                                        .color(colors.muted),
+                                );
+                                ui.add_space(12.0);
+                                ui.ctx().request_repaint_after(Duration::from_millis(16));
+                            }
+                            if let Some(error) = &self.codex_chat_error {
+                                ui.label(
+                                    RichText::new(error).size(TYPE.meta).color(colors.axis_x),
+                                );
+                                ui.add_space(12.0);
+                            }
                         });
 
                     if !self.codex_chat_ready {
@@ -2557,28 +2645,6 @@ impl StudioShell {
                                 .size(TYPE.meta)
                             .color(colors.muted),
                         );
-                    }
-                    if self.codex_chat_busy {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::Spinner::new());
-                            ui.label(
-                                RichText::new(if self.codex_cancel_requested {
-                                    "Stopping Codex…"
-                                } else {
-                                    "Codex is thinking…"
-                                })
-                                .size(TYPE.meta)
-                                .color(colors.secondary_text),
-                            );
-                            if !self.codex_cancel_requested
-                                && ui.button("Cancel").clicked()
-                            {
-                                self.codex_cancel_requested = true;
-                            }
-                        });
-                    }
-                    if let Some(error) = &self.codex_chat_error {
-                        ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
                     }
                     if self.codex_source_change_count > 0 || self.codex_change_files.is_some() {
                         let files = self.codex_change_files.clone().unwrap_or_default();
@@ -2618,7 +2684,8 @@ impl StudioShell {
                             {
                                 self.codex_change_review_open = !self.codex_change_review_open;
                             }
-                            let undo_enabled = self.project_loading.is_none() && !self.codex_chat_busy;
+                            let undo_enabled =
+                                self.project_loading.is_none() && !self.codex_activity.is_active();
                             if ui
                                 .add_enabled(undo_enabled, egui::Button::new("Undo this change"))
                                 .on_disabled_hover_text("Undo is available after the rebuild finishes")
@@ -2644,9 +2711,10 @@ impl StudioShell {
                     }
                     ui.separator();
                     let can_send = self.codex_chat_ready
-                        && !self.codex_chat_busy
+                        && !self.codex_activity.is_active()
                         && self.chatgpt_account.is_some()
-                        && !self.project_dirty;
+                        && !self.project_dirty
+                        && self.project_loading.is_none();
                     ui.add_enabled_ui(can_send, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.codex_chat_draft)
@@ -2676,7 +2744,7 @@ impl StudioShell {
                                             text: message.clone(),
                                         });
                                         self.codex_chat_draft.clear();
-                                        self.codex_chat_busy = true;
+                                        self.codex_activity = CodexActivity::Thinking;
                                         self.codex_cancel_requested = false;
                                         self.codex_cancel_sent = false;
                                         self.codex_chat_error = None;

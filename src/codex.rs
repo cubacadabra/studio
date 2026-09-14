@@ -19,12 +19,21 @@ pub struct ChatGptAccount {
     pub plan_type: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodexWorkStatus {
+    Thinking,
+    Editing,
+    Checking,
+    Working,
+}
+
 #[derive(Debug)]
 pub enum CodexEvent {
     AccountStatus(Option<ChatGptAccount>),
     BrowserOpened,
     LoginCompleted(ChatGptAccount),
     ChatReady,
+    WorkStatus(CodexWorkStatus),
     AssistantDelta(String),
     AssistantMessage(String),
     ChatTurnCompleted,
@@ -749,6 +758,11 @@ fn handle_app_server_message(
                 let _ = events.send(CodexEvent::AssistantDelta(delta.to_owned()));
             }
         }
+        Some("item/started") => {
+            if let Some(status) = work_status_for_started_item(&message) {
+                let _ = events.send(CodexEvent::WorkStatus(status));
+            }
+        }
         Some("item/completed") => {
             if message.pointer("/params/item/type").and_then(Value::as_str) == Some("agentMessage")
                 && let Some(text) = message.pointer("/params/item/text").and_then(Value::as_str)
@@ -787,6 +801,17 @@ fn handle_app_server_message(
         _ => {}
     }
     Ok(())
+}
+
+fn work_status_for_started_item(message: &Value) -> Option<CodexWorkStatus> {
+    match message.pointer("/params/item/type").and_then(Value::as_str) {
+        Some("reasoning") => Some(CodexWorkStatus::Thinking),
+        Some("fileChange") => Some(CodexWorkStatus::Editing),
+        Some("commandExecution") => Some(CodexWorkStatus::Checking),
+        Some("agentMessage") => Some(CodexWorkStatus::Working),
+        Some("mcpToolCall" | "dynamicToolCall" | "webSearch") => Some(CodexWorkStatus::Working),
+        _ => None,
+    }
 }
 
 fn parse_account_result(result: &Value) -> Result<Option<ChatGptAccount>, String> {
@@ -914,5 +939,29 @@ mod tests {
             "https://chatgpt.com.example.com/login"
         ));
         assert!(!is_allowed_auth_url("file:///tmp/login"));
+    }
+
+    #[test]
+    fn maps_started_items_to_safe_human_readable_work_statuses() {
+        for (item_type, expected) in [
+            ("reasoning", CodexWorkStatus::Thinking),
+            ("fileChange", CodexWorkStatus::Editing),
+            ("commandExecution", CodexWorkStatus::Checking),
+            ("agentMessage", CodexWorkStatus::Working),
+        ] {
+            let message = json!({
+                "method": "item/started",
+                "params": { "item": { "type": item_type } }
+            });
+            assert_eq!(work_status_for_started_item(&message), Some(expected));
+        }
+
+        assert_eq!(
+            work_status_for_started_item(&json!({
+                "method": "item/started",
+                "params": { "item": { "type": "unknown" } }
+            })),
+            None
+        );
     }
 }

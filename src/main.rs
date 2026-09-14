@@ -125,6 +125,7 @@ enum ProjectLoadEvent {
 struct PendingProjectLoad {
     project: PathBuf,
     preserve_editor: bool,
+    codex_rebuild: bool,
     receiver: mpsc::Receiver<ProjectLoadEvent>,
 }
 
@@ -185,8 +186,9 @@ struct StudioApp {
     renderer: Option<Renderer>,
     shell: Option<StudioShell>,
     pending_project_load: Option<PendingProjectLoad>,
-    background_project_ready: Option<(PathBuf, bool, Result<BackgroundProjectLoad, String>)>,
-    prepared_project_ready: Option<(PathBuf, bool, Result<PreparedProjectLoad, String>)>,
+    background_project_ready: Option<(PathBuf, bool, bool, Result<BackgroundProjectLoad, String>)>,
+    prepared_project_ready: Option<(PathBuf, bool, bool, Result<PreparedProjectLoad, String>)>,
+    renderer_uses_base_package_generation: bool,
     codex_checkpoint: Option<ProjectFileSnapshot>,
     codex_changes: Option<Vec<CodexFileChange>>,
     local_morph_catalog: Option<LocalMorphCatalog>,
@@ -271,6 +273,7 @@ impl StudioApp {
             pending_project_load: None,
             background_project_ready: None,
             prepared_project_ready: None,
+            renderer_uses_base_package_generation: true,
             codex_checkpoint: None,
             codex_changes: None,
             local_morph_catalog,
@@ -1260,26 +1263,47 @@ impl StudioApp {
     }
 
     fn start_project_load(&mut self, project: PathBuf) {
-        self.start_project_load_with_mode(project, false);
+        self.start_project_load_with_mode(project, false, false);
     }
 
     fn start_project_reload(&mut self) {
+        self.start_project_reload_with_origin(false);
+    }
+
+    fn start_codex_project_reload(&mut self) {
+        self.start_project_reload_with_origin(true);
+    }
+
+    fn start_project_reload_with_origin(&mut self, codex_rebuild: bool) {
         if self.standalone_preview {
             if let Some(shell) = &mut self.shell {
                 shell.set_project_error(
                     "The standalone morph preview cannot be rebuilt.".to_owned(),
                 );
+                if codex_rebuild {
+                    shell.set_codex_preview_rebuild_failed(
+                        "the standalone morph preview cannot be rebuilt",
+                    );
+                }
             }
             return;
         }
-        self.start_project_load_with_mode(self.project_root.clone(), true);
+        self.start_project_load_with_mode(self.project_root.clone(), true, codex_rebuild);
     }
 
-    fn start_project_load_with_mode(&mut self, project: PathBuf, preserve_editor: bool) {
+    fn start_project_load_with_mode(
+        &mut self,
+        project: PathBuf,
+        preserve_editor: bool,
+        codex_rebuild: bool,
+    ) {
         if self.pending_project_load.is_some()
             || self.background_project_ready.is_some()
             || self.prepared_project_ready.is_some()
         {
+            if codex_rebuild && let Some(shell) = &mut self.shell {
+                shell.set_codex_preview_rebuild_failed("another project load is already running");
+            }
             return;
         }
         if let Some(shell) = &mut self.shell {
@@ -1306,12 +1330,18 @@ impl StudioApp {
                 self.pending_project_load = Some(PendingProjectLoad {
                     project,
                     preserve_editor,
+                    codex_rebuild,
                     receiver,
                 });
             }
             Err(error) => {
                 if let Some(shell) = &mut self.shell {
                     shell.cancel_project_loading();
+                    if codex_rebuild {
+                        shell.set_codex_preview_rebuild_failed(&format!(
+                            "the project loader could not start: {error}"
+                        ));
+                    }
                 }
                 self.show_open_project_error(&format!(
                     "Could not start the project loader: {error}"
@@ -1346,17 +1376,19 @@ impl StudioApp {
             }
         }
         if let Some(result) = finished {
-            let (project, preserve_editor) = self
+            let (project, preserve_editor, codex_rebuild) = self
                 .pending_project_load
                 .take()
-                .map(|load| (load.project, load.preserve_editor))
+                .map(|load| (load.project, load.preserve_editor, load.codex_rebuild))
                 .unwrap_or_default();
-            self.background_project_ready = Some((project, preserve_editor, result));
+            self.background_project_ready = Some((project, preserve_editor, codex_rebuild, result));
         }
     }
 
     fn prepare_ready_project_runtime(&mut self) {
-        let Some((project, preserve_editor, result)) = self.background_project_ready.take() else {
+        let Some((project, preserve_editor, codex_rebuild, result)) =
+            self.background_project_ready.take()
+        else {
             return;
         };
         let result = match result {
@@ -1387,11 +1419,13 @@ impl StudioApp {
         {
             shell.set_project_loading_progress(0.93);
         }
-        self.prepared_project_ready = Some((project, preserve_editor, result));
+        self.prepared_project_ready = Some((project, preserve_editor, codex_rebuild, result));
     }
 
     fn commit_ready_project_load(&mut self) {
-        let Some((project, preserve_editor, result)) = self.prepared_project_ready.take() else {
+        let Some((project, preserve_editor, codex_rebuild, result)) =
+            self.prepared_project_ready.take()
+        else {
             return;
         };
         let result =
@@ -1404,6 +1438,9 @@ impl StudioApp {
                     } else {
                         format!("Opened {}", project.display())
                     });
+                    if codex_rebuild {
+                        shell.set_codex_preview_rebuilt();
+                    }
                 }
             }
             Err(message) => {
@@ -1413,6 +1450,9 @@ impl StudioApp {
                 if preserve_editor {
                     if let Some(shell) = &mut self.shell {
                         shell.set_project_error(format!("Rebuild failed: {message}"));
+                        if codex_rebuild {
+                            shell.set_codex_preview_rebuild_failed(&message);
+                        }
                     }
                 } else {
                     self.show_open_project_error(&message);
@@ -1450,16 +1490,39 @@ impl StudioApp {
                             root,
                             authored_manifest_source,
                             manifest_source,
-                            script_source: _,
+                            script_source,
                             standalone_preview,
                             temporary_package,
                         },
                     image_atlas,
                     local_morph_catalog,
                 },
-            client,
+            mut client,
             network,
         } = prepared;
+
+        // A newly-created engine starts its package generation at the same
+        // value as the previous engine. The long-lived renderer therefore
+        // cannot distinguish two consecutive ClientSession values by
+        // generation alone. Alternate between the first and second package
+        // generation using the engine's existing public loading API. This
+        // keeps Studio compatible with released engine checkouts while still
+        // forcing the renderer to consume the replacement scene.
+        let client_uses_base_package_generation = !self.renderer_uses_base_package_generation;
+        if !client_uses_base_package_generation {
+            if !client.engine_mut().load_package_source(&manifest_source) {
+                if let Some(package) = temporary_package {
+                    let _ = fs::remove_dir_all(package);
+                }
+                return Err("the shared engine rejected the rebuilt scene".to_owned());
+            }
+            if !client.engine_mut().load_script_source(&script_source) {
+                if let Some(package) = temporary_package {
+                    let _ = fs::remove_dir_all(package);
+                }
+                return Err("the shared engine could not compile the rebuilt game logic".to_owned());
+            }
+        }
 
         if let (Some(renderer), Some(atlas)) = (&mut self.renderer, &image_atlas)
             && !renderer.set_package_image_atlas(
@@ -1484,9 +1547,7 @@ impl StudioApp {
         self.image_atlas = image_atlas;
         self.network = network;
         self.client = client;
-        if let Some(renderer) = &mut self.renderer {
-            renderer.invalidate_studio_scene();
-        }
+        self.renderer_uses_base_package_generation = client_uses_base_package_generation;
         self.local_morph_catalog = local_morph_catalog;
         self.morph_loadout = default_morph_loadout();
         self.morph_request_serial = 0;
@@ -1920,6 +1981,11 @@ impl StudioApp {
                         shell.set_codex_chat_ready();
                     }
                 }
+                CodexEvent::WorkStatus(status) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_work_status(status);
+                    }
+                }
                 CodexEvent::AssistantDelta(delta) => {
                     if let Some(shell) = &mut self.shell {
                         shell.set_codex_chat_delta(delta);
@@ -1933,7 +1999,7 @@ impl StudioApp {
                 CodexEvent::ChatTurnCompleted => {
                     if let Some(shell) = &mut self.shell {
                         shell.set_codex_chat_completed();
-                        shell.set_notice("Codex finished — rebuilding preview…".to_owned());
+                        shell.set_notice("Change received — rebuilding preview…".to_owned());
                     }
                     let changes = self.capture_codex_changes();
                     if let Some(shell) = &mut self.shell {
@@ -1952,7 +2018,7 @@ impl StudioApp {
                         self.save_project_source();
                     }
                     self.refresh_authored_manifest_from_disk();
-                    self.start_project_reload();
+                    self.start_codex_project_reload();
                 }
                 CodexEvent::ChatTurnCancelled => {
                     if let Some(shell) = &mut self.shell {

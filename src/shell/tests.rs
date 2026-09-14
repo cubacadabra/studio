@@ -293,6 +293,20 @@ fn codex_chat_picker_exposes_requested_models_and_levels() {
 }
 
 #[test]
+fn codex_agent_messages_remain_active_progress() {
+    assert_eq!(
+        CodexActivity::Thinking.after_agent_progress(),
+        CodexActivity::Working
+    );
+    assert!(CodexActivity::Working.is_active());
+    assert!(CodexActivity::Rebuilding.is_active());
+    assert_eq!(
+        CodexActivity::Rebuilding.after_agent_progress(),
+        CodexActivity::Rebuilding
+    );
+}
+
+#[test]
 fn morph_preview_detects_screen_space_slivers() {
     assert!(
         projected_triangle_area([

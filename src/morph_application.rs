@@ -117,7 +117,7 @@ impl StudioApp {
             if self.registered_morphs.contains(id.as_str()) {
                 continue;
             }
-            let definition = shell
+            shell
                 .morph_catalog()
                 .asset(&id)
                 .ok_or_else(|| format!("Morph asset {id} is missing from the catalog."))?;
