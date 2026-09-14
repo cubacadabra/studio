@@ -542,6 +542,7 @@ impl StudioApp {
         self.client = client;
         self.renderer_uses_base_package_generation = client_uses_base_package_generation;
         self.local_morph_catalog = local_morph_catalog;
+        self.runtime_ui_revision = u64::MAX;
         self.morph_loadout = default_morph_loadout();
         self.morph_request_serial = 0;
         self.pending_morph = None;

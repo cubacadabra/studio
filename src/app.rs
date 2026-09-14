@@ -57,6 +57,7 @@ impl StudioApp {
             window: None,
             renderer: None,
             shell: None,
+            runtime_ui_revision: u64::MAX,
             pending_project_load: None,
             background_project_ready: None,
             prepared_project_ready: None,
@@ -515,6 +516,7 @@ impl StudioApp {
             self.client.step(delta);
         }
         self.drain_ui_events();
+        self.refresh_runtime_ui_outline();
         self.dispatch_client_actions();
         if !self.standalone_preview
             && let Some(movement) = self.client.local_movement(length > 0.01, playing && sprint)
@@ -551,6 +553,18 @@ impl StudioApp {
     pub(crate) fn request_redraw(&self) {
         if let Some(window) = &self.window {
             window.request_redraw();
+        }
+    }
+
+    fn refresh_runtime_ui_outline(&mut self) {
+        let revision = self.client.engine().studio_ui_document_revision();
+        if revision == self.runtime_ui_revision {
+            return;
+        }
+        let nodes = self.client.engine().studio_ui_nodes();
+        self.runtime_ui_revision = revision;
+        if let Some(shell) = &mut self.shell {
+            shell.set_runtime_ui_nodes(&nodes);
         }
     }
 }

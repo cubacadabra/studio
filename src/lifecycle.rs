@@ -26,8 +26,9 @@ impl ApplicationHandler for StudioApp {
         // Once Play is active, the game owns its keyboard controls even if
         // egui still reports that it wants keyboard input. This can happen
         // after the editor's search field or another shell control had focus;
-        // letting that stale focus consume W/A/S/D, arrows, Shift, or Space
-        // makes the running game appear completely unresponsive.
+        // letting that stale focus consume W/A/S/D, arrows, or Shift makes the
+        // running game appear completely unresponsive. Enter and Space stay
+        // with a focused editor control so typing cannot trigger gameplay.
         let playing = self
             .shell
             .as_ref()
@@ -48,7 +49,11 @@ impl ApplicationHandler for StudioApp {
                 self.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. }
-                if should_forward_gameplay_keyboard(playing, shell_consumed) =>
+                if matches!(
+                    event.physical_key,
+                    PhysicalKey::Code(code)
+                        if should_forward_gameplay_key(playing, shell_consumed, code)
+                ) =>
             {
                 self.handle_key(&event, event_loop)
             }

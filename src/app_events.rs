@@ -66,7 +66,15 @@ impl StudioApp {
     }
 
     pub(crate) fn drain_codex_events(&mut self) {
-        while let Some(event) = self.codex.try_recv() {
+        // Leave a few frames for the activity panel to render streamed agent
+        // progress instead of consuming a fast response all at once.
+        const MAX_CODEX_EVENTS_PER_FRAME: usize = 12;
+        let mut processed = 0;
+        while processed < MAX_CODEX_EVENTS_PER_FRAME {
+            let Some(event) = self.codex.try_recv() else {
+                break;
+            };
+            processed += 1;
             match event {
                 CodexEvent::AccountStatus(account) => {
                     if let Some(shell) = &mut self.shell {

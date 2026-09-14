@@ -133,8 +133,7 @@ impl StudioShell {
                                     if self.codex_activity.is_cancellable()
                                         && ui.small_button("Cancel").clicked()
                                     {
-                                        self.codex_cancel_requested = true;
-                                        self.codex_activity = CodexActivity::Cancelling;
+                                        self.set_codex_chat_cancelling();
                                     }
                                 });
                                 ui.label(
@@ -142,16 +141,37 @@ impl StudioShell {
                                         .size(TYPE.meta)
                                         .color(colors.muted),
                                 );
-                                if !self.codex_live_excerpt.is_empty() {
-                                    ui.add_space(4.0);
+                                if self.codex_activity_history.len() > 1 {
+                                    let activity_path = self
+                                        .codex_activity_history
+                                        .iter()
+                                        .map(|activity| activity.label())
+                                        .collect::<Vec<_>>()
+                                        .join("  →  ");
                                     ui.label(
-                                        RichText::new("Live update")
+                                        RichText::new(format!("Activity  {activity_path}"))
                                             .size(TYPE.meta)
                                             .color(colors.faint),
                                     );
+                                }
+                                if self.codex_live_update_count > 0 {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Live activity  ·  {} updates",
+                                            self.codex_live_update_count
+                                        ))
+                                            .size(TYPE.meta)
+                                            .color(colors.faint),
+                                    );
+                                    let excerpt = if self.codex_live_excerpt.is_empty() {
+                                        "Receiving the requested change…"
+                                    } else {
+                                        &self.codex_live_excerpt
+                                    };
                                     ui.add(
                                         egui::Label::new(
-                                            RichText::new(&self.codex_live_excerpt)
+                                            RichText::new(excerpt)
                                                 .size(TYPE.meta)
                                                 .color(colors.secondary_text),
                                         )
@@ -245,13 +265,18 @@ impl StudioShell {
                         && self.chatgpt_account.is_some()
                         && !self.project_dirty
                         && self.project_loading.is_none();
+                    let mut submit_requested = false;
                     ui.add_enabled_ui(can_send, |ui| {
-                        ui.add(
+                        let draft_response = ui.add(
                             egui::TextEdit::multiline(&mut self.codex_chat_draft)
                                 .desired_rows(3)
                                 .hint_text("Ask Codex to make a change…")
                                 .desired_width(f32::INFINITY),
                         );
+                        let enter_pressed = draft_response.has_focus()
+                            && ui.input(|input| {
+                                input.key_pressed(egui::Key::Enter) && !input.modifiers.shift
+                            });
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(if self.project_dirty {
@@ -267,30 +292,17 @@ impl StudioShell {
                                     .add_sized([68.0, 28.0], egui::Button::new("Send"))
                                     .clicked()
                                 {
-                                    let message = self.codex_chat_draft.trim().to_owned();
-                                    if !message.is_empty() {
-                                        self.codex_chat_messages.push(CodexChatMessage {
-                                            role: CodexChatRole::User,
-                                            text: message.clone(),
-                                        });
-                                        self.codex_chat_draft.clear();
-                                        self.codex_activity = CodexActivity::Thinking;
-                                        self.codex_live_excerpt.clear();
-                                        self.codex_live_in_code_block = false;
-                                        self.codex_cancel_requested = false;
-                                        self.codex_cancel_sent = false;
-                                        self.codex_chat_error = None;
-                                        self.codex_chat_send_requested =
-                                            Some(CodexChatSendRequest {
-                                                message,
-                                                model: self.codex_chat_model,
-                                                reasoning_effort: self.codex_chat_reasoning_effort,
-                                            });
-                                    }
+                                    submit_requested = true;
                                 }
                             });
                         });
+                        if enter_pressed {
+                            submit_requested = true;
+                        }
                     });
+                    if submit_requested {
+                        self.submit_codex_chat();
+                    }
                 });
             });
     }

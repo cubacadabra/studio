@@ -41,9 +41,14 @@ impl StudioShell {
     }
 
     pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) {
-        let Ok(outline) = SceneOutline::parse(source) else {
+        let Ok(mut outline) = SceneOutline::parse(source) else {
             return;
         };
+        outline.set_runtime_ui_nodes(&self.runtime_ui_nodes);
+        if !self.runtime_ui_nodes.is_empty() {
+            self.expanded_scene.insert("game".to_owned());
+            self.expanded_scene.insert("game/interface".to_owned());
+        }
         let selected = self
             .scene_outline
             .root
@@ -59,6 +64,20 @@ impl StudioShell {
         }
         self.scene_editor_target.clear();
         self.scene_editor_text.clear();
+    }
+
+    pub(crate) fn set_runtime_ui_nodes(&mut self, nodes: &[cubacadabra_client::StudioUiNode]) {
+        self.runtime_ui_nodes = nodes.to_vec();
+        self.scene_outline.set_runtime_ui_nodes(nodes);
+        if !nodes.is_empty() {
+            self.expanded_scene.insert("game".to_owned());
+            self.expanded_scene.insert("game/interface".to_owned());
+        } else {
+            self.expanded_scene.remove("game/interface");
+        }
+        if self.scene_outline.root.find(&self.selected_scene).is_none() {
+            self.selected_scene = self.scene_outline.initial_selection.clone();
+        }
     }
 
     pub(crate) fn set_project_error(&mut self, message: String) {
@@ -143,37 +162,66 @@ impl StudioShell {
         self.codex_chat_send_requested.take()
     }
 
+    pub(crate) fn submit_codex_chat(&mut self) {
+        let message = self.codex_chat_draft.trim().to_owned();
+        if message.is_empty() {
+            return;
+        }
+        self.codex_chat_messages.push(CodexChatMessage {
+            role: CodexChatRole::User,
+            text: message.clone(),
+        });
+        self.codex_chat_draft.clear();
+        self.codex_live_excerpt.clear();
+        self.codex_live_in_code_block = false;
+        self.codex_live_update_count = 0;
+        self.codex_activity_history.clear();
+        self.record_codex_activity(CodexActivity::Thinking);
+        self.codex_activity = CodexActivity::Thinking;
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
+        self.codex_chat_error = None;
+        self.codex_chat_send_requested = Some(CodexChatSendRequest {
+            message,
+            model: self.codex_chat_model,
+            reasoning_effort: self.codex_chat_reasoning_effort,
+        });
+    }
+
     pub(crate) fn set_codex_chat_ready(&mut self) {
         self.codex_chat_ready = true;
         self.codex_chat_error = None;
     }
 
     pub(crate) fn set_codex_chat_delta(&mut self, delta: String) {
+        self.codex_live_update_count = self.codex_live_update_count.saturating_add(1);
         self.append_codex_live_excerpt(&delta);
-        self.codex_activity = self.codex_activity.after_agent_progress();
+        self.set_codex_activity(self.codex_activity.after_agent_progress());
     }
 
     pub(crate) fn set_codex_work_status(&mut self, status: CodexWorkStatus) {
         if !self.codex_activity.is_cancellable() {
             return;
         }
-        self.codex_activity = match status {
+        let activity = match status {
             CodexWorkStatus::Thinking => CodexActivity::Thinking,
             CodexWorkStatus::Editing => CodexActivity::Editing,
             CodexWorkStatus::Checking => CodexActivity::Checking,
             CodexWorkStatus::Working => CodexActivity::Working,
         };
+        self.set_codex_activity(activity);
     }
 
     pub(crate) fn set_codex_chat_message(&mut self, text: String) {
         // An agent-message item can complete while the turn continues with
         // more tool work. Only turn/completed advances Studio to rebuilding.
+        self.codex_live_update_count = self.codex_live_update_count.saturating_add(1);
         self.append_codex_live_excerpt(&text);
-        self.codex_activity = self.codex_activity.after_agent_progress();
+        self.set_codex_activity(self.codex_activity.after_agent_progress());
     }
 
     pub(crate) fn set_codex_chat_completed(&mut self) {
-        self.codex_activity = CodexActivity::Rebuilding;
+        self.set_codex_activity(CodexActivity::Rebuilding);
         self.codex_cancel_requested = false;
         self.codex_cancel_sent = false;
     }
@@ -196,7 +244,7 @@ impl StudioShell {
 
     pub(crate) fn set_codex_chat_cancelling(&mut self) {
         self.codex_cancel_requested = true;
-        self.codex_activity = CodexActivity::Cancelling;
+        self.set_codex_activity(CodexActivity::Cancelling);
         self.notice = "Stopping Codex…".to_owned();
     }
 
@@ -209,8 +257,10 @@ impl StudioShell {
     pub(crate) fn finish_codex_activity(&mut self, message: &str) {
         let was_active = self.codex_activity.is_active();
         self.codex_activity = CodexActivity::Idle;
+        self.codex_activity_history.clear();
         self.codex_live_excerpt.clear();
         self.codex_live_in_code_block = false;
+        self.codex_live_update_count = 0;
         if was_active {
             self.codex_chat_messages.push(CodexChatMessage {
                 role: CodexChatRole::Assistant,
@@ -242,7 +292,15 @@ impl StudioShell {
                 }
                 continue;
             }
-            if self.codex_live_in_code_block || !is_human_readable_codex_line(line) {
+            if self.codex_live_in_code_block {
+                continue;
+            }
+            let line = line
+                .replace("checking out the project", "reviewing the project")
+                .replace("Checking out the project", "Reviewing the project")
+                .replace("checking out", "reviewing")
+                .replace("Checking out", "Reviewing");
+            if !is_human_readable_codex_line(&line) {
                 continue;
             }
             safe_lines.push(line);
@@ -263,6 +321,22 @@ impl StudioShell {
             .chars()
             .rev()
             .collect();
+    }
+
+    fn set_codex_activity(&mut self, activity: CodexActivity) {
+        self.record_codex_activity(activity);
+        self.codex_activity = activity;
+    }
+
+    fn record_codex_activity(&mut self, activity: CodexActivity) {
+        if self.codex_activity_history.last().copied() == Some(activity) {
+            return;
+        }
+        self.codex_activity_history.push(activity);
+        const HISTORY_LIMIT: usize = 5;
+        if self.codex_activity_history.len() > HISTORY_LIMIT {
+            self.codex_activity_history.remove(0);
+        }
     }
 
     pub(crate) fn clear_codex_changes(&mut self) {

@@ -220,6 +220,54 @@ impl SceneOutline {
             root,
         }
     }
+
+    pub(crate) fn set_runtime_ui_nodes(&mut self, nodes: &[cubacadabra_client::StudioUiNode]) {
+        self.root
+            .children
+            .retain(|child| child.id != "game/interface");
+        if nodes.is_empty() {
+            return;
+        }
+        let children = nodes
+            .iter()
+            .map(|node| SceneNode {
+                id: format!("game/interface/{}", node.id),
+                label: node.id.clone(),
+                kind: match node.kind.as_str() {
+                    "Text" => "Text",
+                    "Button" => "Button",
+                    "Panel" => "Panel",
+                    "Stack" => "Stack",
+                    "Menu" => "Menu",
+                    "Modal" => "Modal",
+                    "Toggle" => "Toggle",
+                    "Slider" => "Slider",
+                    "Joystick" => "Joystick",
+                    _ => "UI Element",
+                },
+                icon: Icon::Object,
+                detail: (!node.text.is_empty()).then(|| node.text.clone()),
+                properties: vec![
+                    ("Text".to_owned(), node.text.clone()),
+                    ("Runtime id".to_owned(), node.id.clone()),
+                    (
+                        "Editing".to_owned(),
+                        "Ask Codex to change this UI".to_owned(),
+                    ),
+                ],
+                children: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        self.root.children.push(SceneNode {
+            id: "game/interface".to_owned(),
+            label: "Game UI".to_owned(),
+            kind: "Collection",
+            icon: Icon::Folder,
+            detail: Some(nodes.len().to_string()),
+            properties: Vec::new(),
+            children,
+        });
+    }
 }
 
 pub(crate) const WORLD_COLLECTIONS: [(&str, &str, &str, Icon); 11] = [

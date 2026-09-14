@@ -12,3 +12,14 @@ pub(crate) fn joystick_movement((x, y): (f32, f32)) -> (f32, f32) {
 pub(crate) fn should_forward_gameplay_keyboard(playing: bool, shell_consumed: bool) -> bool {
     playing || !shell_consumed
 }
+
+pub(crate) fn should_forward_gameplay_key(
+    playing: bool,
+    shell_consumed: bool,
+    key: KeyCode,
+) -> bool {
+    if shell_consumed && matches!(key, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter) {
+        return false;
+    }
+    should_forward_gameplay_keyboard(playing, shell_consumed)
+}

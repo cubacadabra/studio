@@ -74,6 +74,32 @@ fn scene_outline_uses_artist_facing_manifest_content() {
     assert!(!scene_text(&outline.root).contains("luau"));
 }
 
+#[test]
+fn scene_outline_surfaces_runtime_game_ui_without_exposing_source_files() {
+    let mut outline = SceneOutline::parse(
+        r#"{
+            "id": "course",
+            "displayName": "Course",
+            "worlds": { "starter-world": { "world": {}, "blocks": [] } }
+        }"#,
+    )
+    .unwrap();
+    outline.set_runtime_ui_nodes(&[cubacadabra_client::StudioUiNode {
+        id: "sky-greeting".to_owned(),
+        kind: "Text".to_owned(),
+        text: "hi there".to_owned(),
+    }]);
+
+    let node = outline
+        .root
+        .find("game/interface/sky-greeting")
+        .expect("runtime text should appear in the Scene tree");
+    assert_eq!(node.label, "sky-greeting");
+    assert_eq!(node.kind, "Text");
+    assert_eq!(node.detail.as_deref(), Some("hi there"));
+    assert!(!scene_text(&outline.root).contains(".luau"));
+}
+
 fn scene_text(node: &SceneNode) -> String {
     let mut text = format!("{} {} {:?}", node.label, node.kind, node.properties);
     for child in &node.children {

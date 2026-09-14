@@ -200,6 +200,7 @@ struct StudioApp {
     window: Option<Window>,
     renderer: Option<Renderer>,
     shell: Option<StudioShell>,
+    runtime_ui_revision: u64,
     pending_project_load: Option<PendingProjectLoad>,
     background_project_ready: Option<(PathBuf, bool, bool, Result<BackgroundProjectLoad, String>)>,
     prepared_project_ready: Option<(PathBuf, bool, bool, Result<PreparedProjectLoad, String>)>,
@@ -232,11 +233,12 @@ mod tests {
     use super::{
         ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, diff_project_files, joystick_movement,
         load_game_sources, load_local_morph_catalog, load_project_in_background,
-        project_asset_slug, project_manifest, should_forward_gameplay_keyboard,
-        update_manifest_sign_text, update_project_morph_catalog,
+        project_asset_slug, project_manifest, should_forward_gameplay_key,
+        should_forward_gameplay_keyboard, update_manifest_sign_text, update_project_morph_catalog,
     };
     use crate::game_creator;
     use std::{fs, path::Path};
+    use winit::keyboard::KeyCode;
 
     #[test]
     fn standalone_sources_load_as_a_default_person_preview() {
@@ -453,6 +455,9 @@ mod tests {
     #[test]
     fn play_mode_bypasses_stale_shell_keyboard_capture() {
         assert!(should_forward_gameplay_keyboard(true, true));
+        assert!(!should_forward_gameplay_key(true, true, KeyCode::Space));
+        assert!(!should_forward_gameplay_key(true, true, KeyCode::Enter));
+        assert!(should_forward_gameplay_key(true, true, KeyCode::KeyW));
     }
 
     #[test]
