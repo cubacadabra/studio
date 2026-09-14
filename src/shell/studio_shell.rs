@@ -73,6 +73,7 @@ impl StudioShell {
             playing: true,
             project_editable: false,
             project_dirty: false,
+            preview_stale: false,
             project_error: None,
             scene_edit_requested: None,
             save_requested: false,

@@ -12,6 +12,10 @@ impl StudioShell {
         self.playing
     }
 
+    pub(crate) fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
+    }
+
     pub(crate) fn is_morphs_workspace(&self) -> bool {
         self.workspace == Workspace::Morphs
     }
@@ -32,6 +36,10 @@ impl StudioShell {
         self.project_dirty
     }
 
+    pub(crate) fn preview_is_stale(&self) -> bool {
+        self.preview_stale
+    }
+
     pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) {
         let Ok(outline) = SceneOutline::parse(source) else {
             return;
@@ -46,6 +54,9 @@ impl StudioShell {
         self.scene_outline = outline;
         self.selected_scene = selected;
         self.project_dirty = dirty;
+        if dirty {
+            self.preview_stale = true;
+        }
         self.scene_editor_target.clear();
         self.scene_editor_text.clear();
     }
@@ -58,6 +69,7 @@ impl StudioShell {
     pub(crate) fn finish_project_loading(&mut self) {
         self.project_loading = None;
         self.project_error = None;
+        self.preview_stale = false;
         self.playing = true;
     }
 
@@ -67,6 +79,8 @@ impl StudioShell {
         }
         self.project_loading = Some(ProjectLoadingState {
             progress: 0.0,
+            rebuilding: true,
+            previous_preview_stale: self.preview_stale,
             previous_outline: self.scene_outline.clone(),
             previous_expanded: self.expanded_scene.clone(),
             previous_selection: self.selected_scene.clone(),
@@ -74,6 +88,7 @@ impl StudioShell {
             previous_workspace: self.workspace,
         });
         self.project_error = None;
+        self.preview_stale = true;
         self.notice = "Rebuilding preview…".to_owned();
     }
 
@@ -302,6 +317,8 @@ impl StudioShell {
         let empty_expanded = empty.initial_expanded.clone();
         self.project_loading = Some(ProjectLoadingState {
             progress: 0.0,
+            rebuilding: false,
+            previous_preview_stale: self.preview_stale,
             previous_outline: std::mem::replace(&mut self.scene_outline, empty),
             previous_expanded: std::mem::replace(&mut self.expanded_scene, empty_expanded),
             previous_selection: std::mem::replace(&mut self.selected_scene, empty_selection),
@@ -326,10 +343,19 @@ impl StudioShell {
         self.selected_scene = loading.previous_selection;
         self.selected_world_asset = loading.previous_world_asset;
         self.workspace = loading.previous_workspace;
+        if !loading.rebuilding {
+            self.preview_stale = loading.previous_preview_stale;
+        }
     }
 
     pub(crate) fn is_project_loading(&self) -> bool {
         self.project_loading.is_some()
+    }
+
+    pub(crate) fn is_rebuilding_project(&self) -> bool {
+        self.project_loading
+            .as_ref()
+            .is_some_and(|loading| loading.rebuilding)
     }
 
     pub(crate) fn set_new_project_parent(&mut self, parent: PathBuf) {

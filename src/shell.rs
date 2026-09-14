@@ -267,6 +267,7 @@ pub(crate) struct StudioShell {
     playing: bool,
     project_editable: bool,
     project_dirty: bool,
+    preview_stale: bool,
     project_error: Option<String>,
     scene_edit_requested: Option<SceneEditRequest>,
     save_requested: bool,

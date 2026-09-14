@@ -188,7 +188,6 @@ pub(crate) enum Icon {
     ChevronRight,
     Eye,
     Lock,
-    #[cfg(not(target_os = "macos"))]
     Save,
     Open,
     #[cfg(not(target_os = "macos"))]
@@ -228,6 +227,7 @@ pub(crate) const MACOS_SYSTEM_SYMBOLS: &[(Icon, &str)] = &[
     (Icon::Eye, "eye"),
     (Icon::Lock, "lock"),
     (Icon::Open, "square.and.arrow.down"),
+    (Icon::Save, "square.and.arrow.down.fill"),
     (Icon::Network, "network"),
     (Icon::Logs, "list.bullet.rectangle"),
     (Icon::Gauge, "speedometer"),

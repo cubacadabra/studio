@@ -18,26 +18,33 @@ impl StudioApp {
         self.request_redraw();
     }
 
-    pub(crate) fn save_project_source(&mut self) {
+    pub(crate) fn save_project_source(&mut self) -> bool {
         let editable = self
             .shell
             .as_ref()
             .is_some_and(StudioShell::project_is_editable);
         if !editable {
-            return;
+            return false;
         }
         let manifest_path = self.project_root.join("manifest.json");
         match write_atomic(&manifest_path, self.authored_manifest_source.as_bytes()) {
             Ok(()) => {
                 if let Some(shell) = &mut self.shell {
+                    let preview_stale = shell.preview_is_stale();
                     shell.set_source_manifest(&self.authored_manifest_source, false);
-                    shell.set_notice("Project saved".to_owned());
+                    shell.set_notice(if preview_stale {
+                        "Project saved — Rebuild & Play to preview it".to_owned()
+                    } else {
+                        "Project saved".to_owned()
+                    });
                 }
+                true
             }
             Err(message) => {
                 if let Some(shell) = &mut self.shell {
                     shell.set_project_error(message);
                 }
+                false
             }
         }
     }

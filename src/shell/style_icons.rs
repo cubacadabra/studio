@@ -299,7 +299,6 @@ pub(crate) fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color:
                 stroke,
             ));
         }
-        #[cfg(not(target_os = "macos"))]
         Icon::Save => {
             painter.rect_stroke(rect.shrink(size * 0.08), 1.0, stroke, StrokeKind::Inside);
             painter.rect_stroke(

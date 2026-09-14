@@ -360,15 +360,30 @@ impl StudioApp {
             .as_mut()
             .is_some_and(StudioShell::take_rebuild_and_play_request);
         if rebuild_requested {
-            self.save_project_source();
-            self.start_project_reload();
+            if self.save_project_source() {
+                self.start_project_reload();
+            }
         }
         let restart_requested = self
             .shell
             .as_mut()
             .is_some_and(StudioShell::take_restart_request);
         if restart_requested {
-            self.start_project_reload();
+            let dirty = self
+                .shell
+                .as_ref()
+                .is_some_and(StudioShell::project_is_dirty);
+            if dirty {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_playing(false);
+                    shell.set_notice(
+                        "Unsaved scene changes — use Rebuild & Play to save and restart."
+                            .to_owned(),
+                    );
+                }
+            } else {
+                self.start_project_reload();
+            }
         }
         let sidecar_export_requested = self
             .shell

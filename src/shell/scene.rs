@@ -69,6 +69,8 @@ pub(crate) struct SceneOutline {
 
 pub(crate) struct ProjectLoadingState {
     pub(crate) progress: f32,
+    pub(crate) rebuilding: bool,
+    pub(crate) previous_preview_stale: bool,
     pub(crate) previous_outline: SceneOutline,
     pub(crate) previous_expanded: BTreeSet<String>,
     pub(crate) previous_selection: String,

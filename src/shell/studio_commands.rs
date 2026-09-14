@@ -163,9 +163,13 @@ impl StudioShell {
             .show(context, |ui| {
                 ui.set_width(280.0);
                 ui.label(
-                    RichText::new("Loading...")
-                        .font(semibold_font(TYPE.primary))
-                        .color(colors.text),
+                    RichText::new(if self.is_rebuilding_project() {
+                        "Rebuilding preview..."
+                    } else {
+                        "Loading project..."
+                    })
+                    .font(semibold_font(TYPE.primary))
+                    .color(colors.text),
                 );
                 ui.add_space(10.0);
                 ui.add(

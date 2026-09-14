@@ -113,7 +113,13 @@ impl StudioShell {
                             }
                         }
                         if self.project_editable
-                            && toolbar_button(ui, Icon::Play, "Rebuild & Play", false).clicked()
+                            && toolbar_button(ui, Icon::Save, "Save", self.project_dirty).clicked()
+                        {
+                            self.execute_command(StudioCommand::Save);
+                        }
+                        if self.project_editable
+                            && toolbar_button(ui, Icon::Play, "Rebuild & Play", self.preview_stale)
+                                .clicked()
                         {
                             self.rebuild_and_play_requested = true;
                             self.notice = "Saving and rebuilding preview…".to_owned();
@@ -197,7 +203,7 @@ impl StudioShell {
                     ui.spacing_mut().interact_size.y = 16.0;
                     let status_color = if self.project_error.is_some() {
                         colors.axis_x
-                    } else if self.project_dirty {
+                    } else if self.project_dirty || self.preview_stale {
                         colors.accent
                     } else {
                         colors.muted
