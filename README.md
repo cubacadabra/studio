@@ -84,8 +84,10 @@ open project as its working directory, can write only inside that project, and
 has network access disabled by default. When a turn completes, Studio rereads
 the project files, rebuilds the preview, and starts the game only if that build
 succeeds; a failed build leaves the last working preview running and shows the
-build error. Codex owns and refreshes the ChatGPT credentials; Studio only
-keeps the account email and plan label in memory for connection status.
+build error. Studio reports source changes without opening source files, lists
+any changed non-source files, and can undo that turn when those files have not
+been edited again. Codex owns and refreshes the ChatGPT credentials; Studio
+only keeps the account email and plan label in memory for connection status.
 
 Packaged builds should place the pinned Codex executable next to the Studio
 executable on Windows and Linux, or in `Contents/Resources/codex` on macOS.

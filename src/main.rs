@@ -128,6 +128,15 @@ struct PendingProjectLoad {
     receiver: mpsc::Receiver<ProjectLoadEvent>,
 }
 
+type ProjectFileSnapshot = BTreeMap<PathBuf, Vec<u8>>;
+
+#[derive(Clone)]
+struct CodexFileChange {
+    relative_path: PathBuf,
+    before: Option<Vec<u8>>,
+    after: Option<Vec<u8>>,
+}
+
 struct LocalMorphCatalog {
     catalog: cubacadabra_morphs::MorphCatalog,
     packs: BTreeMap<cubacadabra_morphs::MorphAssetId, Vec<u8>>,
@@ -178,6 +187,8 @@ struct StudioApp {
     pending_project_load: Option<PendingProjectLoad>,
     background_project_ready: Option<(PathBuf, bool, Result<BackgroundProjectLoad, String>)>,
     prepared_project_ready: Option<(PathBuf, bool, Result<PreparedProjectLoad, String>)>,
+    codex_checkpoint: Option<ProjectFileSnapshot>,
+    codex_changes: Option<Vec<CodexFileChange>>,
     local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
@@ -260,6 +271,8 @@ impl StudioApp {
             pending_project_load: None,
             background_project_ready: None,
             prepared_project_ready: None,
+            codex_checkpoint: None,
+            codex_changes: None,
             local_morph_catalog,
             pressed_keys: HashSet::new(),
             jump_queued: false,
@@ -482,14 +495,19 @@ impl StudioApp {
             .shell
             .as_mut()
             .and_then(StudioShell::take_codex_chat_send_request)
-            && let Err(message) = self.codex.send_chat_message(
+        {
+            self.codex_checkpoint = snapshot_project_files(&self.project_root).ok();
+            self.codex_changes = None;
+            if let Err(message) = self.codex.send_chat_message(
                 request.message,
                 request.model.to_owned(),
                 request.reasoning_effort.to_owned(),
-            )
-            && let Some(shell) = &mut self.shell
-        {
-            shell.set_codex_chat_error(message);
+            ) {
+                self.codex_checkpoint = None;
+                if let Some(shell) = &mut self.shell {
+                    shell.set_codex_chat_error(message);
+                }
+            }
         }
         let draft_export_requested = self
             .shell
@@ -505,6 +523,13 @@ impl StudioApp {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
         };
+        let undo_codex_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_codex_undo_request);
+        if undo_codex_requested {
+            self.undo_codex_changes();
+        }
         if let Some(edit) = self
             .shell
             .as_mut()
@@ -1012,6 +1037,73 @@ impl StudioApp {
                 }
             }
         }
+    }
+
+    fn capture_codex_changes(&mut self) -> Vec<CodexFileChange> {
+        let Some(before) = self.codex_checkpoint.take() else {
+            self.codex_changes = None;
+            return Vec::new();
+        };
+        let Ok(after) = snapshot_project_files(&self.project_root) else {
+            self.codex_changes = None;
+            return Vec::new();
+        };
+        let changes = diff_project_files(before, after);
+        self.codex_changes = Some(changes.clone());
+        changes
+    }
+
+    fn undo_codex_changes(&mut self) {
+        let Some(changes) = self.codex_changes.take() else {
+            if let Some(shell) = &mut self.shell {
+                shell.set_notice("There are no Codex changes to undo".to_owned());
+            }
+            return;
+        };
+        let mut restored = 0usize;
+        let mut skipped = 0usize;
+        let mut errors = Vec::new();
+        for change in changes {
+            let path = self.project_root.join(&change.relative_path);
+            let current = fs::read(&path).ok();
+            if current != change.after {
+                skipped += 1;
+                continue;
+            }
+            let result = match change.before {
+                Some(bytes) => write_atomic(&path, &bytes),
+                None => fs::remove_file(&path).map_err(|error| {
+                    format!(
+                        "could not remove {}: {error}",
+                        change.relative_path.display()
+                    )
+                }),
+            };
+            match result {
+                Ok(()) => restored += 1,
+                Err(message) => errors.push(message),
+            }
+        }
+        if let Some(shell) = &mut self.shell {
+            shell.clear_codex_changes();
+            if errors.is_empty() {
+                let message = if skipped == 0 {
+                    format!("Undid {restored} Codex change(s); rebuilding preview…")
+                } else {
+                    format!(
+                        "Undid {restored} Codex change(s); kept {skipped} later edit(s); rebuilding preview…"
+                    )
+                };
+                shell.set_notice(message);
+            } else {
+                shell.set_project_error(format!(
+                    "Undo restored {restored} file(s), skipped {skipped}, and failed: {}",
+                    errors.join("; ")
+                ));
+            }
+        }
+        self.refresh_authored_manifest_from_disk();
+        self.start_project_reload();
     }
 
     fn refresh_authored_manifest_from_disk(&mut self) {
@@ -1807,6 +1899,15 @@ impl StudioApp {
                         shell.set_codex_chat_completed();
                         shell.set_notice("Codex finished — rebuilding preview…".to_owned());
                     }
+                    let changes = self.capture_codex_changes();
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_changes(
+                            changes
+                                .iter()
+                                .map(|change| change.relative_path.display().to_string())
+                                .collect(),
+                        );
+                    }
                     if self
                         .shell
                         .as_ref()
@@ -2077,6 +2178,64 @@ fn parse_block_target(target: &str) -> Result<(String, usize), String> {
         .parse::<usize>()
         .map_err(|_| format!("`{target}` has an invalid block index"))?;
     Ok((world.to_owned(), index))
+}
+
+fn snapshot_project_files(root: &Path) -> Result<ProjectFileSnapshot, String> {
+    fn visit(root: &Path, directory: &Path, files: &mut ProjectFileSnapshot) -> Result<(), String> {
+        for entry in fs::read_dir(directory)
+            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+        {
+            let entry =
+                entry.map_err(|error| format!("could not inspect project file: {error}"))?;
+            let path = entry.path();
+            let file_name = entry.file_name();
+            if matches!(file_name.to_str(), Some(".git" | "target")) {
+                continue;
+            }
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+            if file_type.is_dir() {
+                visit(root, &path, files)?;
+            } else if file_type.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|error| format!("could not relativize {}: {error}", path.display()))?
+                    .to_path_buf();
+                let bytes = fs::read(&path)
+                    .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+                files.insert(relative, bytes);
+            }
+        }
+        Ok(())
+    }
+
+    let mut files = ProjectFileSnapshot::new();
+    visit(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn diff_project_files(
+    before: ProjectFileSnapshot,
+    after: ProjectFileSnapshot,
+) -> Vec<CodexFileChange> {
+    let paths = before
+        .keys()
+        .chain(after.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    paths
+        .into_iter()
+        .filter_map(|relative_path| {
+            let before_bytes = before.get(&relative_path).cloned();
+            let after_bytes = after.get(&relative_path).cloned();
+            (before_bytes != after_bytes).then_some(CodexFileChange {
+                relative_path,
+                before: before_bytes,
+                after: after_bytes,
+            })
+        })
+        .collect()
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -2674,9 +2833,10 @@ fn validate_project(game_path: PathBuf) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        STANDALONE_PREVIEW_MANIFEST, joystick_movement, load_game_sources,
-        load_local_morph_catalog, load_project_in_background, project_asset_slug, project_manifest,
-        should_forward_gameplay_keyboard, update_project_morph_catalog,
+        ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, diff_project_files, joystick_movement,
+        load_game_sources, load_local_morph_catalog, load_project_in_background,
+        project_asset_slug, project_manifest, should_forward_gameplay_keyboard,
+        update_project_morph_catalog,
     };
     use crate::game_creator;
     use std::{fs, path::Path};
@@ -2727,6 +2887,26 @@ mod tests {
             let _ = fs::remove_dir_all(package);
         }
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_change_diff_tracks_created_deleted_and_updated_files() {
+        let mut before = ProjectFileSnapshot::new();
+        before.insert("src/main.luau".into(), b"old".to_vec());
+        before.insert("manifest.json".into(), b"same".to_vec());
+        before.insert("src/old-ui.luau".into(), b"deleted".to_vec());
+        let mut after = ProjectFileSnapshot::new();
+        after.insert("src/main.luau".into(), b"new".to_vec());
+        after.insert("manifest.json".into(), b"same".to_vec());
+        after.insert("src/ui.luau".into(), b"created".to_vec());
+        let changes = diff_project_files(before, after);
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| change.relative_path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec!["src/main.luau", "src/old-ui.luau", "src/ui.luau"]
+        );
     }
 
     #[test]

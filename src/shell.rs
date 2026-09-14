@@ -1030,6 +1030,10 @@ pub(crate) struct StudioShell {
     codex_chat_ready: bool,
     codex_chat_busy: bool,
     codex_chat_error: Option<String>,
+    codex_change_files: Option<Vec<String>>,
+    codex_source_change_count: usize,
+    codex_change_review_open: bool,
+    codex_undo_requested: bool,
     open_project_requested: bool,
     project_loading: Option<ProjectLoadingState>,
     new_project_dialog_open: bool,
@@ -1180,6 +1184,10 @@ impl StudioShell {
             codex_chat_ready: false,
             codex_chat_busy: false,
             codex_chat_error: None,
+            codex_change_files: None,
+            codex_source_change_count: 0,
+            codex_change_review_open: false,
+            codex_undo_requested: false,
             open_project_requested: false,
             project_loading: None,
             new_project_dialog_open: false,
@@ -1330,44 +1338,72 @@ impl StudioShell {
         self.codex_chat_error = None;
     }
 
-    pub(crate) fn set_codex_chat_delta(&mut self, delta: String) {
+    pub(crate) fn set_codex_chat_delta(&mut self, _delta: String) {
         self.codex_chat_busy = true;
         if let Some(message) = self
             .codex_chat_messages
             .last_mut()
             .filter(|message| message.role == CodexChatRole::Assistant)
         {
-            message.text.push_str(&delta);
+            message.text = "Codex is applying the requested change…".to_owned();
         } else {
             self.codex_chat_messages.push(CodexChatMessage {
                 role: CodexChatRole::Assistant,
-                text: delta,
+                text: "Codex is applying the requested change…".to_owned(),
             });
         }
     }
 
-    pub(crate) fn set_codex_chat_message(&mut self, text: String) {
+    pub(crate) fn set_codex_chat_message(&mut self, _text: String) {
         if let Some(message) = self
             .codex_chat_messages
             .last_mut()
             .filter(|message| message.role == CodexChatRole::Assistant)
         {
-            message.text = text;
-        } else if !text.is_empty() {
+            message.text = "Codex finished the requested change.".to_owned();
+        } else {
             self.codex_chat_messages.push(CodexChatMessage {
                 role: CodexChatRole::Assistant,
-                text,
+                text: "Codex finished the requested change.".to_owned(),
             });
         }
     }
 
     pub(crate) fn set_codex_chat_completed(&mut self) {
         self.codex_chat_busy = false;
+        if let Some(message) = self
+            .codex_chat_messages
+            .last_mut()
+            .filter(|message| message.role == CodexChatRole::Assistant)
+        {
+            message.text = "Change applied. Studio is rebuilding the preview…".to_owned();
+        }
     }
 
     pub(crate) fn set_codex_chat_error(&mut self, message: String) {
         self.codex_chat_busy = false;
         self.codex_chat_error = Some(message);
+    }
+
+    pub(crate) fn set_codex_changes(&mut self, files: Vec<String>) {
+        let source_change_count = files.iter().filter(|file| file.ends_with(".luau")).count();
+        let visible_files = files
+            .into_iter()
+            .filter(|file| !file.ends_with(".luau"))
+            .collect::<Vec<_>>();
+        self.codex_source_change_count = source_change_count;
+        self.codex_change_files = (!visible_files.is_empty()).then_some(visible_files);
+        self.codex_change_review_open = false;
+    }
+
+    pub(crate) fn clear_codex_changes(&mut self) {
+        self.codex_change_files = None;
+        self.codex_source_change_count = 0;
+        self.codex_change_review_open = false;
+    }
+
+    pub(crate) fn take_codex_undo_request(&mut self) -> bool {
+        std::mem::take(&mut self.codex_undo_requested)
     }
 
     pub(crate) fn set_chatgpt_pending(&mut self) {
@@ -2489,6 +2525,68 @@ impl StudioShell {
                     if let Some(error) = &self.codex_chat_error {
                         ui.label(RichText::new(error).size(TYPE.meta).color(colors.axis_x));
                     }
+                    if self.codex_source_change_count > 0 || self.codex_change_files.is_some() {
+                        let files = self.codex_change_files.clone().unwrap_or_default();
+                        let changed_count = if self.codex_source_change_count > 0 {
+                            self.codex_source_change_count
+                        } else {
+                            files.len()
+                        };
+                        let changed_label = if self.codex_source_change_count > 0 {
+                            format!(
+                                "Codex changed {} source file{}",
+                                changed_count,
+                                if changed_count == 1 { "" } else { "s" }
+                            )
+                        } else {
+                            format!(
+                                "Changed {} file{}",
+                                changed_count,
+                                if changed_count == 1 { "" } else { "s" }
+                            )
+                        };
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(changed_label)
+                                .font(semibold_font(TYPE.meta))
+                                .color(colors.text),
+                            );
+                            if !files.is_empty()
+                                && ui
+                                    .button(if self.codex_change_review_open {
+                                        "Hide files"
+                                    } else {
+                                        "Show files"
+                                    })
+                                    .clicked()
+                            {
+                                self.codex_change_review_open = !self.codex_change_review_open;
+                            }
+                            let undo_enabled = self.project_loading.is_none() && !self.codex_chat_busy;
+                            if ui
+                                .add_enabled(undo_enabled, egui::Button::new("Undo this change"))
+                                .on_disabled_hover_text("Undo is available after the rebuild finishes")
+                                .clicked()
+                            {
+                                self.codex_undo_requested = true;
+                            }
+                        });
+                        if self.codex_change_review_open {
+                            Frame::NONE
+                                .fill(colors.surface)
+                                .inner_margin(Margin::symmetric(8, 5))
+                                .show(ui, |ui| {
+                                    for file in &files {
+                                        ui.label(
+                                            RichText::new(file)
+                                                .size(TYPE.meta)
+                                                .color(colors.secondary_text),
+                                        );
+                                    }
+                                });
+                        }
+                    }
                     ui.separator();
                     let can_send = self.codex_chat_ready
                         && !self.codex_chat_busy
@@ -3600,6 +3698,39 @@ impl StudioShell {
                     Stroke::new(1.0, colors.border),
                     StrokeKind::Inside,
                 );
+                if let Some(selected) = self
+                    .scene_outline
+                    .root
+                    .find(&self.selected_scene)
+                    .filter(|node| node.kind == "Block")
+                {
+                    let badge = Rect::from_min_size(
+                        self.runtime_viewport.min + egui::vec2(12.0, 12.0),
+                        egui::vec2(220.0, 42.0),
+                    );
+                    ui.painter()
+                        .rect_filled(badge, UI.radius, colors.panel_raised);
+                    ui.painter().rect_stroke(
+                        badge,
+                        UI.radius,
+                        Stroke::new(1.0, colors.asset_selection_stroke),
+                        StrokeKind::Inside,
+                    );
+                    ui.painter().text(
+                        badge.min + egui::vec2(10.0, 13.0),
+                        Align2::LEFT_CENTER,
+                        format!("Selected · {}", selected.label),
+                        semibold_font(TYPE.meta),
+                        colors.text,
+                    );
+                    ui.painter().text(
+                        badge.min + egui::vec2(10.0, 29.0),
+                        Align2::LEFT_CENTER,
+                        "Edit position or size in Inspector",
+                        FontId::proportional(TYPE.meta - 1.0),
+                        colors.secondary_text,
+                    );
+                }
                 ui.allocate_rect(self.runtime_viewport, Sense::hover());
             });
     }
