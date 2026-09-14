@@ -32,7 +32,7 @@ use morphs::{
     source_manifest_geometry_file,
 };
 use network::{BackendClient, BackendEvent};
-use shell::{PreparedShell, StudioShell};
+use shell::{PreparedShell, SceneEditRequest, StudioShell};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 use winit::{
@@ -98,6 +98,7 @@ struct ImageAtlas {
 struct GameSources {
     project_root: PathBuf,
     root: PathBuf,
+    authored_manifest_source: String,
     manifest_source: String,
     script_source: String,
     standalone_preview: bool,
@@ -123,6 +124,7 @@ enum ProjectLoadEvent {
 
 struct PendingProjectLoad {
     project: PathBuf,
+    preserve_editor: bool,
     receiver: mpsc::Receiver<ProjectLoadEvent>,
 }
 
@@ -162,6 +164,7 @@ struct LocalMorphPreset {
 struct StudioApp {
     project_root: PathBuf,
     game_root: PathBuf,
+    authored_manifest_source: String,
     manifest_source: String,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
@@ -173,8 +176,8 @@ struct StudioApp {
     renderer: Option<Renderer>,
     shell: Option<StudioShell>,
     pending_project_load: Option<PendingProjectLoad>,
-    background_project_ready: Option<(PathBuf, Result<BackgroundProjectLoad, String>)>,
-    prepared_project_ready: Option<(PathBuf, Result<PreparedProjectLoad, String>)>,
+    background_project_ready: Option<(PathBuf, bool, Result<BackgroundProjectLoad, String>)>,
+    prepared_project_ready: Option<(PathBuf, bool, Result<PreparedProjectLoad, String>)>,
     local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
@@ -202,6 +205,7 @@ impl StudioApp {
         morph_catalog_path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
         let sources = load_game_sources(game_root)?;
+        let authored_manifest_source = sources.authored_manifest_source;
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
@@ -242,6 +246,7 @@ impl StudioApp {
         Ok(Self {
             project_root,
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
+            authored_manifest_source,
             manifest_source,
             game_root,
             standalone_preview,
@@ -315,6 +320,10 @@ impl StudioApp {
 
         let mut shell = StudioShell::new(&window, &renderer, &self.manifest_source);
         shell.set_project_asset_available(!self.standalone_preview);
+        shell.set_project_editable(
+            !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
+        );
+        shell.set_source_manifest(&self.authored_manifest_source, false);
         shell.set_codex_project_root(self.project_root.clone());
         if let Ok(parent) = env::current_dir() {
             shell.set_new_project_parent(parent);
@@ -496,6 +505,39 @@ impl StudioApp {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
         };
+        if let Some(edit) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_scene_edit_request)
+        {
+            if let Err(message) = self.apply_scene_edit(edit) {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_project_error(message);
+                }
+            }
+        }
+        let save_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_save_request);
+        if save_requested {
+            self.save_project_source();
+        }
+        let rebuild_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_rebuild_and_play_request);
+        if rebuild_requested {
+            self.save_project_source();
+            self.start_project_reload();
+        }
+        let restart_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_restart_request);
+        if restart_requested {
+            self.start_project_reload();
+        }
         let sidecar_export_requested = self
             .shell
             .as_mut()
@@ -622,7 +664,9 @@ impl StudioApp {
         self.look_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
         self.dispatch_client_actions();
-        self.client.step(delta);
+        if playing {
+            self.client.step(delta);
+        }
         self.drain_ui_events();
         self.dispatch_client_actions();
         if !self.standalone_preview
@@ -946,6 +990,128 @@ impl StudioApp {
         self.request_redraw();
     }
 
+    fn save_project_source(&mut self) {
+        let editable = self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::project_is_editable);
+        if !editable {
+            return;
+        }
+        let manifest_path = self.project_root.join("manifest.json");
+        match write_atomic(&manifest_path, self.authored_manifest_source.as_bytes()) {
+            Ok(()) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_source_manifest(&self.authored_manifest_source, false);
+                    shell.set_notice("Project saved".to_owned());
+                }
+            }
+            Err(message) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_project_error(message);
+                }
+            }
+        }
+    }
+
+    fn refresh_authored_manifest_from_disk(&mut self) {
+        let path = self.project_root.join("manifest.json");
+        match fs::read_to_string(&path) {
+            Ok(source) => {
+                self.authored_manifest_source = source.clone();
+                if let Some(shell) = &mut self.shell {
+                    shell.set_source_manifest(&source, false);
+                }
+            }
+            Err(error) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_project_error(format!(
+                        "Could not read the updated manifest {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    fn apply_scene_edit(&mut self, request: SceneEditRequest) -> Result<(), String> {
+        if !self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::project_is_editable)
+        {
+            return Err("Open a raw source project to edit scene objects.".to_owned());
+        }
+        let mut manifest: Value = serde_json::from_str(&self.authored_manifest_source)
+            .map_err(|error| format!("manifest is no longer valid JSON: {error}"))?;
+        let (target, operation) = match request {
+            SceneEditRequest::UpdateBlock {
+                target,
+                position,
+                size,
+            } => (target, SceneEditOperation::Update { position, size }),
+            SceneEditRequest::DuplicateBlock { target } => (target, SceneEditOperation::Duplicate),
+            SceneEditRequest::DeleteBlock { target } => (target, SceneEditOperation::Delete),
+        };
+        let (world_id, index) = parse_block_target(&target)?;
+        let world = if world_id == "lobby" {
+            &mut manifest
+        } else {
+            manifest
+                .get_mut("worlds")
+                .and_then(Value::as_object_mut)
+                .and_then(|worlds| worlds.get_mut(&world_id))
+                .ok_or_else(|| format!("scene world `{world_id}` was not found"))?
+        };
+        let blocks = world
+            .get_mut("blocks")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| format!("scene world `{world_id}` has no blocks"))?;
+        let block = blocks
+            .get_mut(index)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| format!("scene block `{target}` was not found"))?;
+        match operation {
+            SceneEditOperation::Update { position, size } => {
+                block.insert("position".to_owned(), serde_json::json!(position));
+                block.insert("size".to_owned(), serde_json::json!(size));
+            }
+            SceneEditOperation::Duplicate => {
+                let mut copy = Value::Object(block.clone());
+                let copy_object = copy
+                    .as_object_mut()
+                    .ok_or_else(|| "scene block could not be duplicated".to_owned())?;
+                let base_id = copy_object
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("platform");
+                copy_object.insert(
+                    "id".to_owned(),
+                    Value::String(format!("{base_id}-copy-{}", blocks.len() + 1)),
+                );
+                blocks.push(copy);
+            }
+            SceneEditOperation::Delete => {
+                blocks.remove(index);
+            }
+        }
+        let source = serde_json::to_string_pretty(&manifest)
+            .map_err(|error| format!("could not serialize the scene manifest: {error}"))?
+            + "\n";
+        self.authored_manifest_source = source.clone();
+        if let Some(shell) = &mut self.shell {
+            shell.set_source_manifest(&source, true);
+            shell.set_notice(match operation {
+                SceneEditOperation::Update { .. } => {
+                    "Platform changed — save to keep it".to_owned()
+                }
+                SceneEditOperation::Duplicate => "Platform duplicated — save to keep it".to_owned(),
+                SceneEditOperation::Delete => "Platform deleted — save to keep it".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     fn choose_and_open_project(&mut self) {
         let starting_directory = if !self.standalone_preview && self.project_root.is_dir() {
             self.project_root
@@ -969,6 +1135,22 @@ impl StudioApp {
     }
 
     fn start_project_load(&mut self, project: PathBuf) {
+        self.start_project_load_with_mode(project, false);
+    }
+
+    fn start_project_reload(&mut self) {
+        if self.standalone_preview {
+            if let Some(shell) = &mut self.shell {
+                shell.set_project_error(
+                    "The standalone morph preview cannot be rebuilt.".to_owned(),
+                );
+            }
+            return;
+        }
+        self.start_project_load_with_mode(self.project_root.clone(), true);
+    }
+
+    fn start_project_load_with_mode(&mut self, project: PathBuf, preserve_editor: bool) {
         if self.pending_project_load.is_some()
             || self.background_project_ready.is_some()
             || self.prepared_project_ready.is_some()
@@ -976,7 +1158,11 @@ impl StudioApp {
             return;
         }
         if let Some(shell) = &mut self.shell {
-            shell.begin_project_loading();
+            if preserve_editor {
+                shell.begin_game_rebuild();
+            } else {
+                shell.begin_project_loading();
+            }
             shell.set_project_loading_progress(0.01);
         }
         let (sender, receiver) = mpsc::channel();
@@ -992,7 +1178,11 @@ impl StudioApp {
             });
         match spawn {
             Ok(_) => {
-                self.pending_project_load = Some(PendingProjectLoad { project, receiver });
+                self.pending_project_load = Some(PendingProjectLoad {
+                    project,
+                    preserve_editor,
+                    receiver,
+                });
             }
             Err(error) => {
                 if let Some(shell) = &mut self.shell {
@@ -1031,17 +1221,17 @@ impl StudioApp {
             }
         }
         if let Some(result) = finished {
-            let project = self
+            let (project, preserve_editor) = self
                 .pending_project_load
                 .take()
-                .map(|load| load.project)
+                .map(|load| (load.project, load.preserve_editor))
                 .unwrap_or_default();
-            self.background_project_ready = Some((project, result));
+            self.background_project_ready = Some((project, preserve_editor, result));
         }
     }
 
     fn prepare_ready_project_runtime(&mut self) {
-        let Some((project, result)) = self.background_project_ready.take() else {
+        let Some((project, preserve_editor, result)) = self.background_project_ready.take() else {
             return;
         };
         let result = match result {
@@ -1072,25 +1262,36 @@ impl StudioApp {
         {
             shell.set_project_loading_progress(0.93);
         }
-        self.prepared_project_ready = Some((project, result));
+        self.prepared_project_ready = Some((project, preserve_editor, result));
     }
 
     fn commit_ready_project_load(&mut self) {
-        let Some((project, result)) = self.prepared_project_ready.take() else {
+        let Some((project, preserve_editor, result)) = self.prepared_project_ready.take() else {
             return;
         };
-        let result = result.and_then(|prepared| self.commit_project_load(prepared));
+        let result =
+            result.and_then(|prepared| self.commit_project_load(prepared, preserve_editor));
         match result {
             Ok(()) => {
                 if let Some(shell) = &mut self.shell {
-                    shell.set_notice(format!("Opened {}", project.display()));
+                    shell.set_notice(if preserve_editor {
+                        "Preview rebuilt and playing".to_owned()
+                    } else {
+                        format!("Opened {}", project.display())
+                    });
                 }
             }
             Err(message) => {
                 if let Some(shell) = &mut self.shell {
                     shell.cancel_project_loading();
                 }
-                self.show_open_project_error(&message);
+                if preserve_editor {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_project_error(format!("Rebuild failed: {message}"));
+                    }
+                } else {
+                    self.show_open_project_error(&message);
+                }
             }
         }
     }
@@ -1110,7 +1311,11 @@ impl StudioApp {
         dialog.show();
     }
 
-    fn commit_project_load(&mut self, prepared: PreparedProjectLoad) -> Result<(), String> {
+    fn commit_project_load(
+        &mut self,
+        prepared: PreparedProjectLoad,
+        preserve_editor: bool,
+    ) -> Result<(), String> {
         let PreparedProjectLoad {
             background:
                 BackgroundProjectLoad {
@@ -1118,6 +1323,7 @@ impl StudioApp {
                         GameSources {
                             project_root,
                             root,
+                            authored_manifest_source,
                             manifest_source,
                             script_source: _,
                             standalone_preview,
@@ -1146,6 +1352,7 @@ impl StudioApp {
         let old_temporary_package = self.temporary_package.take();
         self.project_root = project_root;
         self.game_root = root;
+        self.authored_manifest_source = authored_manifest_source;
         self.manifest_source = manifest_source;
         self.standalone_preview = standalone_preview;
         self.temporary_package = temporary_package;
@@ -1164,6 +1371,25 @@ impl StudioApp {
                 game_name(&self.project_root)
             ));
         }
+        if preserve_editor {
+            if let Some(shell) = &mut self.shell {
+                shell.set_project_editable(
+                    !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
+                );
+                shell.set_source_manifest(&self.authored_manifest_source, false);
+                shell.finish_project_loading();
+                shell.set_notice("Preview rebuilt and playing".to_owned());
+            }
+            if let Some(local_catalog) = self.local_morph_catalog.take() {
+                self.install_local_morphs(local_catalog)?;
+            }
+            if let Some(package) = old_temporary_package {
+                let _ = fs::remove_dir_all(package);
+            }
+            self.update_viewport();
+            return Ok(());
+        }
+
         let mut shell = {
             let window = self
                 .window
@@ -1176,6 +1402,10 @@ impl StudioApp {
             StudioShell::new(window, renderer, &self.manifest_source)
         };
         shell.set_project_asset_available(true);
+        shell.set_project_editable(
+            !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
+        );
+        shell.set_source_manifest(&self.authored_manifest_source, false);
         shell.set_codex_project_root(self.project_root.clone());
         if let Err(message) = self.codex.set_project_root(&self.project_root) {
             shell.set_codex_chat_error(message);
@@ -1541,20 +1771,67 @@ impl StudioApp {
 
     fn drain_codex_events(&mut self) {
         while let Some(event) = self.codex.try_recv() {
-            let Some(shell) = &mut self.shell else {
-                continue;
-            };
             match event {
-                CodexEvent::AccountStatus(account) => shell.set_chatgpt_account(account),
-                CodexEvent::BrowserOpened => shell.set_chatgpt_browser_opened(),
-                CodexEvent::LoginCompleted(account) => shell.set_chatgpt_connected(account),
-                CodexEvent::ChatReady => shell.set_codex_chat_ready(),
-                CodexEvent::AssistantDelta(delta) => shell.set_codex_chat_delta(delta),
-                CodexEvent::AssistantMessage(message) => shell.set_codex_chat_message(message),
-                CodexEvent::ChatTurnCompleted => shell.set_codex_chat_completed(),
-                CodexEvent::ChatError(message) => shell.set_codex_chat_error(message),
-                CodexEvent::Error(message) => shell.set_chatgpt_error(message),
-                CodexEvent::Unavailable(message) => shell.set_chatgpt_unavailable(message),
+                CodexEvent::AccountStatus(account) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_chatgpt_account(account);
+                    }
+                }
+                CodexEvent::BrowserOpened => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_chatgpt_browser_opened();
+                    }
+                }
+                CodexEvent::LoginCompleted(account) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_chatgpt_connected(account);
+                    }
+                }
+                CodexEvent::ChatReady => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_ready();
+                    }
+                }
+                CodexEvent::AssistantDelta(delta) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_delta(delta);
+                    }
+                }
+                CodexEvent::AssistantMessage(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_message(message);
+                    }
+                }
+                CodexEvent::ChatTurnCompleted => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_completed();
+                        shell.set_notice("Codex finished — rebuilding preview…".to_owned());
+                    }
+                    if self
+                        .shell
+                        .as_ref()
+                        .is_some_and(StudioShell::project_is_dirty)
+                    {
+                        self.save_project_source();
+                    }
+                    self.refresh_authored_manifest_from_disk();
+                    self.start_project_reload();
+                }
+                CodexEvent::ChatError(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_codex_chat_error(message);
+                    }
+                }
+                CodexEvent::Error(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_chatgpt_error(message);
+                    }
+                }
+                CodexEvent::Unavailable(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_chatgpt_unavailable(message);
+                    }
+                }
             }
         }
     }
@@ -1634,12 +1911,14 @@ fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn 
         return Ok(GameSources {
             project_root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
             root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
+            authored_manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             script_source: STANDALONE_PREVIEW_SCRIPT.to_owned(),
             standalone_preview: true,
             temporary_package: None,
         });
     };
+    let authored_manifest_source = read_utf8_file(&game_root.join("manifest.json"), "manifest")?;
     let (package_root, temporary_package) = if game_root.join("game.luau").is_file() {
         (game_root.clone(), None)
     } else if game_root.join("src/main.luau").is_file() {
@@ -1655,6 +1934,7 @@ fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSources, Box<dyn 
     Ok(GameSources {
         project_root: game_root,
         root: package_root.clone(),
+        authored_manifest_source,
         manifest_source: read_utf8_file(&package_root.join("manifest.json"), "manifest")?,
         script_source: read_utf8_file(&package_root.join("game.luau"), "script")?,
         standalone_preview: false,
@@ -1772,6 +2052,31 @@ fn project_asset_slug(asset_id: &str) -> Result<String, String> {
         return Err("the character asset ID cannot become a safe project folder name".to_owned());
     }
     Ok(slug)
+}
+
+enum SceneEditOperation {
+    Update { position: [f32; 3], size: [f32; 3] },
+    Duplicate,
+    Delete,
+}
+
+fn parse_block_target(target: &str) -> Result<(String, usize), String> {
+    let mut parts = target.split('/');
+    let kind = parts.next();
+    let world = parts.next();
+    let collection = parts.next();
+    let index = parts.next();
+    if kind != Some("world") || collection != Some("blocks") || parts.next().is_some() {
+        return Err(format!("`{target}` is not an editable platform"));
+    }
+    let world = world
+        .filter(|world| !world.is_empty())
+        .ok_or_else(|| format!("`{target}` has no world"))?;
+    let index = index
+        .ok_or_else(|| format!("`{target}` has no block index"))?
+        .parse::<usize>()
+        .map_err(|_| format!("`{target}` has an invalid block index"))?;
+    Ok((world.to_owned(), index))
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -2373,6 +2678,7 @@ mod tests {
         load_local_morph_catalog, load_project_in_background, project_asset_slug, project_manifest,
         should_forward_gameplay_keyboard, update_project_morph_catalog,
     };
+    use crate::game_creator;
     use std::{fs, path::Path};
 
     #[test]
@@ -2400,6 +2706,27 @@ mod tests {
         assert_eq!(client.game_id(), "first-game");
         assert!(sources.script_source.contains("begin module: round.luau"));
         assert!(!sources.script_source.contains("@include"));
+    }
+
+    #[test]
+    fn generated_starter_builds_through_the_shared_builder() {
+        let root = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-starter-build-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let created = game_creator::create_game("Jump Course", &root).expect("starter project");
+        let sources = load_game_sources(Some(created.project.clone())).expect("built starter");
+        let client = cubacadabra_client::ClientSession::load(
+            &sources.manifest_source,
+            &sources.script_source,
+        )
+        .expect("starter package should compile");
+        assert_eq!(client.game_id(), "jump-course");
+        if let Some(package) = sources.temporary_package {
+            let _ = fs::remove_dir_all(package);
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

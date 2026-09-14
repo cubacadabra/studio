@@ -5,10 +5,12 @@ package. It opens the same Rust engine used by the iOS, Android, and web
 clients, then forwards desktop input to it.
 
 The first visual-workbench shell places the live game renderer inside a native
-desktop workspace. Its World, Assets, Materials, and Test layouts are an early
-interaction preview; project editing and multi-session testing are not wired up
-yet. Local package loading, keyboard movement, mouse camera control, wheel zoom,
-and package image assets continue to use the shared engine.
+desktop workspace. Raw source projects expose a focused scene-authoring loop:
+select a platform, adjust its position or size, duplicate or delete it, save,
+and rebuild the preview without losing the Studio session. Luau is authored
+through the embedded Codex integration rather than a Studio code editor.
+Local package loading, keyboard movement, mouse camera control, wheel zoom, and
+package image assets continue to use the shared engine.
 
 ## Run a game
 
@@ -61,7 +63,10 @@ Controls:
 
 - `World`, `Assets`, `Materials`, and `Test`: switch workspace previews
 - `ChatGPT · <plan>`: open the in-window Codex chat for the current project
-- `Play`: enable or pause game input
+- `Play` / `Stop`: start or stop the current preview; starting again resets it
+- `Rebuild & Play`: save the source scene, rebuild the current project, and start
+  a fresh preview
+- `Restart`: reset the current project without reopening the editor
 - `WASD` or arrow keys: move
 - `Shift`: sprint
 - `Space`: jump
@@ -76,9 +81,11 @@ cached ChatGPT account, and opens the browser flow when the user selects
 `Connect ChatGPT`. Once connected, select the account label in the top bar to
 open the in-window Codex chat. Each conversation and turn uses the currently
 open project as its working directory, can write only inside that project, and
-has network access disabled by default. Codex owns and refreshes the ChatGPT
-credentials; Studio only keeps the account email and plan label in memory for
-connection status.
+has network access disabled by default. When a turn completes, Studio rereads
+the project files, rebuilds the preview, and starts the game only if that build
+succeeds; a failed build leaves the last working preview running and shows the
+build error. Codex owns and refreshes the ChatGPT credentials; Studio only
+keeps the account email and plan label in memory for connection status.
 
 Packaged builds should place the pinned Codex executable next to the Studio
 executable on Windows and Linux, or in `Contents/Resources/codex` on macOS.

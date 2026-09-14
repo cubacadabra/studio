@@ -697,6 +697,45 @@ fn object_properties(value: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
+fn vector_property(node: &SceneNode, label: &str) -> Option<[f32; 3]> {
+    node.properties
+        .iter()
+        .find(|(name, _)| name == label)
+        .and_then(|(_, value)| {
+            value
+                .split(',')
+                .map(|component| component.trim().parse::<f32>().ok())
+                .collect::<Option<Vec<_>>>()
+        })
+        .and_then(|values| values.try_into().ok())
+}
+
+fn vector_editor(ui: &mut egui::Ui, label: &str, values: &mut [f32; 3], speed: f32) -> bool {
+    let colors = palette(ui);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [72.0, CONTROL_HEIGHT],
+            egui::Label::new(
+                RichText::new(label)
+                    .size(TYPE.secondary)
+                    .color(colors.secondary_text),
+            ),
+        );
+        for (axis, value) in values.iter_mut().enumerate() {
+            changed |= ui
+                .add(
+                    egui::DragValue::new(value)
+                        .speed(speed)
+                        .prefix(["X ", "Y ", "Z "][axis])
+                        .min_decimals(1),
+                )
+                .changed();
+        }
+    });
+    changed
+}
+
 fn avatar_properties(value: &Value) -> Vec<(String, String)> {
     let mut properties = object_properties(value);
     if let Some(character) = value.get("character").and_then(Value::as_object) {
@@ -897,6 +936,21 @@ pub(crate) struct CodexChatSendRequest {
     pub(crate) reasoning_effort: &'static str,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum SceneEditRequest {
+    UpdateBlock {
+        target: String,
+        position: [f32; 3],
+        size: [f32; 3],
+    },
+    DuplicateBlock {
+        target: String,
+    },
+    DeleteBlock {
+        target: String,
+    },
+}
+
 pub(crate) struct StudioShell {
     context: egui::Context,
     state: EguiState,
@@ -906,11 +960,21 @@ pub(crate) struct StudioShell {
     scene_outline: SceneOutline,
     expanded_scene: BTreeSet<String>,
     selected_scene: String,
+    scene_editor_target: String,
+    scene_editor_position: [f32; 3],
+    scene_editor_size: [f32; 3],
     selected_world_asset: String,
     selected_asset: &'static str,
     test_tool: &'static str,
     asset_filter: &'static str,
     playing: bool,
+    project_editable: bool,
+    project_dirty: bool,
+    project_error: Option<String>,
+    scene_edit_requested: Option<SceneEditRequest>,
+    save_requested: bool,
+    rebuild_and_play_requested: bool,
+    restart_requested: bool,
     notice: String,
     search_query: String,
     morph_query: String,
@@ -1039,6 +1103,9 @@ impl StudioShell {
             scene_outline,
             expanded_scene,
             selected_scene,
+            scene_editor_target: String::new(),
+            scene_editor_position: [0.0; 3],
+            scene_editor_size: [1.0; 3],
             selected_world_asset,
             selected_asset: "forest-grass",
             test_tool: "Sessions",
@@ -1047,6 +1114,13 @@ impl StudioShell {
             // Keep that behavior now that the shell has a Play/Stop toggle so
             // keyboard and engine-owned pointer controls work immediately.
             playing: true,
+            project_editable: false,
+            project_dirty: false,
+            project_error: None,
+            scene_edit_requested: None,
+            save_requested: false,
+            rebuild_and_play_requested: false,
+            restart_requested: false,
             notice: "Ready".to_owned(),
             search_query: String::new(),
             morph_query: String::new(),
@@ -1142,6 +1216,78 @@ impl StudioShell {
 
     pub(crate) fn set_notice(&mut self, notice: String) {
         self.notice = notice;
+    }
+
+    pub(crate) fn set_project_editable(&mut self, editable: bool) {
+        self.project_editable = editable;
+    }
+
+    pub(crate) fn project_is_editable(&self) -> bool {
+        self.project_editable
+    }
+
+    pub(crate) fn project_is_dirty(&self) -> bool {
+        self.project_dirty
+    }
+
+    pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) {
+        let Ok(outline) = SceneOutline::parse(source) else {
+            return;
+        };
+        let selected = self
+            .scene_outline
+            .root
+            .find(&self.selected_scene)
+            .is_some_and(|_| outline.root.find(&self.selected_scene).is_some())
+            .then(|| self.selected_scene.clone())
+            .unwrap_or_else(|| outline.initial_selection.clone());
+        self.scene_outline = outline;
+        self.selected_scene = selected;
+        self.project_dirty = dirty;
+        self.scene_editor_target.clear();
+    }
+
+    pub(crate) fn set_project_error(&mut self, message: String) {
+        self.project_error = Some(message.clone());
+        self.notice = message;
+    }
+
+    pub(crate) fn finish_project_loading(&mut self) {
+        self.project_loading = None;
+        self.project_error = None;
+        self.playing = true;
+    }
+
+    pub(crate) fn begin_game_rebuild(&mut self) {
+        if self.project_loading.is_some() {
+            return;
+        }
+        self.project_loading = Some(ProjectLoadingState {
+            progress: 0.0,
+            previous_outline: self.scene_outline.clone(),
+            previous_expanded: self.expanded_scene.clone(),
+            previous_selection: self.selected_scene.clone(),
+            previous_world_asset: self.selected_world_asset.clone(),
+            previous_workspace: self.workspace,
+        });
+        self.project_error = None;
+        self.notice = "Rebuilding preview…".to_owned();
+    }
+
+    pub(crate) fn take_scene_edit_request(&mut self) -> Option<SceneEditRequest> {
+        self.scene_edit_requested.take()
+    }
+
+    pub(crate) fn take_save_request(&mut self) -> bool {
+        std::mem::take(&mut self.save_requested)
+    }
+
+    pub(crate) fn take_rebuild_and_play_request(&mut self) -> bool {
+        std::mem::take(&mut self.rebuild_and_play_requested)
+    }
+
+    pub(crate) fn take_restart_request(&mut self) -> bool {
+        std::mem::take(&mut self.restart_requested)
     }
 
     pub(crate) fn take_auth_request(&mut self) -> bool {
@@ -2010,7 +2156,12 @@ impl StudioShell {
                 self.notice = "Choose a project folder…".to_owned();
             }
             StudioCommand::Save => {
-                self.notice = "Nothing to save yet".to_owned();
+                if self.project_editable {
+                    self.save_requested = true;
+                    self.notice = "Saving project…".to_owned();
+                } else {
+                    self.notice = "This preview is read-only".to_owned();
+                }
             }
             StudioCommand::RevealProject => {
                 self.notice = "Reveal Project is not connected yet".to_owned();
@@ -2123,6 +2274,7 @@ impl StudioShell {
         #[cfg(not(target_os = "macos"))]
         self.show_new_project_dialog(ui.ctx());
         self.show_project_loading(ui.ctx());
+        self.show_project_error(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
     }
 
@@ -2157,6 +2309,46 @@ impl StudioShell {
                         .desired_width(ui.available_width())
                         .show_percentage(),
                 );
+            });
+    }
+
+    fn show_project_error(&mut self, context: &egui::Context) {
+        let Some(mut error) = self.project_error.clone() else {
+            return;
+        };
+        let colors = if context.style_of(context.theme()).visuals.dark_mode {
+            DARK_PALETTE
+        } else {
+            LIGHT_PALETTE
+        };
+        egui::Window::new("Preview build failed")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(420.0)
+            .frame(
+                Frame::NONE
+                    .fill(colors.panel_raised)
+                    .stroke(Stroke::new(1.0, colors.axis_x))
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::same(14)),
+            )
+            .show(context, |ui| {
+                ui.label(
+                    RichText::new("The last working preview is still running.")
+                        .size(TYPE.secondary)
+                        .color(colors.text),
+                );
+                ui.add_space(6.0);
+                ui.add(
+                    egui::TextEdit::multiline(&mut error)
+                        .desired_rows(7)
+                        .interactive(false)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(6.0);
+                if ui.button("Dismiss").clicked() {
+                    self.project_error = None;
+                }
             });
     }
 
@@ -2246,9 +2438,11 @@ impl StudioShell {
                             if self.codex_chat_messages.is_empty() {
                                 ui.add_space(12.0);
                                 ui.label(
-                                    RichText::new("Ask Codex to inspect or change this project.")
-                                        .size(TYPE.secondary)
-                                        .color(colors.secondary_text),
+                                    RichText::new(
+                                        "Describe a code change. Codex applies it, then Studio rebuilds the preview.",
+                                    )
+                                    .size(TYPE.secondary)
+                                    .color(colors.secondary_text),
                                 );
                             }
                             for message in &self.codex_chat_messages {
@@ -2298,7 +2492,8 @@ impl StudioShell {
                     ui.separator();
                     let can_send = self.codex_chat_ready
                         && !self.codex_chat_busy
-                        && self.chatgpt_account.is_some();
+                        && self.chatgpt_account.is_some()
+                        && !self.project_dirty;
                     ui.add_enabled_ui(can_send, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.codex_chat_draft)
@@ -2308,7 +2503,11 @@ impl StudioShell {
                         );
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("Changes stay inside this project")
+                                RichText::new(if self.project_dirty {
+                                    "Save scene changes before asking Codex to edit code"
+                                } else {
+                                    "Codex edits code; Studio rebuilds when it finishes"
+                                })
                                     .size(TYPE.meta)
                                     .color(colors.muted),
                             );
@@ -2596,12 +2795,26 @@ impl StudioShell {
                         }
                         let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
                         if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
-                            self.playing = !self.playing;
-                            self.notice = if self.playing {
-                                "Play session started".to_owned()
+                            if self.playing {
+                                self.playing = false;
+                                self.notice = "Play session stopped".to_owned();
                             } else {
-                                "Play session paused".to_owned()
-                            };
+                                self.playing = true;
+                                self.restart_requested = true;
+                                self.notice = "Restarting preview…".to_owned();
+                            }
+                        }
+                        if self.project_editable
+                            && toolbar_button(ui, Icon::Play, "Rebuild & Play", false).clicked()
+                        {
+                            self.rebuild_and_play_requested = true;
+                            self.notice = "Saving and rebuilding preview…".to_owned();
+                        }
+                        if self.project_editable
+                            && toolbar_button(ui, Icon::Play, "Restart", false).clicked()
+                        {
+                            self.restart_requested = true;
+                            self.notice = "Restarting preview…".to_owned();
                         }
                         let project_width = (ui.available_width() - 17.0).min(180.0);
                         if project_width >= 72.0 {
@@ -2674,14 +2887,29 @@ impl StudioShell {
                 ui.horizontal(|ui| {
                     ui.set_height(STATUS_BAR_HEIGHT);
                     ui.spacing_mut().interact_size.y = 16.0;
-                    inline_icon(ui, Icon::Check, colors.muted);
+                    let status_color = if self.project_error.is_some() {
+                        colors.axis_x
+                    } else if self.project_dirty {
+                        colors.accent
+                    } else {
+                        colors.muted
+                    };
+                    inline_icon(
+                        ui,
+                        if self.project_error.is_some() {
+                            Icon::Stop
+                        } else {
+                            Icon::Check
+                        },
+                        status_color,
+                    );
                     let notice_width = (ui.available_width() - 124.0).max(40.0);
                     ui.add_sized(
                         [notice_width, 16.0],
                         egui::Label::new(
                             RichText::new(&self.notice)
                                 .size(TYPE.meta)
-                                .color(colors.muted),
+                                .color(status_color),
                         )
                         .truncate(),
                     )
@@ -3382,7 +3610,6 @@ impl StudioShell {
         }
         panel_header(ui, Icon::World, "Scene", |ui| {
             icon_button(ui, Icon::Filter, "Filter scene", false);
-            icon_button(ui, Icon::Plus, "Add object", false);
         });
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -3416,7 +3643,9 @@ impl StudioShell {
         content_frame().show(ui, |ui| {
             selected_object_header(ui, &selected.label, selected.kind);
             ui.add_space(2.0);
-            if selected.properties.is_empty() {
+            if selected.kind == "Block" {
+                self.block_inspector(ui, &selected);
+            } else if selected.properties.is_empty() {
                 ui.label(
                     RichText::new("No properties")
                         .size(TYPE.secondary)
@@ -3430,6 +3659,69 @@ impl StudioShell {
                 });
             }
         });
+    }
+
+    fn block_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
+        let colors = palette(ui);
+        if self.scene_editor_target != selected.id {
+            self.scene_editor_target = selected.id.clone();
+            self.scene_editor_position = vector_property(selected, "Position").unwrap_or([0.0; 3]);
+            self.scene_editor_size = vector_property(selected, "Size").unwrap_or([1.0; 3]);
+        }
+
+        property_section(ui, "Transform", |ui| {
+            let position_changed =
+                vector_editor(ui, "Position", &mut self.scene_editor_position, 0.1);
+            let size_changed = vector_editor(ui, "Size", &mut self.scene_editor_size, 0.1);
+            if position_changed || size_changed {
+                self.project_dirty = true;
+                self.project_error = None;
+                self.scene_edit_requested = Some(SceneEditRequest::UpdateBlock {
+                    target: selected.id.clone(),
+                    position: self.scene_editor_position,
+                    size: self.scene_editor_size,
+                });
+                self.notice = "Platform changed — save to keep it".to_owned();
+            }
+        });
+        property_section(ui, "Actions", |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(self.project_editable, egui::Button::new("Duplicate"))
+                    .on_disabled_hover_text("Open a raw source project to edit the scene")
+                    .clicked()
+                {
+                    self.scene_edit_requested = Some(SceneEditRequest::DuplicateBlock {
+                        target: selected.id.clone(),
+                    });
+                    self.notice = "Duplicating platform…".to_owned();
+                }
+                if ui
+                    .add_enabled(self.project_editable, egui::Button::new("Delete"))
+                    .on_disabled_hover_text("Open a raw source project to edit the scene")
+                    .clicked()
+                {
+                    self.scene_edit_requested = Some(SceneEditRequest::DeleteBlock {
+                        target: selected.id.clone(),
+                    });
+                    self.notice = "Deleting platform…".to_owned();
+                }
+            });
+        });
+        property_section(ui, "Manifest", |ui| {
+            for (label, value) in &selected.properties {
+                if label != "Position" && label != "Size" {
+                    property_row(ui, label, value);
+                }
+            }
+        });
+        if !self.project_editable {
+            ui.label(
+                RichText::new("Open a raw source project to edit scene objects.")
+                    .size(TYPE.meta)
+                    .color(colors.muted),
+            );
+        }
     }
 
     fn asset_shelf(&mut self, ui: &mut egui::Ui) {
