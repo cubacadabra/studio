@@ -251,37 +251,45 @@ pub(crate) fn show_scene_node(
             )
             .size()
             .x
+            .min(rect.width() * 0.38)
             + 12.0
     });
     let label_left = x + 28.0;
     let label_right = (rect.max.x - detail_width).max(label_left);
-    ui.painter()
-        .with_clip_rect(Rect::from_min_max(
-            egui::pos2(label_left, rect.min.y),
-            egui::pos2(label_right, rect.max.y),
-        ))
-        .text(
-            egui::pos2(x + 30.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            &node.label,
-            label_font,
-            if is_selected {
-                colors.text
-            } else {
-                colors.secondary_text
-            },
-        );
+    let label_color = if is_selected {
+        colors.text
+    } else {
+        colors.secondary_text
+    };
+    let mut label_job = LayoutJob::simple_singleline(node.label.clone(), label_font, label_color);
+    label_job.wrap = TextWrapping::truncate_at_width((label_right - label_left).max(0.0));
+    let label_galley = ui.painter().layout_job(label_job);
+    ui.painter().galley(
+        egui::pos2(label_left, rect.center().y - label_galley.size().y * 0.5),
+        label_galley,
+        label_color,
+    );
     if let Some(detail) = &node.detail {
-        ui.painter().text(
-            rect.right_center() - egui::vec2(8.0, 0.0),
-            Align2::RIGHT_CENTER,
-            detail,
+        let detail_color = if is_selected {
+            colors.text
+        } else {
+            colors.faint
+        };
+        let detail_max_width = (detail_width - 12.0).max(0.0);
+        let mut detail_job = LayoutJob::simple_singleline(
+            detail.clone(),
             FontId::proportional(TYPE.meta),
-            if is_selected {
-                colors.text
-            } else {
-                colors.faint
-            },
+            detail_color,
+        );
+        detail_job.wrap = TextWrapping::truncate_at_width(detail_max_width);
+        let detail_galley = ui.painter().layout_job(detail_job);
+        ui.painter().galley(
+            egui::pos2(
+                rect.max.x - 8.0 - detail_galley.size().x,
+                rect.center().y - detail_galley.size().y * 0.5,
+            ),
+            detail_galley,
+            detail_color,
         );
     }
     if disclosure.is_some_and(|response| response.clicked()) {

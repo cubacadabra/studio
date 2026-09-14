@@ -11,6 +11,7 @@ use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 #[cfg(target_os = "macos")]
 use egui::FontTweak;
+use egui::text::{LayoutJob, TextWrapping};
 use egui::{
     Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout, Margin,
     Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
@@ -27,7 +28,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use winit::{event::WindowEvent, window::Window};
 
@@ -330,6 +331,8 @@ pub(crate) struct StudioShell {
     codex_activity: CodexActivity,
     codex_activity_history: Vec<CodexActivity>,
     codex_live_excerpt: String,
+    codex_live_pending_excerpt: String,
+    codex_live_last_published_at: Option<Instant>,
     codex_live_in_code_block: bool,
     codex_live_update_count: u32,
     codex_cancel_requested: bool,

@@ -173,6 +173,8 @@ impl StudioShell {
         });
         self.codex_chat_draft.clear();
         self.codex_live_excerpt.clear();
+        self.codex_live_pending_excerpt.clear();
+        self.codex_live_last_published_at = None;
         self.codex_live_in_code_block = false;
         self.codex_live_update_count = 0;
         self.codex_activity_history.clear();
@@ -259,6 +261,8 @@ impl StudioShell {
         self.codex_activity = CodexActivity::Idle;
         self.codex_activity_history.clear();
         self.codex_live_excerpt.clear();
+        self.codex_live_pending_excerpt.clear();
+        self.codex_live_last_published_at = None;
         self.codex_live_in_code_block = false;
         self.codex_live_update_count = 0;
         if was_active {
@@ -281,7 +285,6 @@ impl StudioShell {
     }
 
     fn append_codex_live_excerpt(&mut self, text: &str) {
-        const EXCERPT_LIMIT: usize = 220;
         let mut safe_lines = Vec::new();
         for raw_line in text.lines() {
             let line = raw_line.trim();
@@ -305,22 +308,62 @@ impl StudioShell {
             }
             safe_lines.push(line);
         }
-        if safe_lines.is_empty() {
+        if !safe_lines.is_empty() {
+            if !self.codex_live_pending_excerpt.is_empty() {
+                self.codex_live_pending_excerpt.push(' ');
+            }
+            self.codex_live_pending_excerpt
+                .push_str(&safe_lines.join(" "));
+            self.codex_live_pending_excerpt = self
+                .codex_live_pending_excerpt
+                .chars()
+                .rev()
+                .take(640)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+        }
+        self.publish_codex_live_excerpt(false);
+    }
+
+    fn publish_codex_live_excerpt(&mut self, force: bool) {
+        const PUBLISH_INTERVAL: Duration = Duration::from_millis(240);
+        const MAX_CHARS_PER_UPDATE: usize = 56;
+        let now = Instant::now();
+        if self.codex_live_pending_excerpt.is_empty()
+            || (!force
+                && self
+                    .codex_live_last_published_at
+                    .is_some_and(|last| now.duration_since(last) < PUBLISH_INTERVAL))
+        {
             return;
         }
+        let published = self
+            .codex_live_pending_excerpt
+            .chars()
+            .take(MAX_CHARS_PER_UPDATE)
+            .collect::<String>();
+        let published_count = published.chars().count();
+        self.codex_live_pending_excerpt = self
+            .codex_live_pending_excerpt
+            .chars()
+            .skip(published_count)
+            .collect();
         if !self.codex_live_excerpt.is_empty() {
             self.codex_live_excerpt.push(' ');
         }
-        self.codex_live_excerpt.push_str(&safe_lines.join(" "));
+        self.codex_live_excerpt.push_str(&published);
         self.codex_live_excerpt = self
             .codex_live_excerpt
             .chars()
             .rev()
-            .take(EXCERPT_LIMIT)
+            .take(220)
             .collect::<String>()
             .chars()
             .rev()
             .collect();
+        self.codex_live_last_published_at = Some(now);
     }
 
     fn set_codex_activity(&mut self, activity: CodexActivity) {
