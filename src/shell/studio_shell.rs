@@ -138,7 +138,6 @@ impl StudioShell {
             codex_chat_reasoning_effort: CODEX_CHAT_DEFAULT_EFFORT,
             codex_chat_ready: false,
             codex_activity: CodexActivity::Idle,
-            codex_activity_history: Vec::new(),
             codex_live_excerpt: String::new(),
             codex_live_pending_excerpt: String::new(),
             codex_live_last_published_at: None,

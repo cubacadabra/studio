@@ -164,30 +164,6 @@ impl CodexActivity {
             self
         }
     }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "",
-            Self::Thinking => "Thinking",
-            Self::Editing => "Editing the game",
-            Self::Checking => "Validating project",
-            Self::Working => "Working",
-            Self::Cancelling => "Stopping",
-            Self::Rebuilding => "Rebuilding preview",
-        }
-    }
-
-    fn detail(self) -> &'static str {
-        match self {
-            Self::Idle => "",
-            Self::Thinking => "Working out the requested game change",
-            Self::Editing => "Applying the requested change",
-            Self::Checking => "Verifying the requested change",
-            Self::Working => "Completing the requested change",
-            Self::Cancelling => "Waiting for Codex to stop safely",
-            Self::Rebuilding => "Validating the change and restarting the game",
-        }
-    }
 }
 
 const CODEX_CHAT_DEFAULT_MODEL: &str = "gpt-6-astra";
@@ -329,7 +305,6 @@ pub(crate) struct StudioShell {
     codex_chat_reasoning_effort: &'static str,
     codex_chat_ready: bool,
     codex_activity: CodexActivity,
-    codex_activity_history: Vec<CodexActivity>,
     codex_live_excerpt: String,
     codex_live_pending_excerpt: String,
     codex_live_last_published_at: Option<Instant>,

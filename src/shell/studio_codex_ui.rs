@@ -126,7 +126,11 @@ impl StudioShell {
                                             .color(colors.accent),
                                     );
                                     ui.label(
-                                        RichText::new(self.codex_activity.label())
+                                        RichText::new(match self.codex_activity {
+                                            CodexActivity::Rebuilding => "Rebuilding preview",
+                                            CodexActivity::Cancelling => "Stopping Codex",
+                                            _ => "Codex is working",
+                                        })
                                             .font(semibold_font(TYPE.secondary))
                                             .color(colors.text),
                                     );
@@ -136,24 +140,6 @@ impl StudioShell {
                                         self.set_codex_chat_cancelling();
                                     }
                                 });
-                                ui.label(
-                                    RichText::new(self.codex_activity.detail())
-                                        .size(TYPE.meta)
-                                        .color(colors.muted),
-                                );
-                                if self.codex_activity_history.len() > 1 {
-                                    let activity_path = self
-                                        .codex_activity_history
-                                        .iter()
-                                        .map(|activity| activity.label())
-                                        .collect::<Vec<_>>()
-                                        .join("  →  ");
-                                    ui.label(
-                                        RichText::new(format!("Activity  {activity_path}"))
-                                            .size(TYPE.meta)
-                                            .color(colors.faint),
-                                    );
-                                }
                                 if self.codex_live_update_count > 0 {
                                     ui.add_space(4.0);
                                     ui.label(

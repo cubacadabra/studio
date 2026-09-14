@@ -38,12 +38,18 @@ impl ApplicationHandler for StudioApp {
             .is_some_and(|(x, y)| self.runtime_pointer(x, y, true).is_some());
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => self.resize(size),
-            WindowEvent::ScaleFactorChanged { .. } => self.resize(
-                self.window
-                    .as_ref()
-                    .map_or(PhysicalSize::new(0, 0), Window::inner_size),
-            ),
+            WindowEvent::Resized(size) => {
+                self.clear_pointer_controls();
+                self.resize(size);
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                self.clear_pointer_controls();
+                self.resize(
+                    self.window
+                        .as_ref()
+                        .map_or(PhysicalSize::new(0, 0), Window::inner_size),
+                );
+            }
             WindowEvent::RedrawRequested => {
                 self.render();
                 self.request_redraw();
@@ -76,15 +82,7 @@ impl ApplicationHandler for StudioApp {
             }
             WindowEvent::Focused(false) => {
                 self.pressed_keys.clear();
-                self.pointer_active = false;
-                self.camera_pointer_active = false;
-                self.movement_pointer_active = false;
-                self.movement_pointer_origin = None;
-                self.joystick_input = (0.0, 0.0);
-                if self.ui_pointer_active {
-                    self.pointer_event(3, 0.0, 0.0);
-                }
-                self.ui_pointer_active = false;
+                self.clear_pointer_controls();
             }
             _ => {}
         }

@@ -1,5 +1,23 @@
 use super::*;
 impl StudioApp {
+    pub(crate) fn clear_pointer_controls(&mut self) {
+        let cancel_ui_pointer = self.ui_pointer_active;
+        self.pressed_keys.clear();
+        self.jump_queued = false;
+        self.climb = false;
+        self.pointer_active = false;
+        self.camera_pointer_active = false;
+        self.movement_pointer_active = false;
+        self.movement_pointer_origin = None;
+        self.ui_pointer_active = false;
+        self.joystick_input = (0.0, 0.0);
+        self.look_delta = (0.0, 0.0);
+        self.zoom_delta = 0.0;
+        if cancel_ui_pointer {
+            self.pointer_event(3, 0.0, 0.0);
+        }
+    }
+
     pub(crate) fn pointer_event(&mut self, phase: u8, x: f32, y: f32) -> bool {
         self.client.ui_pointer_event(1, phase, x, y)
     }
