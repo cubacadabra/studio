@@ -142,6 +142,22 @@ impl StudioShell {
                                         .size(TYPE.meta)
                                         .color(colors.muted),
                                 );
+                                if !self.codex_live_excerpt.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new("Live update")
+                                            .size(TYPE.meta)
+                                            .color(colors.faint),
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&self.codex_live_excerpt)
+                                                .size(TYPE.meta)
+                                                .color(colors.secondary_text),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
                                 ui.add_space(12.0);
                                 ui.ctx().request_repaint_after(Duration::from_millis(16));
                             }
@@ -259,6 +275,8 @@ impl StudioShell {
                                         });
                                         self.codex_chat_draft.clear();
                                         self.codex_activity = CodexActivity::Thinking;
+                                        self.codex_live_excerpt.clear();
+                                        self.codex_live_in_code_block = false;
                                         self.codex_cancel_requested = false;
                                         self.codex_cancel_sent = false;
                                         self.codex_chat_error = None;

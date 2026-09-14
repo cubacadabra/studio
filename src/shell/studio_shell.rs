@@ -137,6 +137,8 @@ impl StudioShell {
             codex_chat_reasoning_effort: CODEX_CHAT_DEFAULT_EFFORT,
             codex_chat_ready: false,
             codex_activity: CodexActivity::Idle,
+            codex_live_excerpt: String::new(),
+            codex_live_in_code_block: false,
             codex_cancel_requested: false,
             codex_cancel_sent: false,
             codex_chat_error: None,

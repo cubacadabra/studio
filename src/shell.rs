@@ -327,6 +327,8 @@ pub(crate) struct StudioShell {
     codex_chat_reasoning_effort: &'static str,
     codex_chat_ready: bool,
     codex_activity: CodexActivity,
+    codex_live_excerpt: String,
+    codex_live_in_code_block: bool,
     codex_cancel_requested: bool,
     codex_cancel_sent: bool,
     codex_chat_error: Option<String>,

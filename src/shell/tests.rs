@@ -307,6 +307,25 @@ fn codex_agent_messages_remain_active_progress() {
 }
 
 #[test]
+fn codex_live_activity_hides_code_and_luau_paths() {
+    assert!(super::studio_state::is_human_readable_codex_line(
+        "I’m updating the countdown behavior."
+    ));
+    assert!(!super::studio_state::is_human_readable_codex_line(
+        "src/main.luau"
+    ));
+    assert!(!super::studio_state::is_human_readable_codex_line(
+        "local timer = 30"
+    ));
+    assert!(!super::studio_state::is_human_readable_codex_line(
+        "game.on_update(function()"
+    ));
+    assert!(!super::studio_state::is_human_readable_codex_line(
+        "return finish_course()"
+    ));
+}
+
+#[test]
 fn morph_preview_detects_screen_space_slivers() {
     assert!(
         projected_triangle_area([

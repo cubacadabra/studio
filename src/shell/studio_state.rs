@@ -148,7 +148,8 @@ impl StudioShell {
         self.codex_chat_error = None;
     }
 
-    pub(crate) fn set_codex_chat_delta(&mut self, _delta: String) {
+    pub(crate) fn set_codex_chat_delta(&mut self, delta: String) {
+        self.append_codex_live_excerpt(&delta);
         self.codex_activity = self.codex_activity.after_agent_progress();
     }
 
@@ -164,9 +165,10 @@ impl StudioShell {
         };
     }
 
-    pub(crate) fn set_codex_chat_message(&mut self, _text: String) {
+    pub(crate) fn set_codex_chat_message(&mut self, text: String) {
         // An agent-message item can complete while the turn continues with
         // more tool work. Only turn/completed advances Studio to rebuilding.
+        self.append_codex_live_excerpt(&text);
         self.codex_activity = self.codex_activity.after_agent_progress();
     }
 
@@ -207,6 +209,8 @@ impl StudioShell {
     pub(crate) fn finish_codex_activity(&mut self, message: &str) {
         let was_active = self.codex_activity.is_active();
         self.codex_activity = CodexActivity::Idle;
+        self.codex_live_excerpt.clear();
+        self.codex_live_in_code_block = false;
         if was_active {
             self.codex_chat_messages.push(CodexChatMessage {
                 role: CodexChatRole::Assistant,
@@ -224,6 +228,41 @@ impl StudioShell {
         self.codex_source_change_count = source_change_count;
         self.codex_change_files = (!visible_files.is_empty()).then_some(visible_files);
         self.codex_change_review_open = false;
+    }
+
+    fn append_codex_live_excerpt(&mut self, text: &str) {
+        const EXCERPT_LIMIT: usize = 220;
+        let mut safe_lines = Vec::new();
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
+            let fence_count = line.matches("```").count();
+            if fence_count > 0 {
+                if fence_count % 2 == 1 {
+                    self.codex_live_in_code_block = !self.codex_live_in_code_block;
+                }
+                continue;
+            }
+            if self.codex_live_in_code_block || !is_human_readable_codex_line(line) {
+                continue;
+            }
+            safe_lines.push(line);
+        }
+        if safe_lines.is_empty() {
+            return;
+        }
+        if !self.codex_live_excerpt.is_empty() {
+            self.codex_live_excerpt.push(' ');
+        }
+        self.codex_live_excerpt.push_str(&safe_lines.join(" "));
+        self.codex_live_excerpt = self
+            .codex_live_excerpt
+            .chars()
+            .rev()
+            .take(EXCERPT_LIMIT)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
     }
 
     pub(crate) fn clear_codex_changes(&mut self) {
@@ -412,4 +451,38 @@ impl StudioShell {
         self.new_project_error = None;
         self.notice = format!("Created {}", project.display());
     }
+}
+
+pub(crate) fn is_human_readable_codex_line(line: &str) -> bool {
+    if line.is_empty() {
+        return false;
+    }
+    let lower = line.to_ascii_lowercase();
+    if lower.contains(".luau") || line.contains('`') {
+        return false;
+    }
+    let first_word = line.split_whitespace().next().unwrap_or_default();
+    if matches!(
+        first_word,
+        "local"
+            | "function"
+            | "return"
+            | "if"
+            | "elseif"
+            | "else"
+            | "for"
+            | "while"
+            | "repeat"
+            | "until"
+            | "end"
+            | "require"
+            | "export"
+            | "import"
+    ) {
+        return false;
+    }
+    !matches!(line.chars().next(), Some('-' | '{' | '}' | '(' | ')'))
+        && !line.contains(" = ")
+        && !line.contains("=>")
+        && !(line.contains('(') && line.contains(')'))
 }
