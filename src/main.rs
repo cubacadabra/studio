@@ -13,6 +13,11 @@ use std::{
     time::Instant,
 };
 mod app;
+mod app_events;
+mod app_input;
+mod app_morph_runtime;
+mod app_morphs;
+mod app_project;
 mod assets;
 mod codex;
 mod game_creator;

@@ -1,0 +1,389 @@
+use super::*;
+impl StudioShell {
+    pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
+        self.state.on_window_event(window, event).consumed
+    }
+
+    pub(crate) fn runtime_viewport(&self) -> Rect {
+        self.runtime_viewport
+    }
+
+    pub(crate) fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    pub(crate) fn is_morphs_workspace(&self) -> bool {
+        self.workspace == Workspace::Morphs
+    }
+
+    pub(crate) fn set_notice(&mut self, notice: String) {
+        self.notice = notice;
+    }
+
+    pub(crate) fn set_project_editable(&mut self, editable: bool) {
+        self.project_editable = editable;
+    }
+
+    pub(crate) fn project_is_editable(&self) -> bool {
+        self.project_editable
+    }
+
+    pub(crate) fn project_is_dirty(&self) -> bool {
+        self.project_dirty
+    }
+
+    pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) {
+        let Ok(outline) = SceneOutline::parse(source) else {
+            return;
+        };
+        let selected = self
+            .scene_outline
+            .root
+            .find(&self.selected_scene)
+            .is_some_and(|_| outline.root.find(&self.selected_scene).is_some())
+            .then(|| self.selected_scene.clone())
+            .unwrap_or_else(|| outline.initial_selection.clone());
+        self.scene_outline = outline;
+        self.selected_scene = selected;
+        self.project_dirty = dirty;
+        self.scene_editor_target.clear();
+        self.scene_editor_text.clear();
+    }
+
+    pub(crate) fn set_project_error(&mut self, message: String) {
+        self.project_error = Some(message.clone());
+        self.notice = message;
+    }
+
+    pub(crate) fn finish_project_loading(&mut self) {
+        self.project_loading = None;
+        self.project_error = None;
+        self.playing = true;
+    }
+
+    pub(crate) fn begin_game_rebuild(&mut self) {
+        if self.project_loading.is_some() {
+            return;
+        }
+        self.project_loading = Some(ProjectLoadingState {
+            progress: 0.0,
+            previous_outline: self.scene_outline.clone(),
+            previous_expanded: self.expanded_scene.clone(),
+            previous_selection: self.selected_scene.clone(),
+            previous_world_asset: self.selected_world_asset.clone(),
+            previous_workspace: self.workspace,
+        });
+        self.project_error = None;
+        self.notice = "Rebuilding preview…".to_owned();
+    }
+
+    pub(crate) fn take_scene_edit_request(&mut self) -> Option<SceneEditRequest> {
+        self.scene_edit_requested.take()
+    }
+
+    pub(crate) fn take_save_request(&mut self) -> bool {
+        std::mem::take(&mut self.save_requested)
+    }
+
+    pub(crate) fn take_rebuild_and_play_request(&mut self) -> bool {
+        std::mem::take(&mut self.rebuild_and_play_requested)
+    }
+
+    pub(crate) fn take_restart_request(&mut self) -> bool {
+        std::mem::take(&mut self.restart_requested)
+    }
+
+    pub(crate) fn take_auth_request(&mut self) -> bool {
+        std::mem::take(&mut self.auth_requested)
+    }
+
+    pub(crate) fn set_auth_pending(&mut self, pending: bool) {
+        self.auth_pending = pending;
+    }
+
+    pub(crate) fn set_auth_completed(&mut self, user: crate::network::AuthUser) {
+        self.auth_pending = false;
+        self.auth_user = Some(user.clone());
+        self.notice = format!("Signed in as {}", user.name);
+    }
+
+    pub(crate) fn set_auth_error(&mut self, message: String) {
+        self.auth_pending = false;
+        self.notice = message;
+    }
+
+    pub(crate) fn take_chatgpt_auth_request(&mut self) -> bool {
+        std::mem::take(&mut self.chatgpt_auth_requested)
+    }
+
+    pub(crate) fn set_codex_project_root(&mut self, project_root: PathBuf) {
+        self.codex_project_root = project_root;
+    }
+
+    pub(crate) fn take_codex_chat_open_request(&mut self) -> bool {
+        std::mem::take(&mut self.codex_chat_open_requested)
+    }
+
+    pub(crate) fn take_codex_chat_send_request(&mut self) -> Option<CodexChatSendRequest> {
+        self.codex_chat_send_requested.take()
+    }
+
+    pub(crate) fn set_codex_chat_ready(&mut self) {
+        self.codex_chat_ready = true;
+        self.codex_chat_error = None;
+    }
+
+    pub(crate) fn set_codex_chat_delta(&mut self, _delta: String) {
+        self.codex_activity = self.codex_activity.after_agent_progress();
+    }
+
+    pub(crate) fn set_codex_work_status(&mut self, status: CodexWorkStatus) {
+        if !self.codex_activity.is_cancellable() {
+            return;
+        }
+        self.codex_activity = match status {
+            CodexWorkStatus::Thinking => CodexActivity::Thinking,
+            CodexWorkStatus::Editing => CodexActivity::Editing,
+            CodexWorkStatus::Checking => CodexActivity::Checking,
+            CodexWorkStatus::Working => CodexActivity::Working,
+        };
+    }
+
+    pub(crate) fn set_codex_chat_message(&mut self, _text: String) {
+        // An agent-message item can complete while the turn continues with
+        // more tool work. Only turn/completed advances Studio to rebuilding.
+        self.codex_activity = self.codex_activity.after_agent_progress();
+    }
+
+    pub(crate) fn set_codex_chat_completed(&mut self) {
+        self.codex_activity = CodexActivity::Rebuilding;
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
+    }
+
+    pub(crate) fn set_codex_preview_rebuilt(&mut self) {
+        self.finish_codex_activity("Done — preview rebuilt and playing.");
+    }
+
+    pub(crate) fn set_codex_preview_rebuild_failed(&mut self, message: &str) {
+        self.finish_codex_activity("The change was made, but the preview could not be rebuilt.");
+        self.codex_chat_error = Some(format!("Rebuild failed: {message}"));
+    }
+
+    pub(crate) fn set_codex_chat_error(&mut self, message: String) {
+        self.finish_codex_activity("The request could not be completed.");
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
+        self.codex_chat_error = Some(message);
+    }
+
+    pub(crate) fn set_codex_chat_cancelling(&mut self) {
+        self.codex_cancel_requested = true;
+        self.codex_activity = CodexActivity::Cancelling;
+        self.notice = "Stopping Codex…".to_owned();
+    }
+
+    pub(crate) fn set_codex_chat_cancelled(&mut self) {
+        self.finish_codex_activity("Request cancelled. The preview was not rebuilt.");
+        self.codex_cancel_requested = false;
+        self.codex_cancel_sent = false;
+    }
+
+    pub(crate) fn finish_codex_activity(&mut self, message: &str) {
+        let was_active = self.codex_activity.is_active();
+        self.codex_activity = CodexActivity::Idle;
+        if was_active {
+            self.codex_chat_messages.push(CodexChatMessage {
+                role: CodexChatRole::Assistant,
+                text: message.to_owned(),
+            });
+        }
+    }
+
+    pub(crate) fn set_codex_changes(&mut self, files: Vec<String>) {
+        let source_change_count = files.iter().filter(|file| file.ends_with(".luau")).count();
+        let visible_files = files
+            .into_iter()
+            .filter(|file| !file.ends_with(".luau"))
+            .collect::<Vec<_>>();
+        self.codex_source_change_count = source_change_count;
+        self.codex_change_files = (!visible_files.is_empty()).then_some(visible_files);
+        self.codex_change_review_open = false;
+    }
+
+    pub(crate) fn clear_codex_changes(&mut self) {
+        self.codex_change_files = None;
+        self.codex_source_change_count = 0;
+        self.codex_change_review_open = false;
+    }
+
+    pub(crate) fn take_codex_undo_request(&mut self) -> bool {
+        std::mem::take(&mut self.codex_undo_requested)
+    }
+
+    pub(crate) fn take_codex_cancel_request(&mut self) -> bool {
+        if !self.codex_activity.is_active()
+            || !self.codex_cancel_requested
+            || self.codex_cancel_sent
+        {
+            return false;
+        }
+        self.codex_cancel_sent = true;
+        true
+    }
+
+    pub(crate) fn set_chatgpt_pending(&mut self) {
+        self.chatgpt_pending = true;
+        self.chatgpt_available = true;
+        self.chatgpt_error = None;
+        self.notice = "Opening browser for ChatGPT sign-in…".to_owned();
+    }
+
+    pub(crate) fn set_chatgpt_account(&mut self, account: Option<ChatGptAccount>) {
+        if self.chatgpt_pending {
+            return;
+        }
+        self.chatgpt_available = true;
+        self.chatgpt_account = account;
+        self.chatgpt_error = None;
+    }
+
+    pub(crate) fn set_chatgpt_browser_opened(&mut self) {
+        self.chatgpt_pending = true;
+        self.notice =
+            "Finish signing in with ChatGPT in your browser. Studio will continue automatically."
+                .to_owned();
+    }
+
+    pub(crate) fn set_chatgpt_connected(&mut self, account: ChatGptAccount) {
+        self.chatgpt_pending = false;
+        self.chatgpt_available = true;
+        self.chatgpt_error = None;
+        self.notice = account
+            .email
+            .as_deref()
+            .map(|email| format!("ChatGPT connected as {email}"))
+            .unwrap_or_else(|| "ChatGPT connected".to_owned());
+        self.chatgpt_account = Some(account);
+    }
+
+    pub(crate) fn set_chatgpt_error(&mut self, message: String) {
+        self.chatgpt_pending = false;
+        self.chatgpt_available = true;
+        self.chatgpt_error = Some(message.clone());
+        self.notice = message;
+    }
+
+    pub(crate) fn set_chatgpt_unavailable(&mut self, message: String) {
+        let was_pending = self.chatgpt_pending;
+        self.chatgpt_pending = false;
+        self.chatgpt_available = false;
+        self.chatgpt_account = None;
+        self.chatgpt_error = Some(message.clone());
+        if was_pending {
+            self.notice = message;
+        }
+    }
+
+    pub(crate) fn set_project_asset_available(&mut self, available: bool) {
+        self.project_asset_available = available;
+    }
+
+    pub(crate) fn take_open_project_request(&mut self) -> bool {
+        std::mem::take(&mut self.open_project_requested)
+    }
+
+    pub(crate) fn begin_project_loading(&mut self) {
+        if self.project_loading.is_some() {
+            return;
+        }
+        let empty = SceneOutline::empty();
+        let empty_selection = empty.initial_selection.clone();
+        let empty_expanded = empty.initial_expanded.clone();
+        self.project_loading = Some(ProjectLoadingState {
+            progress: 0.0,
+            previous_outline: std::mem::replace(&mut self.scene_outline, empty),
+            previous_expanded: std::mem::replace(&mut self.expanded_scene, empty_expanded),
+            previous_selection: std::mem::replace(&mut self.selected_scene, empty_selection),
+            previous_world_asset: std::mem::take(&mut self.selected_world_asset),
+            previous_workspace: std::mem::replace(&mut self.workspace, Workspace::World),
+        });
+        self.notice = "Loading project…".to_owned();
+    }
+
+    pub(crate) fn set_project_loading_progress(&mut self, progress: f32) {
+        if let Some(loading) = &mut self.project_loading {
+            loading.progress = loading.progress.max(progress.clamp(0.0, 1.0));
+        }
+    }
+
+    pub(crate) fn cancel_project_loading(&mut self) {
+        let Some(loading) = self.project_loading.take() else {
+            return;
+        };
+        self.scene_outline = loading.previous_outline;
+        self.expanded_scene = loading.previous_expanded;
+        self.selected_scene = loading.previous_selection;
+        self.selected_world_asset = loading.previous_world_asset;
+        self.workspace = loading.previous_workspace;
+    }
+
+    pub(crate) fn is_project_loading(&self) -> bool {
+        self.project_loading.is_some()
+    }
+
+    pub(crate) fn set_new_project_parent(&mut self, parent: PathBuf) {
+        self.new_project_parent = parent;
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn take_native_new_project_dialog(
+        &mut self,
+    ) -> Option<(String, PathBuf, Option<String>)> {
+        if !std::mem::take(&mut self.new_project_dialog_open) {
+            return None;
+        }
+        Some((
+            self.new_project_title.clone(),
+            self.new_project_parent.clone(),
+            self.new_project_error.take(),
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn set_new_project_draft(&mut self, title: String, parent: PathBuf) {
+        self.new_project_title = title;
+        self.new_project_parent = parent;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn take_new_project_folder_request(&mut self) -> bool {
+        std::mem::take(&mut self.new_project_folder_requested)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn take_new_project_request(&mut self) -> Option<(String, PathBuf)> {
+        if !std::mem::take(&mut self.new_project_create_requested) {
+            return None;
+        }
+        Some((
+            self.new_project_title.trim().to_owned(),
+            self.new_project_parent.clone(),
+        ))
+    }
+
+    pub(crate) fn set_new_project_error(&mut self, message: String) {
+        self.new_project_dialog_open = true;
+        self.new_project_error = Some(message);
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.new_project_title_focus_requested = true;
+        }
+    }
+
+    pub(crate) fn set_new_project_created(&mut self, project: &Path) {
+        self.new_project_dialog_open = false;
+        self.new_project_error = None;
+        self.notice = format!("Created {}", project.display());
+    }
+}
