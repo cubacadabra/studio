@@ -308,6 +308,7 @@ pub(crate) struct StudioShell {
     codex_live_excerpt: String,
     codex_live_pending_excerpt: String,
     codex_live_last_published_at: Option<Instant>,
+    codex_live_needs_separator: bool,
     codex_live_in_code_block: bool,
     codex_live_update_count: u32,
     codex_cancel_requested: bool,

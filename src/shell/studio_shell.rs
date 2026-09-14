@@ -141,6 +141,7 @@ impl StudioShell {
             codex_live_excerpt: String::new(),
             codex_live_pending_excerpt: String::new(),
             codex_live_last_published_at: None,
+            codex_live_needs_separator: false,
             codex_live_in_code_block: false,
             codex_live_update_count: 0,
             codex_cancel_requested: false,

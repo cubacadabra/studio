@@ -114,6 +114,7 @@ impl StudioShell {
                                 ui.add_space(12.0);
                             }
                             if self.codex_activity.is_active() {
+                                self.advance_codex_live_activity();
                                 ui.label(
                                     RichText::new("Codex")
                                         .font(semibold_font(TYPE.meta))
