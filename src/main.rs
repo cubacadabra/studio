@@ -1136,6 +1136,22 @@ impl StudioApp {
         }
         let mut manifest: Value = serde_json::from_str(&self.authored_manifest_source)
             .map_err(|error| format!("manifest is no longer valid JSON: {error}"))?;
+        if let SceneEditRequest::UpdateSignText {
+            ref target,
+            ref text,
+        } = request
+        {
+            update_manifest_sign_text(&mut manifest, target, text.clone())?;
+            let source = serde_json::to_string_pretty(&manifest)
+                .map_err(|error| format!("could not serialize the scene manifest: {error}"))?
+                + "\n";
+            self.authored_manifest_source = source.clone();
+            if let Some(shell) = &mut self.shell {
+                shell.set_source_manifest(&source, true);
+                shell.set_notice("Sign text changed — save to keep it".to_owned());
+            }
+            return Ok(());
+        }
         let (target, operation) = match request {
             SceneEditRequest::UpdateBlock {
                 target,
@@ -1144,6 +1160,9 @@ impl StudioApp {
             } => (target, SceneEditOperation::Update { position, size }),
             SceneEditRequest::DuplicateBlock { target } => (target, SceneEditOperation::Duplicate),
             SceneEditRequest::DeleteBlock { target } => (target, SceneEditOperation::Delete),
+            SceneEditRequest::UpdateSignText { .. } => {
+                return Err("sign text edit was not handled".to_owned());
+            }
         };
         let (world_id, index) = parse_block_target(&target)?;
         let world = if world_id == "lobby" {
@@ -2180,6 +2199,47 @@ fn parse_block_target(target: &str) -> Result<(String, usize), String> {
     Ok((world.to_owned(), index))
 }
 
+fn update_manifest_sign_text(
+    manifest: &mut Value,
+    target: &str,
+    text: String,
+) -> Result<(), String> {
+    let mut parts = target.split('/');
+    let kind = parts.next();
+    let world = parts.next();
+    let collection = parts.next();
+    let index = parts.next();
+    if kind != Some("world") || collection != Some("signs") || parts.next().is_some() {
+        return Err(format!("`{target}` is not an editable sign"));
+    }
+    let world = world
+        .filter(|world| !world.is_empty())
+        .ok_or_else(|| format!("`{target}` has no world"))?;
+    let index = index
+        .ok_or_else(|| format!("`{target}` has no sign index"))?
+        .parse::<usize>()
+        .map_err(|_| format!("`{target}` has an invalid sign index"))?;
+    let world_definition = if world == "lobby" {
+        manifest
+    } else {
+        manifest
+            .get_mut("worlds")
+            .and_then(Value::as_object_mut)
+            .and_then(|worlds| worlds.get_mut(world))
+            .ok_or_else(|| format!("scene world `{world}` was not found"))?
+    };
+    let signs = world_definition
+        .get_mut("signs")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| format!("scene world `{world}` has no signs"))?;
+    let sign = signs
+        .get_mut(index)
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| format!("scene sign `{target}` was not found"))?;
+    sign.insert("text".to_owned(), Value::String(text));
+    Ok(())
+}
+
 fn snapshot_project_files(root: &Path) -> Result<ProjectFileSnapshot, String> {
     fn visit(root: &Path, directory: &Path, files: &mut ProjectFileSnapshot) -> Result<(), String> {
         for entry in fs::read_dir(directory)
@@ -2836,7 +2896,7 @@ mod tests {
         ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, diff_project_files, joystick_movement,
         load_game_sources, load_local_morph_catalog, load_project_in_background,
         project_asset_slug, project_manifest, should_forward_gameplay_keyboard,
-        update_project_morph_catalog,
+        update_manifest_sign_text, update_project_morph_catalog,
     };
     use crate::game_creator;
     use std::{fs, path::Path};
@@ -2887,6 +2947,31 @@ mod tests {
             let _ = fs::remove_dir_all(package);
         }
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sign_text_edit_preserves_the_authored_sign_shape() {
+        let mut manifest = serde_json::json!({
+            "worlds": {
+                "course": {
+                    "signs": [{
+                        "text": "Before",
+                        "position": [1, 2, 3],
+                        "yaw": 0.5,
+                        "maxWidth": 4.0,
+                        "color": "paper"
+                    }]
+                }
+            }
+        });
+        update_manifest_sign_text(&mut manifest, "world/course/signs/0", "After".to_owned())
+            .expect("sign should be editable");
+        let sign = &manifest["worlds"]["course"]["signs"][0];
+        assert_eq!(sign["text"], "After");
+        assert_eq!(sign["position"], serde_json::json!([1, 2, 3]));
+        assert_eq!(sign["yaw"], 0.5);
+        assert_eq!(sign["maxWidth"], 4.0);
+        assert_eq!(sign["color"], "paper");
     }
 
     #[test]

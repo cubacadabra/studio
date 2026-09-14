@@ -943,6 +943,10 @@ pub(crate) enum SceneEditRequest {
         position: [f32; 3],
         size: [f32; 3],
     },
+    UpdateSignText {
+        target: String,
+        text: String,
+    },
     DuplicateBlock {
         target: String,
     },
@@ -963,6 +967,7 @@ pub(crate) struct StudioShell {
     scene_editor_target: String,
     scene_editor_position: [f32; 3],
     scene_editor_size: [f32; 3],
+    scene_editor_text: String,
     selected_world_asset: String,
     selected_asset: &'static str,
     test_tool: &'static str,
@@ -1110,6 +1115,7 @@ impl StudioShell {
             scene_editor_target: String::new(),
             scene_editor_position: [0.0; 3],
             scene_editor_size: [1.0; 3],
+            scene_editor_text: String::new(),
             selected_world_asset,
             selected_asset: "forest-grass",
             test_tool: "Sessions",
@@ -1253,6 +1259,7 @@ impl StudioShell {
         self.selected_scene = selected;
         self.project_dirty = dirty;
         self.scene_editor_target.clear();
+        self.scene_editor_text.clear();
     }
 
     pub(crate) fn set_project_error(&mut self, message: String) {
@@ -3776,6 +3783,8 @@ impl StudioShell {
             ui.add_space(2.0);
             if selected.kind == "Block" {
                 self.block_inspector(ui, &selected);
+            } else if selected.kind == "Sign" {
+                self.sign_inspector(ui, &selected);
             } else if selected.properties.is_empty() {
                 ui.label(
                     RichText::new("No properties")
@@ -3853,6 +3862,49 @@ impl StudioShell {
                     .color(colors.muted),
             );
         }
+    }
+
+    fn sign_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
+        let colors = palette(ui);
+        if self.scene_editor_target != selected.id {
+            self.scene_editor_target = selected.id.clone();
+            self.scene_editor_text = selected
+                .properties
+                .iter()
+                .find(|(label, _)| label == "Text")
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default();
+        }
+
+        property_section(ui, "Content", |ui| {
+            ui.label(
+                RichText::new("Text")
+                    .size(TYPE.secondary)
+                    .color(colors.secondary_text),
+            );
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut self.scene_editor_text)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Sign text"),
+                )
+                .changed()
+            {
+                self.project_dirty = true;
+                self.project_error = None;
+                self.scene_edit_requested = Some(SceneEditRequest::UpdateSignText {
+                    target: selected.id.clone(),
+                    text: self.scene_editor_text.clone(),
+                });
+                self.notice = "Sign text changed — save to keep it".to_owned();
+            }
+        });
+        ui.label(
+            RichText::new("Save, then Rebuild & Play to see the updated sign in the game.")
+                .size(TYPE.meta)
+                .color(colors.muted),
+        );
     }
 
     fn asset_shelf(&mut self, ui: &mut egui::Ui) {
