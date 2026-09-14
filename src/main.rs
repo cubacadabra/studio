@@ -1484,6 +1484,9 @@ impl StudioApp {
         self.image_atlas = image_atlas;
         self.network = network;
         self.client = client;
+        if let Some(renderer) = &mut self.renderer {
+            renderer.invalidate_studio_scene();
+        }
         self.local_morph_catalog = local_morph_catalog;
         self.morph_loadout = default_morph_loadout();
         self.morph_request_serial = 0;
