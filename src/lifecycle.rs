@@ -1,0 +1,87 @@
+use super::*;
+
+impl ApplicationHandler for StudioApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        macos::install_native_menu();
+        if let Err(error) = self.create_window(event_loop) {
+            eprintln!("Cubacadabra Studio: {error}");
+            event_loop.exit();
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        let shell_consumed = match (&mut self.shell, &self.window) {
+            (Some(shell), Some(window)) => shell.on_window_event(window, &event),
+            _ => false,
+        };
+        // Once Play is active, the game owns its keyboard controls even if
+        // egui still reports that it wants keyboard input. This can happen
+        // after the editor's search field or another shell control had focus;
+        // letting that stale focus consume W/A/S/D, arrows, Shift, or Space
+        // makes the running game appear completely unresponsive.
+        let playing = self
+            .shell
+            .as_ref()
+            .is_some_and(|shell| shell.is_playing() && !shell.is_project_loading());
+        let runtime_hovered = self
+            .pointer_position
+            .is_some_and(|(x, y)| self.runtime_pointer(x, y, true).is_some());
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => self.resize(size),
+            WindowEvent::ScaleFactorChanged { .. } => self.resize(
+                self.window
+                    .as_ref()
+                    .map_or(PhysicalSize::new(0, 0), Window::inner_size),
+            ),
+            WindowEvent::RedrawRequested => {
+                self.render();
+                self.request_redraw();
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if should_forward_gameplay_keyboard(playing, shell_consumed) =>
+            {
+                self.handle_key(&event, event_loop)
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.handle_cursor_move(position.x, position.y)
+            }
+            WindowEvent::MouseInput { state, button, .. }
+                if playing
+                    || runtime_hovered
+                    || !shell_consumed
+                    || state == ElementState::Released =>
+            {
+                self.handle_mouse_button(state, button)
+            }
+            WindowEvent::MouseWheel { delta, .. } if runtime_hovered => {
+                self.zoom_delta += match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y * 0.9,
+                    MouseScrollDelta::PixelDelta(position) => position.y as f32 / 100.0,
+                };
+            }
+            WindowEvent::Focused(false) => {
+                self.pressed_keys.clear();
+                self.pointer_active = false;
+                self.camera_pointer_active = false;
+                self.movement_pointer_active = false;
+                self.movement_pointer_origin = None;
+                self.joystick_input = (0.0, 0.0);
+                if self.ui_pointer_active {
+                    self.pointer_event(3, 0.0, 0.0);
+                }
+                self.ui_pointer_active = false;
+            }
+            _ => {}
+        }
+    }
+}
