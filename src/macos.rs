@@ -7,10 +7,10 @@ use objc2::{
     AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
 };
 use objc2_app_kit::{
-    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionKey, NSAlert, NSAlertFirstButtonReturn,
-    NSAlertSecondButtonReturn, NSAlertStyle, NSApplication, NSBitmapImageFileType,
-    NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSButton, NSEventModifierFlags, NSImage, NSMenu,
-    NSMenuItem, NSTextField, NSView,
+    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionKey,
+    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertStyle, NSApplication,
+    NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSButton,
+    NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSTextField, NSView,
 };
 use objc2_foundation::{
     NSData, NSDictionary, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string,
@@ -44,9 +44,15 @@ define_class!(
             // SAFETY: This is AppKit's immutable, process-wide option-key
             // constant and is valid while the framework is loaded.
             let application_icon_key = unsafe { NSAboutPanelOptionApplicationIcon };
+            // Supplying the version explicitly keeps unbundled development
+            // builds consistent with packaged builds, whose Info.plist is
+            // generated from the same Cargo package version.
+            let application_version_key = unsafe { NSAboutPanelOptionApplicationVersion };
+            let version = NSString::from_str(env!("CARGO_PKG_VERSION"));
+            let version: &AnyObject = &version;
             let options = NSDictionary::<NSAboutPanelOptionKey, AnyObject>::from_slices(
-                &[application_icon_key],
-                &[image],
+                &[application_icon_key, application_version_key],
+                &[image, version],
             );
 
             // SAFETY: The dictionary maps the documented application-icon key

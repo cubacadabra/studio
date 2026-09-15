@@ -30,12 +30,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
 
     steps:
-      - name: Validate release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
-
       - name: Check out Studio
         uses: actions/checkout@v4
         with:
@@ -49,6 +43,19 @@ jobs:
           repository: cubacadabra/rust
           ref: main
           path: rust
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          tag_version="${GITHUB_REF_NAME#v}"
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' studio/Cargo.toml | head -n 1)"
+          [[ -n "${manifest_version}" ]]
+          if [[ "${tag_version}" != "${manifest_version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match Studio Cargo version ${manifest_version}." >&2
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
