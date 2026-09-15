@@ -130,8 +130,12 @@ impl StudioShell {
                         };
                         let response = ui
                             .scope(|ui| {
-                                // The editor's caret should communicate focus, not blink in and
-                                // out while the user is typing.
+                                // A focus stroke around the entire multiline widget reads as a
+                                // full-editor flash. Keep focus feedback at the insertion point.
+                                ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+                                ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
+                                ui.visuals_mut().widgets.active.bg_stroke = Stroke::NONE;
+                                ui.visuals_mut().widgets.open.bg_stroke = Stroke::NONE;
                                 ui.visuals_mut().text_cursor.blink = false;
                                 ui.visuals_mut().text_cursor.stroke =
                                     Stroke::new(2.0, colors.accent);
@@ -146,6 +150,22 @@ impl StudioShell {
                                     .show(ui, &mut self.source_editor_text, &self.source_syntax)
                             })
                             .inner;
+                        if response.response.has_focus()
+                            && let Some(cursor_range) = response.cursor_range
+                        {
+                            let cursor = response
+                                .galley
+                                .pos_from_cursor(cursor_range.primary)
+                                .translate(response.galley_pos.to_vec2());
+                            let painter = ui.painter().with_clip_rect(response.text_clip_rect);
+                            painter.line_segment(
+                                [
+                                    egui::pos2(cursor.min.x, cursor.min.y + 1.0),
+                                    egui::pos2(cursor.min.x, cursor.max.y - 1.0),
+                                ],
+                                Stroke::new(2.0, colors.accent),
+                            );
+                        }
                         let editor_has_focus = response.response.has_focus();
                         if response.response.changed() {
                             let source = self.source_editor_text.clone();
