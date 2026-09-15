@@ -493,7 +493,8 @@ impl StudioShell {
                             })
                             .unwrap_or((false, Duration::ZERO, None));
                         #[cfg(target_os = "linux")]
-                        let (playing, elapsed, duration) = (false, Duration::ZERO, None);
+                        let (playing, elapsed, duration) =
+                            (false, Duration::ZERO, None::<Duration>);
                         let mut toggle = false;
                         let mut stop = false;
                         ui.vertical_centered(|ui| {
