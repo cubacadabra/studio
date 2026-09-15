@@ -26,11 +26,37 @@ impl StudioApp {
         if !editable {
             return false;
         }
-        let manifest_path = self.project_root.join("manifest.json");
-        match write_atomic(&manifest_path, self.authored_manifest_source.as_bytes()) {
+        let mut source_files = self
+            .shell
+            .as_ref()
+            .map(StudioShell::source_files_for_save)
+            .unwrap_or_default();
+        if !source_files
+            .iter()
+            .any(|(relative_path, _)| relative_path == Path::new("manifest.json"))
+        {
+            source_files.push((
+                PathBuf::from("manifest.json"),
+                self.authored_manifest_source.clone(),
+            ));
+        }
+        let mut saved = Ok(());
+        for (relative_path, source) in &source_files {
+            if let Err(message) =
+                write_atomic(&self.project_root.join(relative_path), source.as_bytes())
+            {
+                saved = Err(message);
+                break;
+            }
+            if relative_path == Path::new("manifest.json") {
+                self.authored_manifest_source = source.clone();
+            }
+        }
+        match saved {
             Ok(()) => {
                 if let Some(shell) = &mut self.shell {
                     let preview_stale = shell.preview_is_stale();
+                    shell.mark_source_files_saved();
                     shell.set_source_manifest(&self.authored_manifest_source, false);
                     shell.set_notice(if preview_stale {
                         "Project saved — Rebuild & Play to preview it".to_owned()
@@ -596,6 +622,7 @@ impl StudioApp {
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
         );
         shell.set_source_manifest(&self.authored_manifest_source, false);
+        shell.set_source_files(load_source_files(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
         if let Err(message) = self.codex.set_project_root(&self.project_root) {
             shell.set_codex_chat_error(message);

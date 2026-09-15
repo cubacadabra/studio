@@ -50,6 +50,20 @@ impl StudioShell {
             .first()
             .map(|asset| asset.name.clone())
             .unwrap_or_default();
+        let source_syntax = Syntax::lua()
+            .with_keywords([
+                "and", "break", "do", "else", "elseif", "end", "for", "function", "if", "in",
+                "local", "not", "or", "repeat", "return", "then", "until", "while", "continue",
+                "export", "type", "typeof", "self",
+            ])
+            .with_types([
+                "boolean", "number", "string", "function", "userdata", "thread", "table", "vector",
+                "CFrame", "Color3", "Instance",
+            ])
+            .with_special(["false", "nil", "true"]);
+        let source_completer = Completer::new_with_syntax(&source_syntax)
+            .with_auto_indent()
+            .with_user_words();
         Self {
             context,
             state,
@@ -152,6 +166,12 @@ impl StudioShell {
             codex_source_change_count: 0,
             codex_change_review_open: false,
             codex_undo_requested: false,
+            source_files: BTreeMap::new(),
+            selected_source_file: None,
+            source_editor_text: String::new(),
+            source_editor: CodeEditor::default(),
+            source_syntax,
+            source_completer,
             start_screen: false,
             recent_projects: Vec::new(),
             recent_project_requested: None,

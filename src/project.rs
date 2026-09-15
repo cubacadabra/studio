@@ -223,6 +223,49 @@ pub(crate) fn read_utf8_file(path: &Path, kind: &str) -> Result<String, Box<dyn 
     })
 }
 
+pub(crate) fn load_source_files(root: &Path) -> BTreeMap<PathBuf, String> {
+    fn visit(root: &Path, directory: &Path, files: &mut BTreeMap<PathBuf, String>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if matches!(name.to_str(), Some(".git" | "target" | "build"))
+                || name.to_string_lossy().starts_with('.')
+            {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                visit(root, &path, files);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let is_manifest = relative == Path::new("manifest.json");
+            let is_luau = path.extension().and_then(|extension| extension.to_str()) == Some("luau");
+            if (is_manifest || is_luau)
+                && let Ok(source) = fs::read_to_string(&path)
+            {
+                files.insert(relative.to_path_buf(), source);
+            }
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    if root.is_dir() {
+        visit(root, root, &mut files);
+    }
+    files
+}
+
 pub(crate) fn project_manifest(project: &Path) -> Result<PathBuf, String> {
     if !project.is_dir() {
         return Err(format!("{} is not a directory.", project.display()));

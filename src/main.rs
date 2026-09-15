@@ -233,7 +233,7 @@ struct StudioApp {
 mod tests {
     use super::{
         ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, diff_project_files, joystick_movement,
-        load_game_sources, load_local_morph_catalog, load_project_in_background,
+        load_game_sources, load_local_morph_catalog, load_project_in_background, load_source_files,
         project_asset_slug, project_manifest, should_forward_gameplay_key,
         should_forward_gameplay_keyboard, update_manifest_sign_text, update_project_morph_catalog,
     };
@@ -266,6 +266,20 @@ mod tests {
         assert_eq!(client.game_id(), "first-game");
         assert!(sources.script_source.contains("begin module: round.luau"));
         assert!(!sources.script_source.contains("@include"));
+    }
+
+    #[test]
+    fn source_file_browser_lists_authored_manifest_and_luau_files() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
+        let files = load_source_files(&root);
+        assert!(files.contains_key(Path::new("manifest.json")));
+        assert!(files.contains_key(Path::new("src/main.luau")));
+        assert!(files.contains_key(Path::new("src/ui/actions.luau")));
+        assert!(!files.keys().any(|path| path.starts_with("build")));
+        assert!(files.keys().all(|path| {
+            path == Path::new("manifest.json")
+                || path.extension().and_then(|extension| extension.to_str()) == Some("luau")
+        }));
     }
 
     #[test]

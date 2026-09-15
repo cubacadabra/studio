@@ -43,6 +43,7 @@ impl StudioShell {
                 self.notice = "Layout reset".to_owned();
             }
             StudioCommand::ShowWorld => self.select_workspace(Workspace::World),
+            StudioCommand::ShowScripts => self.select_workspace(Workspace::Scripts),
             StudioCommand::ShowAssets => self.select_workspace(Workspace::Assets),
             StudioCommand::ShowMaterials => self.select_workspace(Workspace::Materials),
             StudioCommand::ShowMorphs => self.select_workspace(Workspace::Morphs),
@@ -133,6 +134,7 @@ impl StudioShell {
             }
             match self.workspace {
                 Workspace::World => self.show_world(ui),
+                Workspace::Scripts => self.show_scripts(ui),
                 Workspace::Assets => self.show_assets(ui),
                 Workspace::Materials => self.show_materials(ui),
                 Workspace::Morphs => self.show_morphs(ui),

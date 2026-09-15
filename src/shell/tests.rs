@@ -195,6 +195,7 @@ fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
                 "Edit",
                 "Window",
                 "World",
+                "Scripts",
                 "Assets",
                 "Materials",
                 "Morphs",

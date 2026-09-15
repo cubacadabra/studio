@@ -56,9 +56,9 @@ impl StudioShell {
         self.preview_stale
     }
 
-    pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) {
+    pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) -> bool {
         let Ok(mut outline) = SceneOutline::parse(source) else {
-            return;
+            return false;
         };
         outline.set_runtime_ui_nodes(&self.runtime_ui_nodes);
         if !self.runtime_ui_nodes.is_empty() {
@@ -80,6 +80,11 @@ impl StudioShell {
         }
         self.scene_editor_target.clear();
         self.scene_editor_text.clear();
+        if self.source_files.contains_key(Path::new("manifest.json")) {
+            self.source_files
+                .insert(PathBuf::from("manifest.json"), source.to_owned());
+        }
+        true
     }
 
     pub(crate) fn set_runtime_ui_nodes(&mut self, nodes: &[cubacadabra_client::StudioUiNode]) {

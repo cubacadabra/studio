@@ -137,6 +137,7 @@ impl StudioApp {
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
         );
         shell.set_source_manifest(&self.authored_manifest_source, false);
+        shell.set_source_files(load_source_files(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
         if let Ok(parent) = env::current_dir() {
             shell.set_new_project_parent(parent);

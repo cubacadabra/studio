@@ -3,6 +3,7 @@ use super::*;
 pub(crate) enum Workspace {
     #[default]
     World,
+    Scripts,
     Assets,
     Materials,
     Morphs,
@@ -10,8 +11,9 @@ pub(crate) enum Workspace {
 }
 
 impl Workspace {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::World,
+        Self::Scripts,
         Self::Assets,
         Self::Materials,
         Self::Morphs,
@@ -21,6 +23,7 @@ impl Workspace {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::World => "World",
+            Self::Scripts => "Scripts",
             Self::Assets => "Assets",
             Self::Materials => "Materials",
             Self::Morphs => "Morphs",
@@ -31,6 +34,7 @@ impl Workspace {
     pub(crate) fn command(self) -> StudioCommand {
         match self {
             Self::World => StudioCommand::ShowWorld,
+            Self::Scripts => StudioCommand::ShowScripts,
             Self::Assets => StudioCommand::ShowAssets,
             Self::Materials => StudioCommand::ShowMaterials,
             Self::Morphs => StudioCommand::ShowMorphs,

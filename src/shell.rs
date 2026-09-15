@@ -16,6 +16,7 @@ use egui::{
     Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout, Margin,
     Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
 };
+use egui_code_editor::{CodeEditor, Completer, Syntax};
 #[cfg(test)]
 pub(crate) use egui_wgpu::wgpu;
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor};
@@ -58,6 +59,8 @@ mod studio_project_ui;
 mod studio_scene_ui;
 #[path = "shell/studio_shell.rs"]
 mod studio_shell;
+#[path = "shell/studio_source_ui.rs"]
+mod studio_source_ui;
 #[path = "shell/studio_start_ui.rs"]
 mod studio_start_ui;
 #[path = "shell/studio_state.rs"]
@@ -119,6 +122,7 @@ pub(crate) enum StudioCommand {
     MaximizeViewport,
     ResetLayout,
     ShowWorld,
+    ShowScripts,
     ShowAssets,
     ShowMaterials,
     ShowMorphs,
@@ -321,6 +325,12 @@ pub(crate) struct StudioShell {
     codex_source_change_count: usize,
     codex_change_review_open: bool,
     codex_undo_requested: bool,
+    source_files: BTreeMap<PathBuf, String>,
+    selected_source_file: Option<PathBuf>,
+    source_editor_text: String,
+    source_editor: CodeEditor,
+    source_syntax: Syntax,
+    source_completer: Completer,
     start_screen: bool,
     recent_projects: Vec<PathBuf>,
     recent_project_requested: Option<PathBuf>,
