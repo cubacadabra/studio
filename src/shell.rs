@@ -222,6 +222,9 @@ pub(crate) struct CodexChatSendRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum SceneEditRequest {
+    UseImageAsFloor {
+        asset_path: PathBuf,
+    },
     UpdateBlock {
         target: String,
         position: [f32; 3],
@@ -336,7 +339,10 @@ pub(crate) struct StudioShell {
     codex_undo_requested: bool,
     source_files: BTreeMap<PathBuf, String>,
     source_assets: BTreeMap<PathBuf, SourceAsset>,
+    source_directories: BTreeSet<PathBuf>,
     source_collapsed_directories: BTreeSet<PathBuf>,
+    source_import_requested: Option<PathBuf>,
+    dropped_files: Vec<PathBuf>,
     selected_source_file: Option<PathBuf>,
     selected_source_asset: Option<PathBuf>,
     source_asset_texture: Option<(PathBuf, egui::TextureHandle, [usize; 2])>,

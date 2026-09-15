@@ -1,7 +1,14 @@
 use super::*;
 impl StudioShell {
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
-        self.state.on_window_event(window, event).consumed
+        let consumed = self.state.on_window_event(window, event).consumed;
+        if let WindowEvent::DroppedFile(path) = event
+            && self.project_editable
+        {
+            self.dropped_files.push(path.clone());
+            self.notice = "Importing dropped image…".to_owned();
+        }
+        consumed
     }
 
     pub(crate) fn runtime_viewport(&self) -> Rect {
@@ -506,6 +513,20 @@ impl StudioShell {
 
     pub(crate) fn set_project_asset_available(&mut self, available: bool) {
         self.project_asset_available = available;
+    }
+
+    pub(crate) fn take_source_import_request(&mut self) -> Option<PathBuf> {
+        self.source_import_requested.take()
+    }
+
+    pub(crate) fn take_dropped_files(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.dropped_files)
+    }
+
+    pub(crate) fn set_source_directories(&mut self, directories: BTreeSet<PathBuf>) {
+        self.source_directories = directories;
+        self.source_collapsed_directories
+            .retain(|directory| self.source_directories.contains(directory));
     }
 
     pub(crate) fn take_open_project_request(&mut self) -> bool {

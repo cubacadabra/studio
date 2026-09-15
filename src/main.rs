@@ -232,9 +232,10 @@ struct StudioApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, SourceAssetKind, diff_project_files,
-        joystick_movement, load_game_sources, load_local_morph_catalog, load_project_in_background,
-        load_source_assets, load_source_files, project_asset_slug, project_manifest,
+        ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, SourceAssetKind, add_image_asset,
+        diff_project_files, joystick_movement, load_game_sources, load_local_morph_catalog,
+        load_project_in_background, load_source_assets, load_source_directories, load_source_files,
+        project_asset_slug, project_manifest, set_image_as_ground_material,
         should_forward_gameplay_key, should_forward_gameplay_keyboard, update_manifest_sign_text,
         update_project_morph_catalog,
     };
@@ -285,6 +286,47 @@ mod tests {
         );
         assert!(!files.keys().any(|path| path.starts_with("build")));
         assert!(!files.keys().any(|path| path.starts_with("assets")));
+    }
+
+    #[test]
+    fn source_file_browser_keeps_the_empty_image_directory_visible() {
+        let root = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-empty-images-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("assets/images")).expect("image directory");
+        fs::write(root.join("manifest.json"), "{}").expect("manifest");
+
+        let directories = load_source_directories(&root);
+        assert!(directories.contains(Path::new("assets")));
+        assert!(directories.contains(Path::new("assets/images")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_image_can_be_assigned_to_the_active_world_floor() {
+        let mut manifest = serde_json::json!({
+            "startWorld": "lobby",
+            "launch": { "destinationWorld": "starter-world" },
+            "assets": { "images": {} },
+            "worlds": { "starter-world": {} }
+        });
+        let image_id = add_image_asset(&mut manifest, Path::new("assets/images/stone-floor.png"))
+            .expect("image asset");
+        assert_eq!(image_id, "stone-floor");
+        let (_, world_id) =
+            set_image_as_ground_material(&mut manifest, Path::new("assets/images/stone-floor.png"))
+                .expect("ground material");
+        assert_eq!(world_id, "starter-world");
+        assert_eq!(
+            manifest["worlds"]["starter-world"]["groundMaterial"],
+            "floor"
+        );
+        assert_eq!(
+            manifest["worlds"]["starter-world"]["materials"]["floor"]["image"],
+            "stone-floor"
+        );
     }
 
     #[test]

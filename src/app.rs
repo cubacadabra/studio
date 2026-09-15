@@ -139,6 +139,7 @@ impl StudioApp {
         shell.set_source_manifest(&self.authored_manifest_source, false);
         shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_files(load_source_files(&self.project_root));
+        shell.set_source_directories(load_source_directories(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
         if let Ok(parent) = env::current_dir() {
             shell.set_new_project_parent(parent);
@@ -227,6 +228,30 @@ impl StudioApp {
             .and_then(StudioShell::take_recent_project_request)
         {
             self.start_project_load(project);
+        }
+        if let Some(target) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_source_import_request)
+        {
+            let mut dialog = rfd::FileDialog::new()
+                .set_title("Add images to assets/images")
+                .add_filter("PNG images", &["png"])
+                .set_directory(self.project_root.join(&target));
+            if let Some(window) = &self.window {
+                dialog = dialog.set_parent(window);
+            }
+            if let Some(files) = dialog.pick_files() {
+                self.import_source_images(files, target);
+            }
+        }
+        let dropped_files = self
+            .shell
+            .as_mut()
+            .map(StudioShell::take_dropped_files)
+            .unwrap_or_default();
+        if !dropped_files.is_empty() {
+            self.import_source_images(dropped_files, PathBuf::from("assets/images"));
         }
         #[cfg(target_os = "macos")]
         if let Some((title, parent, error)) = self

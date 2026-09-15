@@ -44,8 +44,10 @@ impl StudioShell {
             }
         }
         let paths = self.source_paths();
-        self.source_collapsed_directories
-            .retain(|directory| paths.iter().any(|path| path.starts_with(directory)));
+        self.source_collapsed_directories.retain(|directory| {
+            self.source_directories.contains(directory)
+                && paths.iter().any(|path| path.starts_with(directory))
+        });
     }
 
     pub(crate) fn source_files_for_save(&self) -> Vec<(PathBuf, String)> {
@@ -197,7 +199,7 @@ impl StudioShell {
                 });
                 content_frame().show(ui, |ui| {
                     let paths = self.source_paths();
-                    if paths.is_empty() {
+                    if paths.is_empty() && self.source_directories.is_empty() {
                         ui.label(
                             RichText::new("No source files found.")
                                 .size(TYPE.secondary)
@@ -205,7 +207,11 @@ impl StudioShell {
                         );
                         return;
                     }
-                    let rows = source_tree_rows(&paths, &self.source_collapsed_directories);
+                    let rows = source_tree_rows(
+                        &paths,
+                        &self.source_directories,
+                        &self.source_collapsed_directories,
+                    );
                     let mut selected_file = None;
                     let mut selected_asset = None;
                     let mut toggled_directory = None;
@@ -222,16 +228,22 @@ impl StudioShell {
                                             .file_name()
                                             .map(|name| name.to_string_lossy())
                                             .unwrap_or_default();
-                                        if source_tree_row(
+                                        let (response, add_response) = source_tree_row(
                                             ui,
                                             &label,
                                             Icon::Folder,
                                             depth,
                                             false,
                                             Some(expanded),
-                                        )
-                                        .on_hover_text(path.display().to_string())
-                                        .clicked()
+                                            path == Path::new("assets/images"),
+                                        );
+                                        if add_response.is_some_and(|response| response.clicked()) {
+                                            self.source_import_requested = Some(path.clone());
+                                            self.notice =
+                                                "Choose image files to import…".to_owned();
+                                        } else if response
+                                            .on_hover_text(path.display().to_string())
+                                            .clicked()
                                         {
                                             toggled_directory = Some(path);
                                         }
@@ -248,7 +260,10 @@ impl StudioShell {
                                             .file_name()
                                             .map(|name| name.to_string_lossy())
                                             .unwrap_or_default();
-                                        if source_tree_row(ui, &label, icon, depth, selected, None)
+                                        let (response, _) = source_tree_row(
+                                            ui, &label, icon, depth, selected, None, false,
+                                        );
+                                        if response
                                             .on_hover_text(path.display().to_string())
                                             .clicked()
                                         {
@@ -262,6 +277,15 @@ impl StudioShell {
                                 }
                             }
                         });
+                    if self.project_editable {
+                        ui.add_space(8.0);
+                        drop_target(ui, "Drop PNG files here");
+                        ui.label(
+                            RichText::new("Dropped files are added to assets/images.")
+                                .size(TYPE.meta)
+                                .color(colors.muted),
+                        );
+                    }
                     if let Some(path) = toggled_directory {
                         if !self.source_collapsed_directories.insert(path.clone()) {
                             self.source_collapsed_directories.remove(&path);
@@ -420,6 +444,29 @@ impl StudioShell {
                             .color(colors.muted),
                     );
                 }
+                ui.add_space(12.0);
+                property_section(ui, "World", |ui| {
+                    let button =
+                        ui.add_enabled(self.project_editable, egui::Button::new("Use as floor"));
+                    if button.clicked() {
+                        self.scene_edit_requested = Some(SceneEditRequest::UseImageAsFloor {
+                            asset_path: path.clone(),
+                        });
+                        self.notice = "Floor changed — save, then Rebuild & Play".to_owned();
+                    }
+                    ui.label(
+                        RichText::new("Applies this image to the ground in the active world.")
+                            .size(TYPE.meta)
+                            .color(colors.muted),
+                    );
+                    if !self.project_editable {
+                        ui.label(
+                            RichText::new("Open a raw source project to edit the floor.")
+                                .size(TYPE.meta)
+                                .color(colors.muted),
+                        );
+                    }
+                });
             }
             SourceAssetKind::Audio => {
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -510,10 +557,18 @@ impl StudioShell {
 
 fn source_tree_rows(
     paths: &BTreeSet<PathBuf>,
+    explicit_directories: &BTreeSet<PathBuf>,
     collapsed_directories: &BTreeSet<PathBuf>,
 ) -> Vec<SourceTreeRow> {
     let mut rows = Vec::new();
-    append_source_tree_rows(Path::new(""), 0, paths, collapsed_directories, &mut rows);
+    append_source_tree_rows(
+        Path::new(""),
+        0,
+        paths,
+        explicit_directories,
+        collapsed_directories,
+        &mut rows,
+    );
     rows
 }
 
@@ -521,6 +576,7 @@ fn append_source_tree_rows(
     directory: &Path,
     depth: usize,
     paths: &BTreeSet<PathBuf>,
+    explicit_directories: &BTreeSet<PathBuf>,
     collapsed_directories: &BTreeSet<PathBuf>,
     rows: &mut Vec<SourceTreeRow>,
 ) {
@@ -541,13 +597,32 @@ fn append_source_tree_rows(
             files.insert(child);
         }
     }
+    for path in explicit_directories {
+        let Ok(relative) = path.strip_prefix(directory) else {
+            continue;
+        };
+        let mut components = relative.components();
+        let Some(first) = components.next() else {
+            continue;
+        };
+        if components.next().is_none() {
+            directories.insert(directory.join(first.as_os_str()));
+        }
+    }
     for directory in directories {
         rows.push(SourceTreeRow::Directory {
             path: directory.clone(),
             depth,
         });
         if !collapsed_directories.contains(&directory) {
-            append_source_tree_rows(&directory, depth + 1, paths, collapsed_directories, rows);
+            append_source_tree_rows(
+                &directory,
+                depth + 1,
+                paths,
+                explicit_directories,
+                collapsed_directories,
+                rows,
+            );
         }
     }
     for path in files {
@@ -570,13 +645,21 @@ fn source_tree_row(
     depth: usize,
     selected: bool,
     expanded: Option<bool>,
-) -> egui::Response {
+    addable: bool,
+) -> (egui::Response, Option<egui::Response>) {
     let colors = palette(ui);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::hover());
+    let add_width = if addable { 28.0 } else { 0.0 };
+    let row_rect = Rect::from_min_max(rect.min, egui::pos2(rect.max.x - add_width, rect.max.y));
+    let response = ui.interact(
+        row_rect,
+        ui.id().with(("source-tree-row", label, depth)),
+        Sense::click(),
+    );
     if selected || response.hovered() {
         ui.painter().rect_filled(
-            rect,
+            row_rect,
             UI.radius,
             if selected {
                 colors.selection
@@ -630,7 +713,30 @@ fn source_tree_row(
         },
     );
     paint_focus(ui, &response);
-    response
+    let add_response = addable.then(|| {
+        let add_rect = Rect::from_min_max(egui::pos2(rect.max.x - 28.0, rect.min.y), rect.max);
+        let response = ui.interact(
+            add_rect,
+            ui.id().with(("source-tree-add", label, depth)),
+            Sense::click(),
+        );
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(add_rect, UI.radius, colors.panel_raised);
+        }
+        paint_icon(
+            ui.painter(),
+            Rect::from_center_size(add_rect.center(), Vec2::splat(UI.icon)),
+            Icon::Plus,
+            if response.hovered() {
+                colors.accent
+            } else {
+                colors.muted
+            },
+        );
+        response.on_hover_text("Add image files")
+    });
+    (response, add_response)
 }
 
 fn fit_preview_size(available: Vec2, dimensions: [usize; 2]) -> Vec2 {
@@ -666,7 +772,7 @@ mod tests {
             PathBuf::from("src/ui/actions.luau"),
             PathBuf::from("assets/audio/spell-cast.wav"),
         ]);
-        let rows = source_tree_rows(&paths, &BTreeSet::new());
+        let rows = source_tree_rows(&paths, &BTreeSet::new(), &BTreeSet::new());
         let labels = rows
             .iter()
             .map(|row| match row {

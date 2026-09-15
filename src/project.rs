@@ -1,6 +1,8 @@
 use super::*;
+use std::collections::BTreeSet;
 
 const MAX_RECENT_PROJECTS: usize = 8;
+const MAX_PROJECT_IMAGE_ASSETS: usize = 16;
 
 pub(crate) fn load_recent_projects() -> Vec<PathBuf> {
     let Some(path) = recent_projects_file() else {
@@ -331,6 +333,44 @@ pub(crate) fn load_source_files(root: &Path) -> BTreeMap<PathBuf, String> {
     files
 }
 
+pub(crate) fn load_source_directories(root: &Path) -> BTreeSet<PathBuf> {
+    fn visit(root: &Path, directory: &Path, directories: &mut BTreeSet<PathBuf>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if matches!(name.to_str(), Some(".git" | "target" | "build"))
+                || name.to_string_lossy().starts_with('.')
+            {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            directories.insert(relative.to_path_buf());
+            visit(root, &path, directories);
+        }
+    }
+
+    let mut directories = BTreeSet::new();
+    if root.is_dir() {
+        visit(root, root, &mut directories);
+        if root.join("manifest.json").is_file() {
+            directories.insert(PathBuf::from("assets"));
+            directories.insert(PathBuf::from("assets/images"));
+        }
+    }
+    directories
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SourceAssetKind {
     Image,
@@ -402,6 +442,120 @@ pub(crate) fn load_source_assets(root: &Path) -> BTreeMap<PathBuf, SourceAsset> 
         visit(root, &assets_root, &mut assets);
     }
     assets
+}
+
+pub(crate) fn add_image_asset(manifest: &mut Value, path: &Path) -> Result<String, String> {
+    let path = path.to_string_lossy().replace('\\', "/");
+    if !path.starts_with("assets/") {
+        return Err("image assets must live inside assets/".to_owned());
+    }
+    let stem = Path::new(&path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| "the image filename is not valid UTF-8".to_owned())?;
+    let base_id = image_asset_id(stem);
+    if base_id.is_empty() {
+        return Err("the image filename must contain a letter or number".to_owned());
+    }
+
+    let assets = manifest
+        .as_object_mut()
+        .ok_or_else(|| "manifest must be a JSON object".to_owned())?
+        .entry("assets")
+        .or_insert_with(|| serde_json::json!({}));
+    let assets = assets
+        .as_object_mut()
+        .ok_or_else(|| "manifest.assets must be an object".to_owned())?;
+    let images = assets
+        .entry("images")
+        .or_insert_with(|| serde_json::json!({}));
+    let images = images
+        .as_object_mut()
+        .ok_or_else(|| "manifest.assets.images must be an object".to_owned())?;
+
+    if let Some((id, _)) = images.iter().find(|(_, definition)| {
+        definition.get("path").and_then(Value::as_str) == Some(path.as_str())
+    }) {
+        return Ok(id.clone());
+    }
+    if images.len() >= MAX_PROJECT_IMAGE_ASSETS {
+        return Err(format!(
+            "a project can contain at most {MAX_PROJECT_IMAGE_ASSETS} image assets"
+        ));
+    }
+
+    let mut id = base_id.clone();
+    let mut suffix = 2;
+    while images.contains_key(&id) {
+        id = format!("{base_id}-{suffix}");
+        suffix += 1;
+    }
+    images.insert(id.clone(), serde_json::json!({ "path": path }));
+    Ok(id)
+}
+
+pub(crate) fn set_image_as_ground_material(
+    manifest: &mut Value,
+    image_path: &Path,
+) -> Result<(String, String), String> {
+    let image_path = image_path.to_string_lossy().replace('\\', "/");
+    let image_id = manifest
+        .get("assets")
+        .and_then(|assets| assets.get("images"))
+        .and_then(Value::as_object)
+        .and_then(|images| {
+            images.iter().find_map(|(id, definition)| {
+                (definition.get("path").and_then(Value::as_str) == Some(image_path.as_str()))
+                    .then_some(id.clone())
+            })
+        })
+        .ok_or_else(|| "the image is not registered in manifest.assets.images".to_owned())?;
+    let world_id = manifest
+        .get("launch")
+        .and_then(|launch| launch.get("destinationWorld"))
+        .and_then(Value::as_str)
+        .or_else(|| manifest.get("startWorld").and_then(Value::as_str))
+        .unwrap_or("lobby")
+        .to_owned();
+    let world = if world_id == "lobby" {
+        manifest
+    } else {
+        manifest
+            .get_mut("worlds")
+            .and_then(Value::as_object_mut)
+            .and_then(|worlds| worlds.get_mut(&world_id))
+            .ok_or_else(|| format!("world `{world_id}` was not found"))?
+    };
+    let world = world
+        .as_object_mut()
+        .ok_or_else(|| format!("world `{world_id}` must be an object"))?;
+    let materials = world
+        .entry("materials")
+        .or_insert_with(|| serde_json::json!({}));
+    let materials = materials
+        .as_object_mut()
+        .ok_or_else(|| format!("world `{world_id}` materials must be an object"))?;
+    materials.insert(
+        "floor".to_owned(),
+        serde_json::json!({ "image": image_id, "tileU": 8, "tileV": 8 }),
+    );
+    world.insert(
+        "groundMaterial".to_owned(),
+        Value::String("floor".to_owned()),
+    );
+    Ok((image_id, world_id))
+}
+
+fn image_asset_id(stem: &str) -> String {
+    let mut id = String::new();
+    for character in stem.chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+            id.push(character.to_ascii_lowercase());
+        } else if !id.ends_with('-') {
+            id.push('-');
+        }
+    }
+    id.trim_matches('-').chars().take(64).collect()
 }
 
 pub(crate) fn project_manifest(project: &Path) -> Result<PathBuf, String> {

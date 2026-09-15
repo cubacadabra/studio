@@ -18,6 +18,133 @@ impl StudioApp {
         self.request_redraw();
     }
 
+    pub(crate) fn import_source_images(&mut self, files: Vec<PathBuf>, target: PathBuf) {
+        if !self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::project_is_editable)
+        {
+            return;
+        }
+        if target != Path::new("assets/images") {
+            if let Some(shell) = &mut self.shell {
+                shell.set_notice("Images can only be added to assets/images".to_owned());
+            }
+            return;
+        }
+
+        let destination = self.project_root.join(&target);
+        if let Err(error) = fs::create_dir_all(&destination) {
+            if let Some(shell) = &mut self.shell {
+                shell.set_project_error(format!("Could not create image asset directory: {error}"));
+            }
+            return;
+        }
+        let mut manifest: Value = match serde_json::from_str(&self.authored_manifest_source) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_project_error(format!("Manifest is no longer valid JSON: {error}"));
+                }
+                return;
+            }
+        };
+        let mut imported = Vec::new();
+        let mut errors = Vec::new();
+        for file in files {
+            let is_png = file
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+            if !is_png {
+                errors.push(format!("{} is not a PNG file", file.display()));
+                continue;
+            }
+            let Some(file_name) = file.file_name().and_then(|name| name.to_str()) else {
+                errors.push(format!("{} has no valid filename", file.display()));
+                continue;
+            };
+            let destination_file = unique_asset_path(&destination, file_name);
+            let bytes = match fs::read(&file) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    errors.push(format!("could not read {}: {error}", file.display()));
+                    continue;
+                }
+            };
+            if bytes.len() > 8 * 1024 * 1024 {
+                errors.push(format!("{} exceeds the 8 MiB image limit", file.display()));
+                continue;
+            }
+            if image::load_from_memory(&bytes).is_err() {
+                errors.push(format!("{} is not a valid PNG image", file.display()));
+                continue;
+            }
+            if let Err(error) = write_atomic(&destination_file, &bytes) {
+                errors.push(error);
+                continue;
+            }
+            let Some(destination_name) = destination_file.file_name() else {
+                errors.push(format!(
+                    "could not determine the destination filename for {file_name}"
+                ));
+                continue;
+            };
+            let relative = target.join(destination_name);
+            match add_image_asset(&mut manifest, &relative) {
+                Ok(_) => imported.push(relative),
+                Err(error) => {
+                    let _ = fs::remove_file(&destination_file);
+                    errors.push(error);
+                }
+            }
+        }
+
+        if imported.is_empty() {
+            if let Some(shell) = &mut self.shell {
+                shell.set_notice(if errors.is_empty() {
+                    "No image files were selected".to_owned()
+                } else {
+                    errors.join("; ")
+                });
+            }
+            return;
+        }
+        let source = match serde_json::to_string_pretty(&manifest) {
+            Ok(source) => source + "\n",
+            Err(error) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_project_error(format!(
+                        "Could not update the project manifest: {error}"
+                    ));
+                }
+                return;
+            }
+        };
+        self.authored_manifest_source = source.clone();
+        if let Some(shell) = &mut self.shell {
+            shell.set_source_manifest(&source, true);
+            shell.set_source_assets(load_source_assets(&self.project_root));
+            shell.set_source_directories(load_source_directories(&self.project_root));
+            let message = if errors.is_empty() {
+                format!(
+                    "Imported {} image{} — save to keep the project change",
+                    imported.len(),
+                    if imported.len() == 1 { "" } else { "s" }
+                )
+            } else {
+                format!(
+                    "Imported {} image{}; {}",
+                    imported.len(),
+                    if imported.len() == 1 { "" } else { "s" },
+                    errors.join("; ")
+                )
+            };
+            shell.set_notice(message);
+        }
+        self.request_redraw();
+    }
+
     pub(crate) fn save_project_source(&mut self) -> bool {
         let editable = self
             .shell
@@ -188,7 +315,24 @@ impl StudioApp {
             }
             return Ok(());
         }
+        if let SceneEditRequest::UseImageAsFloor { asset_path } = &request {
+            let (_, world_id) = set_image_as_ground_material(&mut manifest, asset_path)?;
+            let source = serde_json::to_string_pretty(&manifest)
+                .map_err(|error| format!("could not serialize the scene manifest: {error}"))?
+                + "\n";
+            self.authored_manifest_source = source.clone();
+            if let Some(shell) = &mut self.shell {
+                shell.set_source_manifest(&source, true);
+                shell.set_notice(format!(
+                    "Floor changed in {world_id} — save, then Rebuild & Play"
+                ));
+            }
+            return Ok(());
+        }
         let (target, operation) = match request {
+            SceneEditRequest::UseImageAsFloor { .. } => {
+                return Err("floor image edit was not handled".to_owned());
+            }
             SceneEditRequest::UpdateBlock {
                 target,
                 position,
@@ -595,6 +739,7 @@ impl StudioApp {
                 shell.set_source_manifest(&self.authored_manifest_source, false);
                 shell.set_source_assets(load_source_assets(&self.project_root));
                 shell.set_source_files(load_source_files(&self.project_root));
+                shell.set_source_directories(load_source_directories(&self.project_root));
                 shell.finish_project_loading();
                 shell.set_notice("Preview rebuilt and playing".to_owned());
             }
@@ -626,6 +771,7 @@ impl StudioApp {
         shell.set_source_manifest(&self.authored_manifest_source, false);
         shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_files(load_source_files(&self.project_root));
+        shell.set_source_directories(load_source_directories(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
         if let Err(message) = self.codex.set_project_root(&self.project_root) {
             shell.set_codex_chat_error(message);
@@ -644,4 +790,27 @@ impl StudioApp {
         self.update_viewport();
         Ok(())
     }
+}
+
+fn unique_asset_path(directory: &Path, file_name: &str) -> PathBuf {
+    let candidate = directory.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("image");
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("png");
+    for suffix in 2.. {
+        let candidate = directory.join(format!("{stem}-{suffix}.{extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("the suffix range is finite only in theory")
 }
