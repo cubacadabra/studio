@@ -108,7 +108,10 @@ impl StudioShell {
 
                 let label = path.to_string_lossy().into_owned();
                 panel_header(ui, Icon::Logs, &label, |ui| {
-                    if self.project_dirty {
+                    if self.project_dirty && self.project_editable {
+                        if toolbar_button(ui, Icon::Save, "Save", true).clicked() {
+                            self.execute_command(StudioCommand::Save);
+                        }
                         ui.label(
                             RichText::new("Unsaved")
                                 .size(TYPE.meta)
@@ -120,20 +123,30 @@ impl StudioShell {
                     .fill(colors.surface_deep)
                     .inner_margin(Margin::symmetric(10, 8))
                     .show(ui, |ui| {
-                        let response = self
-                            .source_editor
-                            .clone()
-                            .id_source(format!("source-editor-{label}"))
-                            .with_ui_fontsize(ui)
-                            .with_numlines(true)
-                            .with_rows(28)
-                            .vscroll(true)
-                            .show_with_completer(
-                                ui,
-                                &mut self.source_editor_text,
-                                &self.source_syntax,
-                                &mut self.source_completer,
-                            );
+                        let code_theme = if ui.visuals().dark_mode {
+                            ColorTheme::GITHUB_DARK
+                        } else {
+                            ColorTheme::GITHUB_LIGHT
+                        };
+                        let response = ui
+                            .scope(|ui| {
+                                // The editor's caret should communicate focus, not blink in and
+                                // out while the user is typing.
+                                ui.visuals_mut().text_cursor.blink = false;
+                                ui.visuals_mut().text_cursor.stroke =
+                                    Stroke::new(2.0, colors.accent);
+                                self.source_editor
+                                    .clone()
+                                    .id_source(format!("source-editor-{label}"))
+                                    .with_fontsize(14.0)
+                                    .with_theme(code_theme)
+                                    .with_numlines(true)
+                                    .with_rows(28)
+                                    .vscroll(true)
+                                    .show(ui, &mut self.source_editor_text, &self.source_syntax)
+                            })
+                            .inner;
+                        let editor_has_focus = response.response.has_focus();
                         if response.response.changed() {
                             let source = self.source_editor_text.clone();
                             self.source_files.insert(path.clone(), source.clone());
@@ -146,6 +159,16 @@ impl StudioShell {
                                     self.preview_stale = true;
                                 }
                             }
+                        }
+                        if editor_has_focus
+                            && ui.input_mut(|input| {
+                                input.consume_shortcut(&egui::KeyboardShortcut::new(
+                                    egui::Modifiers::COMMAND,
+                                    egui::Key::S,
+                                ))
+                            })
+                        {
+                            self.execute_command(StudioCommand::Save);
                         }
                     });
             });

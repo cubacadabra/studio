@@ -61,9 +61,6 @@ impl StudioShell {
                 "CFrame", "Color3", "Instance",
             ])
             .with_special(["false", "nil", "true"]);
-        let source_completer = Completer::new_with_syntax(&source_syntax)
-            .with_auto_indent()
-            .with_user_words();
         Self {
             context,
             state,
@@ -171,7 +168,6 @@ impl StudioShell {
             source_editor_text: String::new(),
             source_editor: CodeEditor::default(),
             source_syntax,
-            source_completer,
             start_screen: false,
             recent_projects: Vec::new(),
             recent_project_requested: None,

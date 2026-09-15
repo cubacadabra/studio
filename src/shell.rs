@@ -16,7 +16,7 @@ use egui::{
     Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout, Margin,
     Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
 };
-use egui_code_editor::{CodeEditor, Completer, Syntax};
+use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
 #[cfg(test)]
 pub(crate) use egui_wgpu::wgpu;
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor};
@@ -330,7 +330,6 @@ pub(crate) struct StudioShell {
     source_editor_text: String,
     source_editor: CodeEditor,
     source_syntax: Syntax,
-    source_completer: Completer,
     start_screen: bool,
     recent_projects: Vec<PathBuf>,
     recent_project_requested: Option<PathBuf>,
