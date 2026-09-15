@@ -131,13 +131,6 @@ impl StudioShell {
                             .size(TYPE.secondary)
                             .color(colors.secondary_text),
                     );
-                    paint_down_chevron(ui);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        icon_button(ui, Icon::More, "Viewport options", false);
-                        icon_button(ui, Icon::Camera, "Camera view", false);
-                        icon_button(ui, Icon::Sliders, "Viewport shading", false);
-                        icon_button(ui, Icon::Grid, "Toggle grid", true);
-                    });
                 });
                 self.runtime_viewport = Rect::from_min_max(
                     egui::pos2(available.min.x + 1.0, header.max.y),

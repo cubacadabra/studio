@@ -362,7 +362,8 @@ impl StudioApp {
                 .get_mut("blocks")
                 .and_then(Value::as_array_mut)
                 .ok_or_else(|| format!("scene world `{world_id}` has no blocks"))?;
-            let id = format!("platform-new-{}", blocks.len() + 1);
+            let block_index = blocks.len();
+            let id = format!("platform-new-{}", block_index + 1);
             blocks.push(serde_json::json!({
                 "id": id,
                 "position": [0, 1, 0],
@@ -375,7 +376,9 @@ impl StudioApp {
             self.authored_manifest_source = source.clone();
             if let Some(shell) = &mut self.shell {
                 shell.set_source_manifest(&source, true);
-                shell.set_notice("Platform added — save to keep it".to_owned());
+                let scene_id = format!("world/{world_id}/blocks/{block_index}");
+                shell.select_scene_node(&scene_id);
+                shell.set_notice("Platform added — save, then Rebuild & Play".to_owned());
             }
             return Ok(());
         }

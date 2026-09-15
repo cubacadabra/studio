@@ -150,6 +150,20 @@ impl StudioShell {
         self.scene_edit_requested.take()
     }
 
+    pub(crate) fn select_scene_node(&mut self, id: &str) -> bool {
+        if self.scene_outline.root.find(id).is_none() {
+            return false;
+        }
+        self.selected_scene = id.to_owned();
+        self.expanded_scene.insert("game".to_owned());
+        let mut ancestor = id;
+        while let Some((parent, _)) = ancestor.rsplit_once('/') {
+            self.expanded_scene.insert(parent.to_owned());
+            ancestor = parent;
+        }
+        true
+    }
+
     pub(crate) fn take_save_request(&mut self) -> bool {
         std::mem::take(&mut self.save_requested)
     }

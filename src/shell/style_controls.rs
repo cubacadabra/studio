@@ -370,12 +370,6 @@ pub(crate) fn vertical_separator(ui: &mut egui::Ui, height: f32) {
     );
 }
 
-pub(crate) fn paint_down_chevron(ui: &mut egui::Ui) {
-    let colors = palette(ui);
-    let response = ui.allocate_response(Vec2::splat(UI.icon), Sense::hover());
-    paint_icon(ui.painter(), response.rect, Icon::ChevronDown, colors.faint);
-}
-
 pub(crate) fn tool_icon(tool: &str) -> Icon {
     match tool {
         "Sessions" => Icon::Test,

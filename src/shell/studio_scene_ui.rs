@@ -4,14 +4,20 @@ impl StudioShell {
         if self.project_loading.is_some() {
             return;
         }
+        let previous_selection = self.selected_scene.clone();
         panel_header(ui, Icon::World, "Scene", |ui| {
-            if ui
-                .add_enabled(self.project_editable, egui::Button::new("Add block"))
-                .on_disabled_hover_text("Open a raw source project to edit the scene")
-                .clicked()
-            {
-                self.scene_edit_requested = Some(SceneEditRequest::AddBlock);
-                self.notice = "Adding platform…".to_owned();
+            if self.project_editable {
+                if ui.button("Add block").clicked() {
+                    self.scene_edit_requested = Some(SceneEditRequest::AddBlock);
+                    self.notice = "Adding platform…".to_owned();
+                }
+            } else {
+                ui.label(
+                    RichText::new("Read-only")
+                        .size(TYPE.meta)
+                        .color(palette(ui).muted),
+                )
+                .on_hover_text("Open a raw source project to edit the scene");
             }
         });
         egui::ScrollArea::vertical()
@@ -30,6 +36,11 @@ impl StudioShell {
                         );
                     });
             });
+        if self.selected_scene != previous_selection
+            && let Some(selected) = self.scene_outline.root.find(&self.selected_scene)
+        {
+            self.notice = format!("Selected {}", selected.label);
+        }
     }
 
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
@@ -49,9 +60,13 @@ impl StudioShell {
                 self.sign_inspector(ui, &selected);
             } else if selected.properties.is_empty() {
                 ui.label(
-                    RichText::new("No properties")
-                        .size(TYPE.secondary)
-                        .color(palette(ui).muted),
+                    RichText::new(if selected.kind == "Collection" {
+                        "Select an item in this group to inspect it."
+                    } else {
+                        "No editable properties"
+                    })
+                    .size(TYPE.secondary)
+                    .color(palette(ui).muted),
                 );
             } else {
                 property_section(ui, "Manifest", |ui| {
@@ -59,6 +74,11 @@ impl StudioShell {
                         property_row(ui, label, value);
                     }
                 });
+                ui.label(
+                    RichText::new("Manifest data is read-only in Studio.")
+                        .size(TYPE.meta)
+                        .color(palette(ui).muted),
+                );
             }
         });
     }
@@ -168,9 +188,13 @@ impl StudioShell {
             }
         });
         ui.label(
-            RichText::new("Save, then Rebuild & Play to see the updated sign in the game.")
-                .size(TYPE.meta)
-                .color(colors.muted),
+            RichText::new(if self.project_editable {
+                "Save, then Rebuild & Play to see the updated sign in the game."
+            } else {
+                "Open a raw source project to edit this sign."
+            })
+            .size(TYPE.meta)
+            .color(colors.muted),
         );
     }
 }
