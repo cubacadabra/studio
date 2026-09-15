@@ -256,6 +256,10 @@ impl StudioApp {
     }
 
     pub(crate) fn start_project_load(&mut self, project: PathBuf) {
+        self.recent_projects = remember_recent_project(&project);
+        if let Some(shell) = &mut self.shell {
+            shell.set_recent_projects(self.recent_projects.clone());
+        }
         self.start_project_load_with_mode(project, false, false);
     }
 

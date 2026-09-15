@@ -14,7 +14,11 @@ impl StudioApp {
         let temporary_package = sources.temporary_package;
         let morph_catalog_path =
             morph_catalog_path.or_else(|| discover_project_morph_catalog(&project_root));
-        let recent_projects = load_recent_projects();
+        let recent_projects = if sources.standalone_preview {
+            load_recent_projects()
+        } else {
+            remember_recent_project(&project_root)
+        };
         let local_morph_catalog = morph_catalog_path
             .as_deref()
             .map(load_local_morph_catalog)
