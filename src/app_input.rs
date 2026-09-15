@@ -49,16 +49,12 @@ impl StudioApp {
         }
     }
 
-    pub(crate) fn handle_key(&mut self, event: &KeyEvent, event_loop: &ActiveEventLoop) {
+    pub(crate) fn handle_key(&mut self, event: &KeyEvent, _event_loop: &ActiveEventLoop) {
         let PhysicalKey::Code(code) = event.physical_key else {
             return;
         };
         match event.state {
             ElementState::Pressed => {
-                if code == KeyCode::Escape {
-                    event_loop.exit();
-                    return;
-                }
                 if code == KeyCode::Space && !event.repeat {
                     self.jump_queued = true;
                 }

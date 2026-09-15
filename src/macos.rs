@@ -23,10 +23,6 @@ const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 const NEW_PROJECT_TAG: isize = 1;
 const OPEN_PROJECT_TAG: isize = 2;
 const SAVE_TAG: isize = 3;
-const REVEAL_PROJECT_TAG: isize = 4;
-const PREFERENCES_TAG: isize = 5;
-const MAXIMIZE_VIEWPORT_TAG: isize = 6;
-const RESET_LAYOUT_TAG: isize = 7;
 const COPY_TAG: isize = 8;
 
 define_class!(
@@ -294,7 +290,7 @@ pub(crate) fn install_native_menu() {
     });
 }
 
-fn configure_application_menu(menu: &NSMenu, main_thread: MainThreadMarker, target: &AnyObject) {
+fn configure_application_menu(menu: &NSMenu, _main_thread: MainThreadMarker, target: &AnyObject) {
     let about_item = menu
         .itemAtIndex(0)
         .expect("Winit's application menu should contain an About item");
@@ -305,16 +301,6 @@ fn configure_application_menu(menu: &NSMenu, main_thread: MainThreadMarker, targ
         about_item.setTarget(Some(target));
         about_item.setAction(Some(sel!(showAbout:)));
     }
-
-    let preferences = studio_menu_item(
-        main_thread,
-        target,
-        ns_string!("Settings…"),
-        ns_string!(","),
-        PREFERENCES_TAG,
-        None,
-    );
-    menu.insertItem_atIndex(&preferences, 1);
 
     // Winit supplies the remaining standard application commands. Rename the
     // process-derived labels so unbundled development builds still read like
@@ -352,15 +338,6 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
         ns_string!("Save"),
         ns_string!("s"),
         SAVE_TAG,
-        None,
-    ));
-    menu.addItem(&NSMenuItem::separatorItem(main_thread));
-    menu.addItem(&studio_menu_item(
-        main_thread,
-        target,
-        ns_string!("Reveal Project"),
-        ns_string!(""),
-        REVEAL_PROJECT_TAG,
         None,
     ));
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
@@ -419,7 +396,7 @@ fn install_edit_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
 fn install_window_menu(
     main_menu: &NSMenu,
     main_thread: MainThreadMarker,
-    target: &AnyObject,
+    _target: &AnyObject,
 ) -> Retained<NSMenu> {
     let menu = NSMenu::new(main_thread);
     menu.setTitle(ns_string!("Window"));
@@ -435,23 +412,6 @@ fn install_window_menu(
         ns_string!("Zoom"),
         sel!(performZoom:),
         ns_string!(""),
-        None,
-    ));
-    menu.addItem(&NSMenuItem::separatorItem(main_thread));
-    menu.addItem(&studio_menu_item(
-        main_thread,
-        target,
-        ns_string!("Maximize Viewport"),
-        ns_string!(" "),
-        MAXIMIZE_VIEWPORT_TAG,
-        Some(NSEventModifierFlags::empty()),
-    ));
-    menu.addItem(&studio_menu_item(
-        main_thread,
-        target,
-        ns_string!("Reset Layout"),
-        ns_string!(""),
-        RESET_LAYOUT_TAG,
         None,
     ));
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
@@ -538,11 +498,7 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         NEW_PROJECT_TAG => Some(StudioCommand::NewProject),
         OPEN_PROJECT_TAG => Some(StudioCommand::OpenProject),
         SAVE_TAG => Some(StudioCommand::Save),
-        REVEAL_PROJECT_TAG => Some(StudioCommand::RevealProject),
         COPY_TAG => Some(StudioCommand::Copy),
-        PREFERENCES_TAG => Some(StudioCommand::Preferences),
-        MAXIMIZE_VIEWPORT_TAG => Some(StudioCommand::MaximizeViewport),
-        RESET_LAYOUT_TAG => Some(StudioCommand::ResetLayout),
         _ => None,
     }
 }

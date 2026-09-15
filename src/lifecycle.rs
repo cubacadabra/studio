@@ -37,7 +37,18 @@ impl ApplicationHandler for StudioApp {
             .pointer_position
             .is_some_and(|(x, y)| self.runtime_pointer(x, y, true).is_some());
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                if let Some(shell) = &mut self.shell {
+                    if shell.project_is_dirty() {
+                        shell.request_close();
+                        self.request_redraw();
+                    } else {
+                        event_loop.exit();
+                    }
+                } else {
+                    event_loop.exit();
+                }
+            }
             WindowEvent::Resized(size) => {
                 self.clear_pointer_controls();
                 self.resize(size);
@@ -52,6 +63,14 @@ impl ApplicationHandler for StudioApp {
             }
             WindowEvent::RedrawRequested => {
                 self.render();
+                if self
+                    .shell
+                    .as_mut()
+                    .is_some_and(StudioShell::take_exit_requested)
+                {
+                    event_loop.exit();
+                    return;
+                }
                 self.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. }

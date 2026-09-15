@@ -154,6 +154,50 @@ impl StudioShell {
         std::mem::take(&mut self.save_requested)
     }
 
+    pub(crate) fn request_close(&mut self) {
+        if self.project_dirty {
+            self.pending_project_action = Some(PendingProjectAction::Close);
+            self.notice = "Unsaved changes — save or discard them before closing".to_owned();
+        } else {
+            self.exit_requested = true;
+        }
+    }
+
+    pub(crate) fn take_exit_requested(&mut self) -> bool {
+        std::mem::take(&mut self.exit_requested)
+    }
+
+    pub(crate) fn take_pending_project_action_after_save(
+        &mut self,
+    ) -> Option<PendingProjectAction> {
+        if self.project_dirty {
+            return None;
+        }
+        self.pending_project_action.take()
+    }
+
+    pub(crate) fn discard_pending_project_action(&mut self) -> Option<PendingProjectAction> {
+        self.project_dirty = false;
+        self.preview_stale = false;
+        self.pending_project_action.take()
+    }
+
+    pub(crate) fn take_imported_assets_for_discard(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.imported_asset_paths)
+    }
+
+    pub(crate) fn record_imported_asset(&mut self, path: PathBuf) {
+        self.imported_asset_paths.push(path);
+    }
+
+    pub(crate) fn apply_pending_project_action(&mut self, action: PendingProjectAction) {
+        match action {
+            PendingProjectAction::NewProject => self.execute_command(StudioCommand::NewProject),
+            PendingProjectAction::OpenProject => self.execute_command(StudioCommand::OpenProject),
+            PendingProjectAction::Close => self.exit_requested = true,
+        }
+    }
+
     pub(crate) fn take_rebuild_and_play_request(&mut self) -> bool {
         std::mem::take(&mut self.rebuild_and_play_requested)
     }

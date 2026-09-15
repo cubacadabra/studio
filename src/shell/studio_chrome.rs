@@ -31,34 +31,19 @@ impl StudioShell {
                                 self.execute_command(StudioCommand::Save);
                                 ui.close();
                             }
-                            ui.separator();
-                            if menu_entry(ui, Icon::Folder, "Reveal Project", "", true).clicked() {
-                                self.execute_command(StudioCommand::RevealProject);
-                                ui.close();
-                            }
                         });
                         ui.menu_button(RichText::new("Edit").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
-                            menu_entry(ui, Icon::Undo, "Undo", "Ctrl+Z", false);
-                            menu_entry(ui, Icon::Redo, "Redo", "Ctrl+Shift+Z", false);
-                            ui.separator();
-                            if menu_entry(ui, Icon::Settings, "Preferences…", "Ctrl+,", true)
-                                .clicked()
-                            {
-                                self.execute_command(StudioCommand::Preferences);
-                                ui.close();
-                            }
+                            ui.label(
+                                RichText::new("Undo and redo are not available yet")
+                                    .size(TYPE.meta)
+                                    .color(palette(ui).muted),
+                            );
                         });
                         ui.menu_button(RichText::new("Window").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
-                            if menu_entry(ui, Icon::Grid, "Maximize Viewport", "Space", true)
-                                .clicked()
-                            {
-                                self.execute_command(StudioCommand::MaximizeViewport);
-                                ui.close();
-                            }
-                            if menu_entry(ui, Icon::Sliders, "Reset Layout", "", true).clicked() {
-                                self.execute_command(StudioCommand::ResetLayout);
+                            if menu_entry(ui, Icon::Stop, "Close Window", "", true).clicked() {
+                                self.execute_command(StudioCommand::CloseWindow);
                                 ui.close();
                             }
                         });
@@ -239,15 +224,6 @@ impl StudioShell {
                         .truncate(),
                     )
                     .on_hover_text(&self.notice);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new("Layout preview")
-                                .size(TYPE.meta)
-                                .color(colors.faint),
-                        );
-                        vertical_separator(ui, 12.0);
-                        ui.label(RichText::new("Metal").size(TYPE.meta).color(colors.faint));
-                    });
                 });
             });
     }

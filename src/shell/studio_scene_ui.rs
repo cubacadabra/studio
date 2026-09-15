@@ -5,7 +5,14 @@ impl StudioShell {
             return;
         }
         panel_header(ui, Icon::World, "Scene", |ui| {
-            icon_button(ui, Icon::Filter, "Filter scene", false);
+            if ui
+                .add_enabled(self.project_editable, egui::Button::new("Add block"))
+                .on_disabled_hover_text("Open a raw source project to edit the scene")
+                .clicked()
+            {
+                self.scene_edit_requested = Some(SceneEditRequest::AddBlock);
+                self.notice = "Adding platform…".to_owned();
+            }
         });
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -26,10 +33,7 @@ impl StudioShell {
     }
 
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
-        panel_header(ui, Icon::Sliders, "Inspector", |ui| {
-            icon_button(ui, Icon::Lock, "Lock inspector", false);
-            icon_button(ui, Icon::More, "Inspector options", false);
-        });
+        panel_header(ui, Icon::Sliders, "Inspector", |_| {});
         let selected = self
             .scene_outline
             .root
@@ -68,9 +72,13 @@ impl StudioShell {
         }
 
         property_section(ui, "Transform", |ui| {
-            let position_changed =
-                vector_editor(ui, "Position", &mut self.scene_editor_position, 0.1);
-            let size_changed = vector_editor(ui, "Size", &mut self.scene_editor_size, 0.1);
+            let mut position_changed = false;
+            let mut size_changed = false;
+            ui.add_enabled_ui(self.project_editable, |ui| {
+                position_changed =
+                    vector_editor(ui, "Position", &mut self.scene_editor_position, 0.1);
+                size_changed = vector_editor(ui, "Size", &mut self.scene_editor_size, 0.1);
+            });
             if position_changed || size_changed {
                 self.project_dirty = true;
                 self.project_error = None;
@@ -141,7 +149,8 @@ impl StudioShell {
                     .color(colors.secondary_text),
             );
             if ui
-                .add(
+                .add_enabled(
+                    self.project_editable,
                     egui::TextEdit::multiline(&mut self.scene_editor_text)
                         .desired_rows(4)
                         .desired_width(f32::INFINITY)
@@ -163,73 +172,5 @@ impl StudioShell {
                 .size(TYPE.meta)
                 .color(colors.muted),
         );
-    }
-
-    pub(crate) fn asset_shelf(&mut self, ui: &mut egui::Ui) {
-        let colors = palette(ui);
-        editor_header(ui, |ui| {
-            inline_icon(ui, Icon::Assets, colors.muted);
-            ui.label(
-                RichText::new("Assets")
-                    .font(semibold_font(TYPE.primary))
-                    .color(colors.text),
-            );
-            vertical_separator(ui, 12.0);
-            ui.spacing_mut().item_spacing.x = 0.0;
-            for filter in ["All", "Images", "Materials", "Characters"] {
-                if compact_tab(ui, filter, self.asset_filter == filter).clicked() {
-                    self.asset_filter = filter;
-                }
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                icon_button(ui, Icon::Grid, "Grid view", true);
-                search_field(ui, &mut self.search_query, 190.0);
-            });
-        });
-        Frame::NONE
-            .inner_margin(Margin::symmetric(8, 8))
-            .show(ui, |ui| {
-                let query = self.search_query.trim().to_lowercase();
-                let assets = self
-                    .scene_outline
-                    .assets
-                    .iter()
-                    .filter(|asset| match self.asset_filter {
-                        "Images" => asset.kind == "IMAGE",
-                        "Materials" => asset.kind == "MATERIAL",
-                        "Characters" => asset.kind == "CHARACTER",
-                        _ => true,
-                    })
-                    .filter(|asset| query.is_empty() || asset.name.to_lowercase().contains(&query))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                ui.horizontal_wrapped(|ui| {
-                    if assets.is_empty() {
-                        ui.label(
-                            RichText::new(if query.is_empty() {
-                                "No assets in this game."
-                            } else {
-                                "No matching assets."
-                            })
-                            .size(TYPE.secondary)
-                            .color(colors.muted),
-                        );
-                    }
-                    for asset in assets {
-                        if asset_tile(
-                            ui,
-                            &asset.name,
-                            asset.icon,
-                            asset.kind,
-                            self.selected_world_asset == asset.name,
-                        )
-                        .clicked()
-                        {
-                            self.selected_world_asset = asset.name;
-                        }
-                    }
-                });
-            });
     }
 }

@@ -126,6 +126,9 @@ impl StudioApp {
             shell.set_source_manifest(&source, true);
             shell.set_source_assets(load_source_assets(&self.project_root));
             shell.set_source_directories(load_source_directories(&self.project_root));
+            for relative in &imported {
+                shell.record_imported_asset(self.project_root.join(relative));
+            }
             let message = if errors.is_empty() {
                 format!(
                     "Imported {} image{} — save to keep the project change",
@@ -166,6 +169,16 @@ impl StudioApp {
                 PathBuf::from("manifest.json"),
                 self.authored_manifest_source.clone(),
             ));
+        }
+        if let Some((_, manifest_source)) = source_files
+            .iter()
+            .find(|(relative_path, _)| relative_path == Path::new("manifest.json"))
+            && let Err(error) = serde_json::from_str::<Value>(manifest_source)
+        {
+            if let Some(shell) = &mut self.shell {
+                shell.set_project_error(format!("Cannot save manifest: {error}"));
+            }
+            return false;
         }
         let mut saved = Ok(());
         for (relative_path, source) in &source_files {
@@ -329,7 +342,47 @@ impl StudioApp {
             }
             return Ok(());
         }
+        if matches!(request, SceneEditRequest::AddBlock) {
+            let world_id = manifest
+                .pointer("/launch/destinationWorld")
+                .and_then(Value::as_str)
+                .or_else(|| manifest.get("startWorld").and_then(Value::as_str))
+                .unwrap_or("lobby")
+                .to_owned();
+            let world = if world_id == "lobby" {
+                &mut manifest
+            } else {
+                manifest
+                    .get_mut("worlds")
+                    .and_then(Value::as_object_mut)
+                    .and_then(|worlds| worlds.get_mut(&world_id))
+                    .ok_or_else(|| format!("scene world `{world_id}` was not found"))?
+            };
+            let blocks = world
+                .get_mut("blocks")
+                .and_then(Value::as_array_mut)
+                .ok_or_else(|| format!("scene world `{world_id}` has no blocks"))?;
+            let id = format!("platform-new-{}", blocks.len() + 1);
+            blocks.push(serde_json::json!({
+                "id": id,
+                "position": [0, 1, 0],
+                "size": [4, 1, 4],
+                "color": "signal"
+            }));
+            let source = serde_json::to_string_pretty(&manifest)
+                .map_err(|error| format!("could not serialize the scene manifest: {error}"))?
+                + "\n";
+            self.authored_manifest_source = source.clone();
+            if let Some(shell) = &mut self.shell {
+                shell.set_source_manifest(&source, true);
+                shell.set_notice("Platform added — save to keep it".to_owned());
+            }
+            return Ok(());
+        }
         let (target, operation) = match request {
+            SceneEditRequest::AddBlock => {
+                return Err("new block edit was not handled".to_owned());
+            }
             SceneEditRequest::UseImageAsFloor { .. } => {
                 return Err("floor image edit was not handled".to_owned());
             }

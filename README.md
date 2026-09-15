@@ -39,11 +39,12 @@ manifest.json
 src/main.luau
 ```
 
-When `--path` points at a raw project, Studio invokes the installed
-`cubacadabra build-game` command and loads its package from a temporary
-Studio-owned directory. This keeps Studio's raw-project behavior aligned with
-the CLI's module bundling, SDK resolution, manifest validation, and effects
-handling. The temporary package is removed when Studio exits.
+When `--path` points at a raw project, Studio invokes a `cubacadabra
+build-game` executable next to the Studio binary (or in the macOS app's
+`Contents/Resources`), then falls back to `cubacadabra` on `PATH`. Development
+checkouts can use the sibling `../tools` Python source automatically. Set
+`CUBACADABRA_CLI_PATH` to test a specific builder. The package is loaded from a
+temporary Studio-owned directory and removed when Studio exits.
 
 From this repository, run:
 
@@ -65,7 +66,7 @@ The resulting binary can be invoked as:
 
 Controls:
 
-- `World`, `Assets`, `Materials`, and `Test`: switch workspace previews
+- `World`, `Files`, and `Morphs`: switch the available workspaces
 - `ChatGPT · <plan>`: open the in-window Codex chat for the current project
 - `Play` / `Stop`: start or stop the current preview; starting again resets it
 - `Rebuild & Play`: save the source scene, rebuild the current project, and start
@@ -76,7 +77,7 @@ Controls:
 - `Space`: jump
 - drag with the left mouse button: orbit the camera
 - mouse wheel: zoom
-- `Escape`: quit
+- `Close Window`: close Studio, with a save/discard prompt for dirty projects
 
 ## ChatGPT connection
 
@@ -104,10 +105,11 @@ CUBACADABRA_CODEX_PATH=/absolute/path/to/codex \
 ```
 
 Studio currently expects the sibling engine repository at `../rust` at build
-time. For local source-project fallback, it can use the sibling `../tools`
-repository when the `cubacadabra` command is not installed. The desktop host is
-a single binary crate for now; platform packaging and future editor services
-can grow under `crates/` without making the first window more complex.
+time. Release artifacts include the game builder as a Python zipapp, so the
+target machine needs Python 3 to build raw projects. Codex remains an optional
+integration and must be packaged separately or configured with
+`CUBACADABRA_CODEX_PATH`. The runtime reports missing dependencies instead of
+silently depending on a developer checkout.
 
 Studio connects the running game to the multiplayer Worker over WebSockets.
 The backend defaults to the local Worker at `http://127.0.0.1:8787`; set

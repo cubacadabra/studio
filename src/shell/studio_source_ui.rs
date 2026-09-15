@@ -59,6 +59,7 @@ impl StudioShell {
 
     pub(crate) fn mark_source_files_saved(&mut self) {
         self.project_dirty = false;
+        self.imported_asset_paths.clear();
     }
 
     fn source_paths(&self) -> BTreeSet<PathBuf> {
@@ -77,6 +78,11 @@ impl StudioShell {
         self.selected_source_file = Some(path);
         self.selected_source_asset = None;
         self.source_asset_texture = None;
+        self.source_syntax = source_syntax_for_path(
+            self.selected_source_file
+                .as_deref()
+                .unwrap_or(Path::new("src/main.luau")),
+        );
         self.source_editor_text = source;
     }
 
@@ -85,7 +91,13 @@ impl StudioShell {
             return;
         };
         let kind = asset.kind;
-        let bytes = asset.bytes.clone();
+        let bytes = match fs::read(&asset.path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.notice = format!("Could not read {}: {error}", path.display());
+                return;
+            }
+        };
         self.stop_audio_preview();
         self.selected_source_file = None;
         self.selected_source_asset = Some(path.clone());
@@ -136,10 +148,17 @@ impl StudioShell {
             let Some(asset) = self.source_assets.get(&path) else {
                 return;
             };
-            let (kind, bytes) = (asset.kind, asset.bytes.clone());
+            let kind = asset.kind;
             if kind != SourceAssetKind::Audio {
                 return;
             }
+            let bytes = match fs::read(&asset.path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    self.notice = format!("Could not read {}: {error}", path.display());
+                    return;
+                }
+            };
 
             if let Some(preview) = &self.audio_preview
                 && preview.path == path
@@ -418,7 +437,7 @@ impl StudioShell {
         let icon = source_asset_icon(kind);
         panel_header(ui, icon, &label, |ui| {
             ui.label(
-                RichText::new(format_file_size(asset.bytes.len()))
+                RichText::new(format_file_size(asset.bytes))
                     .size(TYPE.meta)
                     .color(colors.muted),
             );

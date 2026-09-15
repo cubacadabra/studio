@@ -3,6 +3,7 @@
 use serde_json::{Value, json};
 use std::{
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
 };
 use unicode_normalization::UnicodeNormalization;
@@ -236,6 +237,7 @@ fn write_project(project: &Path, title: &str, game_id: &str) -> Result<(), Strin
         .map_err(|error| format!("could not create audio asset directory: {error}"))?;
     fs::create_dir_all(project.join("assets/images"))
         .map_err(|error| format!("could not create image asset directory: {error}"))?;
+    write_starter_floor_texture(&project.join("assets/images/starter-floor.png"))?;
 
     let sdk_destination = project.join(".cubacadabra/sdk");
     fs::create_dir_all(&sdk_destination)
@@ -266,6 +268,27 @@ fn write_project(project: &Path, title: &str, game_id: &str) -> Result<(), Strin
     Ok(())
 }
 
+fn write_starter_floor_texture(path: &Path) -> Result<(), String> {
+    let mut image = image::RgbaImage::new(128, 128);
+    for y in 0..128 {
+        for x in 0..128 {
+            let tile = (x / 16 + y / 16) % 2;
+            let color = if tile == 0 {
+                image::Rgba([32, 41, 93, 255])
+            } else {
+                image::Rgba([44, 55, 116, 255])
+            };
+            image.put_pixel(x, y, color);
+        }
+    }
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .map_err(|error| format!("could not encode starter floor texture: {error}"))?;
+    fs::write(path, encoded.into_inner())
+        .map_err(|error| format!("could not write starter floor texture: {error}"))
+}
+
 fn manifest(title: &str, game_id: &str) -> Value {
     let palette = json!({
         "sky": "#151A3F",
@@ -293,6 +316,14 @@ fn manifest(title: &str, game_id: &str) -> Value {
             "groundY": -12,
             "deathY": -9,
             "respawnDelay": 0.65,
+        },
+        "groundMaterial": "floor",
+        "materials": {
+            "floor": {
+                "image": "starter-floor",
+                "tileU": 8,
+                "tileV": 8,
+            }
         },
         "clouds": [
             { "position": [-20, 19, -35], "scale": 0.9 },
@@ -331,6 +362,13 @@ fn manifest(title: &str, game_id: &str) -> Value {
             "maxPlayers": 18,
         },
         "palette": palette.clone(),
+        "assets": {
+            "images": {
+                "starter-floor": {
+                    "path": "assets/images/starter-floor.png"
+                }
+            }
+        },
         "avatars": {
             "player": {
                 "skin": "#E8AE86",
@@ -362,7 +400,15 @@ fn manifest(title: &str, game_id: &str) -> Value {
                 "world": world,
                 "blocks": course_blocks,
                 "checkpoints": course_checkpoints,
-                "signs": [],
+                "signs": [
+                    {
+                        "id": "welcome-sign",
+                        "text": "EDIT THIS SIGN IN INSPECTOR",
+                        "position": [0, 2.2, 14],
+                        "maxWidth": 7.0,
+                        "color": "paper"
+                    }
+                ],
                 "interactions": [],
             },
         },
@@ -421,6 +467,12 @@ mod tests {
         assert!(
             result
                 .project
+                .join("assets/images/starter-floor.png")
+                .is_file()
+        );
+        assert!(
+            result
+                .project
                 .join(".cubacadabra/sdk/shared-state.luau")
                 .is_file()
         );
@@ -443,6 +495,13 @@ mod tests {
                 .unwrap()
                 .len(),
             3
+        );
+        assert_eq!(
+            manifest["worlds"]["starter-world"]["signs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
         assert!(
             fs::read_to_string(result.project.join("src/main.luau"))

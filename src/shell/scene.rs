@@ -11,14 +11,7 @@ pub(crate) enum Workspace {
 }
 
 impl Workspace {
-    pub(crate) const ALL: [Self; 6] = [
-        Self::World,
-        Self::Scripts,
-        Self::Assets,
-        Self::Materials,
-        Self::Morphs,
-        Self::Test,
-    ];
+    pub(crate) const ALL: [Self; 3] = [Self::World, Self::Scripts, Self::Morphs];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -86,7 +79,6 @@ pub(crate) struct ProjectLoadingState {
 pub(crate) struct ManifestAsset {
     pub(crate) name: String,
     pub(crate) kind: &'static str,
-    pub(crate) icon: Icon,
 }
 
 impl SceneOutline {
@@ -536,12 +528,12 @@ fn manifest_assets(manifest: &Value) -> Vec<ManifestAsset> {
             let Some(definitions) = definitions.as_object() else {
                 continue;
             };
-            let (kind, icon) = match group.as_str() {
-                "images" => ("IMAGE", Icon::Image),
-                "audio" => ("AUDIO", Icon::Object),
-                "models" => ("MODEL", Icon::Object),
-                "characters" | "morphs" => ("CHARACTER", Icon::Character),
-                _ => ("ASSET", Icon::Assets),
+            let kind = match group.as_str() {
+                "images" => "IMAGE",
+                "audio" => "AUDIO",
+                "models" => "MODEL",
+                "characters" | "morphs" => "CHARACTER",
+                _ => "ASSET",
             };
             for name in definitions.keys() {
                 assets.insert(
@@ -549,7 +541,6 @@ fn manifest_assets(manifest: &Value) -> Vec<ManifestAsset> {
                     ManifestAsset {
                         name: name.clone(),
                         kind,
-                        icon,
                     },
                 );
             }
@@ -570,7 +561,6 @@ fn manifest_assets(manifest: &Value) -> Vec<ManifestAsset> {
                     ManifestAsset {
                         name: name.clone(),
                         kind: "MATERIAL",
-                        icon: Icon::Material,
                     },
                 );
             }

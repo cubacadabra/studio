@@ -398,7 +398,16 @@ impl StudioApp {
             .as_mut()
             .is_some_and(StudioShell::take_save_request);
         if save_requested {
-            self.save_project_source();
+            if self.save_project_source()
+                && let Some(action) = self
+                    .shell
+                    .as_mut()
+                    .and_then(StudioShell::take_pending_project_action_after_save)
+            {
+                if let Some(shell) = &mut self.shell {
+                    shell.apply_pending_project_action(action);
+                }
+            }
         }
         let rebuild_requested = self
             .shell

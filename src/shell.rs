@@ -92,6 +92,28 @@ use style_icons::*;
 use style_layout::*;
 pub(crate) use theme::*;
 
+pub(crate) fn source_syntax_for_path(path: &Path) -> Syntax {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        Syntax::new("JSON")
+    } else {
+        Syntax::lua()
+            .with_keywords([
+                "and", "break", "do", "else", "elseif", "end", "for", "function", "if", "in",
+                "local", "not", "or", "repeat", "return", "then", "until", "while", "continue",
+                "export", "type", "typeof", "self",
+            ])
+            .with_types([
+                "boolean", "number", "string", "function", "userdata", "thread", "table", "vector",
+                "CFrame", "Color3", "Instance",
+            ])
+            .with_special(["false", "nil", "true"])
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 struct SourceAudioPreview {
     path: PathBuf,
@@ -125,11 +147,9 @@ pub(crate) enum StudioCommand {
     NewProject,
     OpenProject,
     Save,
-    RevealProject,
+    #[allow(dead_code)]
+    CloseWindow,
     Copy,
-    Preferences,
-    MaximizeViewport,
-    ResetLayout,
     ShowWorld,
     ShowScripts,
     ShowAssets,
@@ -222,6 +242,7 @@ pub(crate) struct CodexChatSendRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum SceneEditRequest {
+    AddBlock,
     UseImageAsFloor {
         asset_path: PathBuf,
     },
@@ -368,6 +389,16 @@ pub(crate) struct StudioShell {
     #[cfg(not(target_os = "macos"))]
     new_project_title_focus_requested: bool,
     logo_texture: egui::TextureHandle,
+    pending_project_action: Option<PendingProjectAction>,
+    exit_requested: bool,
+    imported_asset_paths: Vec<PathBuf>,
     roughness: f32,
     pending_textures_delta: egui::TexturesDelta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PendingProjectAction {
+    NewProject,
+    OpenProject,
+    Close,
 }

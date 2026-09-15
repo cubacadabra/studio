@@ -77,6 +77,15 @@ jobs:
           CUBACADABRA_BACKEND_URL: https://api.cubacadabra.com/
         run: cargo build --release --manifest-path studio/Cargo.toml --bin studio --target "${{ matrix.target }}"
 
+      - name: Build bundled game builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          python3 -m zipapp tools/src \
+            --main cubacadabra.cli:main \
+            --output staging/cubacadabra.pyz
+
       - name: Package macOS application
         if: matrix.platform == 'macos'
         shell: bash
@@ -93,6 +102,7 @@ jobs:
           mkdir -p "${app_root}/Contents/MacOS" "${app_root}/Contents/Resources" dist
           cp "studio/target/${TARGET}/release/studio" "${app_root}/Contents/MacOS/studio"
           cp studio/assets/logo.png "${app_root}/Contents/Resources/logo.png"
+          cp staging/cubacadabra.pyz "${app_root}/Contents/Resources/cubacadabra.pyz"
           iconset="staging/logo.iconset"
           mkdir -p "${iconset}"
           for size in 16 32 128 256 512; do
@@ -136,6 +146,7 @@ jobs:
 
           mkdir -p "${staging}" dist
           cp "studio/target/${TARGET}/release/studio.exe" "${staging}/studio.exe"
+          cp staging/cubacadabra.pyz "${staging}/cubacadabra.pyz"
           cp studio/LICENSE studio/COPYRIGHT "${staging}/"
           (cd staging && 7z a -tzip "../dist/${archive}" "$(basename "${staging}")")
 
@@ -152,6 +163,7 @@ jobs:
 
           mkdir -p "${staging}" dist
           cp "studio/target/${TARGET}/release/studio" "${staging}/studio"
+          cp staging/cubacadabra.pyz "${staging}/cubacadabra.pyz"
           cp studio/LICENSE studio/COPYRIGHT "${staging}/"
           tar -C staging -czf "dist/${archive}" "$(basename "${staging}")"
 

@@ -190,17 +190,7 @@ fn menu_labels_keep_padding_and_share_the_workspace_baseline() {
             .collect();
         assert_eq!(
             labels.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
-            [
-                "File",
-                "Edit",
-                "Window",
-                "World",
-                "Files",
-                "Assets",
-                "Materials",
-                "Morphs",
-                "Test"
-            ]
+            ["File", "Edit", "Window", "World", "Files", "Morphs",]
         );
         for (_, rect) in &labels {
             assert!(

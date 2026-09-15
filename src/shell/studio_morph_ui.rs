@@ -12,7 +12,7 @@ impl StudioShell {
             .frame(editor_frame(colors.panel_raised))
             .show(root, |ui| {
                 panel_header(ui, Icon::Sliders, "Morph inspector", |ui| {
-                    icon_button(ui, Icon::More, "Morph options", false);
+                    let _ = ui;
                 });
                 content_frame().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
@@ -329,10 +329,6 @@ impl StudioShell {
                         .size(TYPE.secondary)
                         .color(colors.secondary_text),
                     );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        icon_button(ui, Icon::More, "Preview options", false);
-                        icon_button(ui, Icon::Camera, "Camera view", false);
-                    });
                 });
                 let preview_rect = Rect::from_min_max(
                     egui::pos2(

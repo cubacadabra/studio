@@ -50,17 +50,7 @@ impl StudioShell {
             .first()
             .map(|asset| asset.name.clone())
             .unwrap_or_default();
-        let source_syntax = Syntax::lua()
-            .with_keywords([
-                "and", "break", "do", "else", "elseif", "end", "for", "function", "if", "in",
-                "local", "not", "or", "repeat", "return", "then", "until", "while", "continue",
-                "export", "type", "typeof", "self",
-            ])
-            .with_types([
-                "boolean", "number", "string", "function", "userdata", "thread", "table", "vector",
-                "CFrame", "Color3", "Instance",
-            ])
-            .with_special(["false", "nil", "true"]);
+        let source_syntax = source_syntax_for_path(Path::new("src/main.luau"));
         Self {
             context,
             state,
@@ -194,6 +184,9 @@ impl StudioShell {
             #[cfg(not(target_os = "macos"))]
             new_project_title_focus_requested: false,
             logo_texture,
+            pending_project_action: None,
+            exit_requested: false,
+            imported_asset_paths: Vec::new(),
             roughness: 0.72,
             pending_textures_delta: egui::TexturesDelta::default(),
         }

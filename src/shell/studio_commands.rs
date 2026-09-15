@@ -7,6 +7,12 @@ impl StudioShell {
         }
         match command {
             StudioCommand::NewProject => {
+                if self.project_dirty {
+                    self.pending_project_action = Some(PendingProjectAction::NewProject);
+                    self.notice =
+                        "Unsaved changes — save or discard them before continuing".to_owned();
+                    return;
+                }
                 self.new_project_dialog_open = true;
                 self.new_project_title.clear();
                 self.new_project_error = None;
@@ -16,6 +22,12 @@ impl StudioShell {
                 }
             }
             StudioCommand::OpenProject => {
+                if self.project_dirty {
+                    self.pending_project_action = Some(PendingProjectAction::OpenProject);
+                    self.notice =
+                        "Unsaved changes — save or discard them before continuing".to_owned();
+                    return;
+                }
                 self.open_project_requested = true;
                 self.notice = "Choose a project folder…".to_owned();
             }
@@ -27,20 +39,9 @@ impl StudioShell {
                     self.notice = "This preview is read-only".to_owned();
                 }
             }
-            StudioCommand::RevealProject => {
-                self.notice = "Reveal Project is not connected yet".to_owned();
-            }
+            StudioCommand::CloseWindow => self.request_close(),
             StudioCommand::Copy => {
                 self.state.egui_input_mut().events.push(egui::Event::Copy);
-            }
-            StudioCommand::Preferences => {
-                self.notice = "Preferences are coming later".to_owned();
-            }
-            StudioCommand::MaximizeViewport => {
-                self.notice = "Viewport maximize is coming later".to_owned();
-            }
-            StudioCommand::ResetLayout => {
-                self.notice = "Layout reset".to_owned();
             }
             StudioCommand::ShowWorld => self.select_workspace(Workspace::World),
             StudioCommand::ShowScripts => self.select_workspace(Workspace::Scripts),
@@ -145,7 +146,81 @@ impl StudioShell {
         self.show_new_project_dialog(ui.ctx());
         self.show_project_loading(ui.ctx());
         self.show_project_error(ui.ctx());
+        self.show_unsaved_changes(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn show_unsaved_changes(&mut self, context: &egui::Context) {
+        if self.pending_project_action.is_none() {
+            return;
+        }
+        let colors = if context.style_of(context.theme()).visuals.dark_mode {
+            DARK_PALETTE
+        } else {
+            LIGHT_PALETTE
+        };
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("unsaved_project_changes"))
+            .backdrop_color(Color32::from_black_alpha(128))
+            .frame(
+                Frame::NONE
+                    .fill(colors.panel_raised)
+                    .stroke(Stroke::new(1.0, colors.border_strong))
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::same(20)),
+            )
+            .show(context, |ui| {
+                ui.set_width(360.0);
+                ui.label(
+                    RichText::new("Unsaved changes")
+                        .font(semibold_font(18.0))
+                        .color(colors.text),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Save your project before continuing?")
+                        .size(TYPE.secondary)
+                        .color(colors.secondary_text),
+                );
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(0);
+                    }
+                    if ui.button("Discard").clicked() {
+                        choice = Some(1);
+                    }
+                    if ui
+                        .add_enabled(self.project_editable, egui::Button::new("Save"))
+                        .clicked()
+                    {
+                        choice = Some(2);
+                    }
+                });
+            });
+        match choice {
+            Some(0) => self.pending_project_action = None,
+            Some(1) => {
+                if let Some(action) = self.discard_pending_project_action() {
+                    for path in self.take_imported_assets_for_discard() {
+                        if let Err(error) = fs::remove_file(&path)
+                            && error.kind() != std::io::ErrorKind::NotFound
+                        {
+                            log::warn!(
+                                "could not remove discarded imported asset {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                    self.apply_pending_project_action(action);
+                }
+            }
+            Some(2) => {
+                self.save_requested = true;
+                self.notice = "Saving project…".to_owned();
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn show_project_loading(&self, context: &egui::Context) {
