@@ -151,6 +151,12 @@ impl StudioShell {
         std::mem::take(&mut self.rebuild_and_play_requested)
     }
 
+    pub(crate) fn request_rebuild_and_play(&mut self) {
+        self.workspace = Workspace::World;
+        self.rebuild_and_play_requested = true;
+        self.notice = "Saving and rebuilding preview…".to_owned();
+    }
+
     pub(crate) fn take_restart_request(&mut self) -> bool {
         std::mem::take(&mut self.restart_requested)
     }

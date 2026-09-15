@@ -132,8 +132,7 @@ impl StudioShell {
                                 )
                                 .clicked()
                             {
-                                self.rebuild_and_play_requested = true;
-                                self.notice = "Saving and rebuilding preview…".to_owned();
+                                self.request_rebuild_and_play();
                             }
                             if self.project_editable
                                 && toolbar_button(ui, Icon::Play, "Restart", false).clicked()
