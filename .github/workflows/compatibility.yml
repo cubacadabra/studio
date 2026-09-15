@@ -1,7 +1,8 @@
 name: Cross-repository compatibility
 on:
   push:
-  pull_request:
+    tags:
+      - "v*.*.*"
 jobs:
   compatibility:
     uses: cubacadabra/tools/.github/workflows/compatibility-reusable.yml@main
