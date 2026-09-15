@@ -593,6 +593,8 @@ impl StudioApp {
                     !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
                 );
                 shell.set_source_manifest(&self.authored_manifest_source, false);
+                shell.set_source_assets(load_source_assets(&self.project_root));
+                shell.set_source_files(load_source_files(&self.project_root));
                 shell.finish_project_loading();
                 shell.set_notice("Preview rebuilt and playing".to_owned());
             }
@@ -622,6 +624,7 @@ impl StudioApp {
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
         );
         shell.set_source_manifest(&self.authored_manifest_source, false);
+        shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_files(load_source_files(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
         if let Err(message) = self.codex.set_project_root(&self.project_root) {

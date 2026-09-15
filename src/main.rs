@@ -232,10 +232,11 @@ struct StudioApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, diff_project_files, joystick_movement,
-        load_game_sources, load_local_morph_catalog, load_project_in_background, load_source_files,
-        project_asset_slug, project_manifest, should_forward_gameplay_key,
-        should_forward_gameplay_keyboard, update_manifest_sign_text, update_project_morph_catalog,
+        ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, SourceAssetKind, diff_project_files,
+        joystick_movement, load_game_sources, load_local_morph_catalog, load_project_in_background,
+        load_source_assets, load_source_files, project_asset_slug, project_manifest,
+        should_forward_gameplay_key, should_forward_gameplay_keyboard, update_manifest_sign_text,
+        update_project_morph_catalog,
     };
     use crate::game_creator;
     use std::{fs, path::Path};
@@ -269,17 +270,21 @@ mod tests {
     }
 
     #[test]
-    fn source_file_browser_lists_authored_manifest_and_luau_files() {
+    fn source_file_browser_lists_the_source_tree_and_assets() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
         let files = load_source_files(&root);
+        let assets = load_source_assets(&root);
         assert!(files.contains_key(Path::new("manifest.json")));
         assert!(files.contains_key(Path::new("src/main.luau")));
         assert!(files.contains_key(Path::new("src/ui/actions.luau")));
+        assert!(files.contains_key(Path::new("effects.json")));
+        assert!(assets.contains_key(Path::new("assets/audio/spell-cast.wav")));
+        assert_eq!(
+            assets[Path::new("assets/audio/spell-cast.wav")].kind,
+            SourceAssetKind::Audio
+        );
         assert!(!files.keys().any(|path| path.starts_with("build")));
-        assert!(files.keys().all(|path| {
-            path == Path::new("manifest.json")
-                || path.extension().and_then(|extension| extension.to_str()) == Some("luau")
-        }));
+        assert!(!files.keys().any(|path| path.starts_with("assets")));
     }
 
     #[test]

@@ -23,7 +23,7 @@ impl Workspace {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::World => "World",
-            Self::Scripts => "Scripts",
+            Self::Scripts => "Files",
             Self::Assets => "Assets",
             Self::Materials => "Materials",
             Self::Morphs => "Morphs",

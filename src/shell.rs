@@ -5,6 +5,7 @@ use crate::{
         build_morph_draft_json, build_source_manifest_json, default_rigid_accessory_asset,
         fit_rigid_headwear_to_person, morph_mesh_bounds,
     },
+    project::{SourceAsset, SourceAssetKind},
 };
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
@@ -90,6 +91,13 @@ use style_controls::*;
 use style_icons::*;
 use style_layout::*;
 pub(crate) use theme::*;
+
+struct SourceAudioPreview {
+    path: PathBuf,
+    _stream: rodio::OutputStream,
+    sink: rodio::Sink,
+    duration: Option<Duration>,
+}
 
 const MORPH_LIBRARY_KINDS: [MorphAssetKind; 17] = [
     MorphAssetKind::Base,
@@ -326,7 +334,12 @@ pub(crate) struct StudioShell {
     codex_change_review_open: bool,
     codex_undo_requested: bool,
     source_files: BTreeMap<PathBuf, String>,
+    source_assets: BTreeMap<PathBuf, SourceAsset>,
+    source_collapsed_directories: BTreeSet<PathBuf>,
     selected_source_file: Option<PathBuf>,
+    selected_source_asset: Option<PathBuf>,
+    source_asset_texture: Option<(PathBuf, egui::TextureHandle, [usize; 2])>,
+    audio_preview: Option<SourceAudioPreview>,
     source_editor_text: String,
     source_editor: CodeEditor,
     source_syntax: Syntax,

@@ -315,11 +315,10 @@ pub(crate) fn load_source_files(root: &Path) -> BTreeMap<PathBuf, String> {
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;
             };
-            let is_manifest = relative == Path::new("manifest.json");
-            let is_luau = path.extension().and_then(|extension| extension.to_str()) == Some("luau");
-            if (is_manifest || is_luau)
-                && let Ok(source) = fs::read_to_string(&path)
-            {
+            if relative.starts_with("assets") {
+                continue;
+            }
+            if let Ok(source) = fs::read_to_string(&path) {
                 files.insert(relative.to_path_buf(), source);
             }
         }
@@ -330,6 +329,79 @@ pub(crate) fn load_source_files(root: &Path) -> BTreeMap<PathBuf, String> {
         visit(root, root, &mut files);
     }
     files
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceAssetKind {
+    Image,
+    Audio,
+    Other,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SourceAsset {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) kind: SourceAssetKind,
+}
+
+pub(crate) fn load_source_assets(root: &Path) -> BTreeMap<PathBuf, SourceAsset> {
+    fn asset_kind(path: &Path) -> SourceAssetKind {
+        match path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") => SourceAssetKind::Image,
+            Some("wav" | "mp3" | "ogg" | "flac" | "m4a" | "aac") => SourceAssetKind::Audio,
+            _ => SourceAssetKind::Other,
+        }
+    }
+
+    fn visit(root: &Path, directory: &Path, assets: &mut BTreeMap<PathBuf, SourceAsset>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if matches!(name.to_str(), Some(".git" | "target" | "build"))
+                || name.to_string_lossy().starts_with('.')
+            {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                visit(root, &path, assets);
+                continue;
+            }
+            if !file_type.is_file() || !path.starts_with(root.join("assets")) {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            assets.insert(
+                relative.to_path_buf(),
+                SourceAsset {
+                    bytes,
+                    kind: asset_kind(&path),
+                },
+            );
+        }
+    }
+
+    let mut assets = BTreeMap::new();
+    let assets_root = root.join("assets");
+    if assets_root.is_dir() {
+        visit(root, &assets_root, &mut assets);
+    }
+    assets
 }
 
 pub(crate) fn project_manifest(project: &Path) -> Result<PathBuf, String> {
