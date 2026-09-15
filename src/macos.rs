@@ -265,15 +265,22 @@ pub(crate) fn show_new_project_dialog(
 pub(crate) fn install_native_menu() {
     let main_thread = main_thread_marker();
     let application = NSApplication::sharedApplication(main_thread);
-    let main_menu = application
-        .mainMenu()
-        .expect("Winit should install the macOS application menu before resuming");
-    let application_menu_item = main_menu
-        .itemAtIndex(0)
-        .expect("Winit should install the macOS application menu item");
-    let application_menu = application_menu_item
-        .submenu()
-        .expect("Winit's first macOS menu should be the application menu");
+    let Some(main_menu) = application.mainMenu() else {
+        log::warn!("macOS menu installation skipped: AppKit has no main menu yet");
+        return;
+    };
+    let Some(application_menu_item) = main_menu.itemAtIndex(0) else {
+        log::warn!("macOS menu installation skipped: AppKit has no application menu item yet");
+        return;
+    };
+    if !application_menu_item.hasSubmenu() {
+        log::warn!("macOS menu installation skipped: application menu item has no submenu");
+        return;
+    }
+    let Some(application_menu) = application_menu_item.submenu() else {
+        log::warn!("macOS menu installation skipped: application menu has no submenu yet");
+        return;
+    };
 
     application_menu_item.setTitle(ns_string!("Cubacadabra Studio"));
     application_menu.setTitle(ns_string!("Cubacadabra Studio"));
@@ -291,9 +298,10 @@ pub(crate) fn install_native_menu() {
 }
 
 fn configure_application_menu(menu: &NSMenu, _main_thread: MainThreadMarker, target: &AnyObject) {
-    let about_item = menu
-        .itemAtIndex(0)
-        .expect("Winit's application menu should contain an About item");
+    let Some(about_item) = menu.itemAtIndex(0) else {
+        log::warn!("macOS menu installation skipped: application menu has no About item");
+        return;
+    };
     about_item.setTitle(ns_string!("About Cubacadabra Studio"));
     // SAFETY: `showAbout:` is registered on MenuTarget with the standard
     // one-argument menu action signature. MENU_TARGET retains the target.
@@ -304,11 +312,12 @@ fn configure_application_menu(menu: &NSMenu, _main_thread: MainThreadMarker, tar
 
     // Winit supplies the remaining standard application commands. Rename the
     // process-derived labels so unbundled development builds still read like
-    // the finished application.
-    if let Some(hide_item) = menu.itemAtIndex(4) {
+    // the finished application. Winit's default menu order is About, divider,
+    // Services, Hide, Hide Others, Show All, divider, Quit.
+    if let Some(hide_item) = menu.itemAtIndex(3) {
         hide_item.setTitle(ns_string!("Hide Cubacadabra Studio"));
     }
-    if let Some(quit_item) = menu.itemAtIndex(8) {
+    if let Some(quit_item) = menu.itemAtIndex(7) {
         quit_item.setTitle(ns_string!("Quit Cubacadabra Studio"));
     }
 }
