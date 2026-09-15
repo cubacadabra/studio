@@ -124,16 +124,20 @@ impl StudioShell {
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, project_name: &str) {
         self.runtime_viewport = Rect::NOTHING;
         self.show_top_bar(ui, project_name);
-        self.show_status_bar(ui);
-        if self.codex_chat_open {
-            self.show_codex_chat(ui);
-        }
-        match self.workspace {
-            Workspace::World => self.show_world(ui),
-            Workspace::Assets => self.show_assets(ui),
-            Workspace::Materials => self.show_materials(ui),
-            Workspace::Morphs => self.show_morphs(ui),
-            Workspace::Test => self.show_test(ui),
+        if self.start_screen {
+            self.show_start_screen(ui);
+        } else {
+            self.show_status_bar(ui);
+            if self.codex_chat_open {
+                self.show_codex_chat(ui);
+            }
+            match self.workspace {
+                Workspace::World => self.show_world(ui),
+                Workspace::Assets => self.show_assets(ui),
+                Workspace::Materials => self.show_materials(ui),
+                Workspace::Morphs => self.show_morphs(ui),
+                Workspace::Test => self.show_test(ui),
+            }
         }
         #[cfg(not(target_os = "macos"))]
         self.show_new_project_dialog(ui.ctx());

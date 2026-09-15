@@ -64,87 +64,99 @@ impl StudioShell {
                         });
                     }
 
-                    ui.add_space(8.0);
-                    for workspace in Workspace::ALL {
-                        if workspace_tab(ui, workspace.label(), self.workspace == workspace)
-                            .clicked()
-                        {
-                            self.execute_command(workspace.command());
+                    if !self.start_screen {
+                        ui.add_space(8.0);
+                        for workspace in Workspace::ALL {
+                            if workspace_tab(ui, workspace.label(), self.workspace == workspace)
+                                .clicked()
+                            {
+                                self.execute_command(workspace.command());
+                            }
                         }
                     }
 
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        if self.auth_pending {
-                            ui.label(
-                                RichText::new("Signing in…")
-                                    .size(TYPE.meta)
-                                    .color(colors.muted),
-                            );
-                        } else if let Some(user) = &self.auth_user {
-                            ui.label(
-                                RichText::new(&user.name)
-                                    .size(TYPE.meta)
-                                    .color(colors.secondary_text),
-                            );
-                        } else if toolbar_button(ui, Icon::Character, "Sign in", false).clicked() {
-                            self.auth_requested = true;
-                        }
-                        vertical_separator(ui, 14.0);
-                        self.show_chatgpt_control(ui, colors);
-                        let play_label = if self.playing { "Stop" } else { "Play" };
-                        let play_width = toolbar_button_width(ui, play_label);
-                        if ui.available_width() >= play_width + 48.0 {
-                            let live = ui.allocate_response(
-                                egui::vec2(40.0, CONTROL_HEIGHT),
-                                Sense::hover(),
-                            );
-                            paint_status_label(ui, live.rect, colors.live, "Live");
-                        }
-                        let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
-                        if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
-                            if self.playing {
-                                self.playing = false;
-                                self.notice = "Play session stopped".to_owned();
-                            } else {
-                                self.playing = true;
+                    if !self.start_screen {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            if self.auth_pending {
+                                ui.label(
+                                    RichText::new("Signing in…")
+                                        .size(TYPE.meta)
+                                        .color(colors.muted),
+                                );
+                            } else if let Some(user) = &self.auth_user {
+                                ui.label(
+                                    RichText::new(&user.name)
+                                        .size(TYPE.meta)
+                                        .color(colors.secondary_text),
+                                );
+                            } else if toolbar_button(ui, Icon::Character, "Sign in", false)
+                                .clicked()
+                            {
+                                self.auth_requested = true;
+                            }
+                            vertical_separator(ui, 14.0);
+                            self.show_chatgpt_control(ui, colors);
+                            let play_label = if self.playing { "Stop" } else { "Play" };
+                            let play_width = toolbar_button_width(ui, play_label);
+                            if ui.available_width() >= play_width + 48.0 {
+                                let live = ui.allocate_response(
+                                    egui::vec2(40.0, CONTROL_HEIGHT),
+                                    Sense::hover(),
+                                );
+                                paint_status_label(ui, live.rect, colors.live, "Live");
+                            }
+                            let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
+                            if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
+                                if self.playing {
+                                    self.playing = false;
+                                    self.notice = "Play session stopped".to_owned();
+                                } else {
+                                    self.playing = true;
+                                    self.restart_requested = true;
+                                    self.notice = "Restarting preview…".to_owned();
+                                }
+                            }
+                            if self.project_editable
+                                && toolbar_button(ui, Icon::Save, "Save", self.project_dirty)
+                                    .clicked()
+                            {
+                                self.execute_command(StudioCommand::Save);
+                            }
+                            if self.project_editable
+                                && toolbar_button(
+                                    ui,
+                                    Icon::Play,
+                                    "Rebuild & Play",
+                                    self.preview_stale,
+                                )
+                                .clicked()
+                            {
+                                self.rebuild_and_play_requested = true;
+                                self.notice = "Saving and rebuilding preview…".to_owned();
+                            }
+                            if self.project_editable
+                                && toolbar_button(ui, Icon::Play, "Restart", false).clicked()
+                            {
                                 self.restart_requested = true;
                                 self.notice = "Restarting preview…".to_owned();
                             }
-                        }
-                        if self.project_editable
-                            && toolbar_button(ui, Icon::Save, "Save", self.project_dirty).clicked()
-                        {
-                            self.execute_command(StudioCommand::Save);
-                        }
-                        if self.project_editable
-                            && toolbar_button(ui, Icon::Play, "Rebuild & Play", self.preview_stale)
-                                .clicked()
-                        {
-                            self.rebuild_and_play_requested = true;
-                            self.notice = "Saving and rebuilding preview…".to_owned();
-                        }
-                        if self.project_editable
-                            && toolbar_button(ui, Icon::Play, "Restart", false).clicked()
-                        {
-                            self.restart_requested = true;
-                            self.notice = "Restarting preview…".to_owned();
-                        }
-                        let project_width = (ui.available_width() - 17.0).min(180.0);
-                        if project_width >= 72.0 {
-                            vertical_separator(ui, 14.0);
-                            ui.add_sized(
-                                [project_width, CONTROL_HEIGHT],
-                                egui::Label::new(
-                                    RichText::new(project_name)
-                                        .size(TYPE.secondary)
-                                        .color(colors.secondary_text),
+                            let project_width = (ui.available_width() - 17.0).min(180.0);
+                            if project_width >= 72.0 {
+                                vertical_separator(ui, 14.0);
+                                ui.add_sized(
+                                    [project_width, CONTROL_HEIGHT],
+                                    egui::Label::new(
+                                        RichText::new(project_name)
+                                            .size(TYPE.secondary)
+                                            .color(colors.secondary_text),
+                                    )
+                                    .truncate(),
                                 )
-                                .truncate(),
-                            )
-                            .on_hover_text(project_name);
-                        }
-                    });
+                                .on_hover_text(project_name);
+                            }
+                        });
+                    }
                 });
             });
     }

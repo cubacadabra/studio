@@ -18,6 +18,10 @@ cargo run --release -vv -- --path /Users/aa/cubacadabra/examples/survival-101
 
 Studio accepts either a built package or a raw game project.
 
+Launching Studio without `--path` opens a project chooser with recent projects
+and **Open Project…** / **New Project…** actions. Projects opened successfully
+are kept in the recent-project list for the next launch.
+
 A built package contains:
 
 ```text

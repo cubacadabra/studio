@@ -196,6 +196,7 @@ struct StudioApp {
     codex: CodexClient,
     network: BackendClient,
     client: ClientSession,
+    recent_projects: Vec<PathBuf>,
     image_atlas: Option<ImageAtlas>,
     window: Option<Window>,
     renderer: Option<Renderer>,

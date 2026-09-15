@@ -18,7 +18,7 @@ pub(crate) fn parse_options() -> Result<StudioOptions, Box<dyn Error>> {
             );
             println!();
             println!(
-                "Open a local Cubacadabra game package, or launch the standalone morph preview."
+                "Open a local Cubacadabra game package. Without --path, Studio opens the project chooser."
             );
             std::process::exit(0);
         }

@@ -20,6 +20,22 @@ impl StudioShell {
         self.workspace == Workspace::Morphs
     }
 
+    pub(crate) fn set_start_screen(&mut self, start_screen: bool) {
+        self.start_screen = start_screen;
+        if start_screen {
+            self.playing = false;
+            self.notice = "No project open".to_owned();
+        }
+    }
+
+    pub(crate) fn set_recent_projects(&mut self, projects: Vec<PathBuf>) {
+        self.recent_projects = projects;
+    }
+
+    pub(crate) fn take_recent_project_request(&mut self) -> Option<PathBuf> {
+        self.recent_project_requested.take()
+    }
+
     pub(crate) fn set_notice(&mut self, notice: String) {
         self.notice = notice;
     }

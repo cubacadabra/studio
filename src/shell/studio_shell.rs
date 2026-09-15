@@ -68,9 +68,9 @@ impl StudioShell {
             selected_asset: "forest-grass",
             test_tool: "Sessions",
             asset_filter: "All",
-            // Studio historically launched directly into its live runtime.
-            // Keep that behavior now that the shell has a Play/Stop toggle so
-            // keyboard and engine-owned pointer controls work immediately.
+            // A project opened from the command line starts in the live
+            // workspace. The no-argument bootstrap changes this to the start
+            // screen in `set_start_screen` before the first frame.
             playing: true,
             project_editable: false,
             project_dirty: false,
@@ -152,6 +152,9 @@ impl StudioShell {
             codex_source_change_count: 0,
             codex_change_review_open: false,
             codex_undo_requested: false,
+            start_screen: false,
+            recent_projects: Vec::new(),
+            recent_project_requested: None,
             open_project_requested: false,
             project_loading: None,
             new_project_dialog_open: false,

@@ -58,6 +58,8 @@ mod studio_project_ui;
 mod studio_scene_ui;
 #[path = "shell/studio_shell.rs"]
 mod studio_shell;
+#[path = "shell/studio_start_ui.rs"]
+mod studio_start_ui;
 #[path = "shell/studio_state.rs"]
 mod studio_state;
 #[path = "shell/studio_test_ui.rs"]
@@ -319,6 +321,9 @@ pub(crate) struct StudioShell {
     codex_source_change_count: usize,
     codex_change_review_open: bool,
     codex_undo_requested: bool,
+    start_screen: bool,
+    recent_projects: Vec<PathBuf>,
+    recent_project_requested: Option<PathBuf>,
     open_project_requested: bool,
     project_loading: Option<ProjectLoadingState>,
     new_project_dialog_open: bool,

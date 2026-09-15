@@ -537,6 +537,9 @@ impl StudioApp {
         self.manifest_source = manifest_source;
         self.standalone_preview = standalone_preview;
         self.temporary_package = temporary_package;
+        if !standalone_preview {
+            self.recent_projects = remember_recent_project(&self.project_root);
+        }
         self.image_atlas = image_atlas;
         self.network = network;
         self.client = client;
@@ -596,6 +599,7 @@ impl StudioApp {
         if let Some(parent) = self.project_root.parent() {
             shell.set_new_project_parent(parent.to_path_buf());
         }
+        shell.set_recent_projects(self.recent_projects.clone());
         self.shell = Some(shell);
         if let Some(local_catalog) = self.local_morph_catalog.take() {
             self.install_local_morphs(local_catalog)?;

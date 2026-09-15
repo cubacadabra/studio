@@ -14,6 +14,7 @@ impl StudioApp {
         let temporary_package = sources.temporary_package;
         let morph_catalog_path =
             morph_catalog_path.or_else(|| discover_project_morph_catalog(&project_root));
+        let recent_projects = load_recent_projects();
         let local_morph_catalog = morph_catalog_path
             .as_deref()
             .map(load_local_morph_catalog)
@@ -54,6 +55,7 @@ impl StudioApp {
             codex,
             network,
             client,
+            recent_projects,
             window: None,
             renderer: None,
             shell: None,
@@ -135,6 +137,10 @@ impl StudioApp {
         if let Ok(parent) = env::current_dir() {
             shell.set_new_project_parent(parent);
         }
+        if self.standalone_preview {
+            shell.set_start_screen(true);
+            shell.set_recent_projects(self.recent_projects.clone());
+        }
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.shell = Some(shell);
@@ -208,6 +214,13 @@ impl StudioApp {
             .is_some_and(StudioShell::take_open_project_request)
         {
             self.choose_and_open_project();
+        }
+        if let Some(project) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_recent_project_request)
+        {
+            self.start_project_load(project);
         }
         #[cfg(target_os = "macos")]
         if let Some((title, parent, error)) = self

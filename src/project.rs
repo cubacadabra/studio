@@ -1,5 +1,86 @@
 use super::*;
 
+const MAX_RECENT_PROJECTS: usize = 8;
+
+pub(crate) fn load_recent_projects() -> Vec<PathBuf> {
+    let Some(path) = recent_projects_file() else {
+        return Vec::new();
+    };
+    let Ok(source) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(projects) = serde_json::from_str::<Vec<String>>(&source) else {
+        return Vec::new();
+    };
+    let mut recent = Vec::new();
+    for project in projects {
+        let path = PathBuf::from(project);
+        let Ok(path) = path.canonicalize() else {
+            continue;
+        };
+        if path.is_dir() && path.join("manifest.json").is_file() && !recent.contains(&path) {
+            recent.push(path);
+        }
+        if recent.len() == MAX_RECENT_PROJECTS {
+            break;
+        }
+    }
+    recent
+}
+
+pub(crate) fn remember_recent_project(project: &Path) -> Vec<PathBuf> {
+    let project = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    let mut recent = load_recent_projects();
+    recent.retain(|path| path != &project);
+    recent.insert(0, project);
+    recent.truncate(MAX_RECENT_PROJECTS);
+    if let Some(file) = recent_projects_file() {
+        if let Some(parent) = file.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let serialized = recent
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        if let Ok(source) = serde_json::to_string_pretty(&serialized) {
+            let _ = fs::write(file, source);
+        }
+    }
+    recent
+}
+
+fn recent_projects_file() -> Option<PathBuf> {
+    let config_directory = if let Some(directory) = env::var_os("CUBACADABRA_STUDIO_CONFIG_DIR") {
+        PathBuf::from(directory)
+    } else {
+        #[cfg(target_os = "macos")]
+        {
+            PathBuf::from(env::var_os("HOME")?)
+                .join("Library/Application Support/Cubacadabra Studio")
+        }
+        #[cfg(target_os = "windows")]
+        {
+            PathBuf::from(env::var_os("APPDATA")?).join("Cubacadabra Studio")
+        }
+        #[cfg(target_os = "linux")]
+        {
+            env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".config")
+                })
+                .join("cubacadabra-studio")
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            return None;
+        }
+    };
+    Some(config_directory.join("recent-projects.json"))
+}
+
 pub(crate) fn load_project_in_background(
     project: &Path,
     mut progress: impl FnMut(f32),
