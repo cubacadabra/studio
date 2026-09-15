@@ -60,8 +60,8 @@ jobs:
           tag_version="${GITHUB_REF_NAME#v}"
           manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' studio/Cargo.toml | head -n 1)"
           [[ -n "${manifest_version}" ]]
-          if [[ "${tag_version}" != "${manifest_version}" ]]; then
-            echo "Release tag ${GITHUB_REF_NAME} does not match Studio Cargo version ${manifest_version}." >&2
+          if [[ "${tag_version}" != "${manifest_version}" && "${tag_version}" != "${manifest_version}"-* ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} must match Studio Cargo version ${manifest_version} or add a -suffix." >&2
             exit 1
           fi
 
