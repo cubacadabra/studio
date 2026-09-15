@@ -331,6 +331,7 @@ pub(crate) struct StudioShell {
     source_editor: CodeEditor,
     source_syntax: Syntax,
     start_screen: bool,
+    start_screen_logged: bool,
     recent_projects: Vec<PathBuf>,
     recent_project_requested: Option<PathBuf>,
     open_project_requested: bool,

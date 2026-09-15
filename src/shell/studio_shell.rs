@@ -169,6 +169,7 @@ impl StudioShell {
             source_editor: CodeEditor::default(),
             source_syntax,
             start_screen: false,
+            start_screen_logged: false,
             recent_projects: Vec::new(),
             recent_project_requested: None,
             open_project_requested: false,

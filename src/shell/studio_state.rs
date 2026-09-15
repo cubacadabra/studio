@@ -22,6 +22,7 @@ impl StudioShell {
 
     pub(crate) fn set_start_screen(&mut self, start_screen: bool) {
         self.start_screen = start_screen;
+        self.start_screen_logged = false;
         if start_screen {
             self.playing = false;
             self.notice = "No project open".to_owned();
@@ -29,7 +30,13 @@ impl StudioShell {
     }
 
     pub(crate) fn set_recent_projects(&mut self, projects: Vec<PathBuf>) {
+        log::info!(
+            "start screen: received {} recent project(s): {}",
+            projects.len(),
+            crate::recent_project_log_list(&projects)
+        );
         self.recent_projects = projects;
+        self.start_screen_logged = false;
     }
 
     pub(crate) fn take_recent_project_request(&mut self) -> Option<PathBuf> {

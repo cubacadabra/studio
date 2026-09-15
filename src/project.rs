@@ -4,27 +4,71 @@ const MAX_RECENT_PROJECTS: usize = 8;
 
 pub(crate) fn load_recent_projects() -> Vec<PathBuf> {
     let Some(path) = recent_projects_file() else {
+        warn!("recent projects: no platform config directory is available");
         return Vec::new();
     };
-    let Ok(source) = fs::read_to_string(path) else {
-        return Vec::new();
+    info!("recent projects: reading {}", path.display());
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            info!("recent projects: no saved list at {}", path.display());
+            return Vec::new();
+        }
+        Err(error) => {
+            warn!(
+                "recent projects: could not read {}: {error}",
+                path.display()
+            );
+            return Vec::new();
+        }
     };
-    let Ok(projects) = serde_json::from_str::<Vec<String>>(&source) else {
-        return Vec::new();
+    let projects = match serde_json::from_str::<Vec<String>>(&source) {
+        Ok(projects) => projects,
+        Err(error) => {
+            warn!(
+                "recent projects: could not parse {}: {error}",
+                path.display()
+            );
+            return Vec::new();
+        }
     };
     let mut recent = Vec::new();
     for project in projects {
         let path = PathBuf::from(project);
-        let Ok(path) = path.canonicalize() else {
-            continue;
+        let path = match path.canonicalize() {
+            Ok(path) => path,
+            Err(error) => {
+                warn!(
+                    "recent projects: skipping {} because it could not be resolved: {error}",
+                    path.display()
+                );
+                continue;
+            }
         };
-        if path.is_dir() && path.join("manifest.json").is_file() && !recent.contains(&path) {
+        if !path.is_dir() {
+            warn!(
+                "recent projects: skipping {} because it is not a directory",
+                path.display()
+            );
+        } else if !path.join("manifest.json").is_file() {
+            warn!(
+                "recent projects: skipping {} because manifest.json is missing",
+                path.display()
+            );
+        } else if recent.contains(&path) {
+            info!("recent projects: skipping duplicate {}", path.display());
+        } else {
             recent.push(path);
         }
         if recent.len() == MAX_RECENT_PROJECTS {
             break;
         }
     }
+    info!(
+        "recent projects: loaded {} item(s): {}",
+        recent.len(),
+        recent_project_log_list(&recent)
+    );
     recent
 }
 
@@ -44,11 +88,33 @@ pub(crate) fn remember_recent_project(project: &Path) -> Vec<PathBuf> {
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        if let Ok(source) = serde_json::to_string_pretty(&serialized) {
-            let _ = fs::write(file, source);
+        match serde_json::to_string_pretty(&serialized) {
+            Ok(source) => match fs::write(&file, source) {
+                Ok(()) => info!(
+                    "recent projects: saved {} item(s) to {}",
+                    recent.len(),
+                    file.display()
+                ),
+                Err(error) => warn!(
+                    "recent projects: could not write {}: {error}",
+                    file.display()
+                ),
+            },
+            Err(error) => warn!("recent projects: could not serialize list: {error}"),
         }
     }
     recent
+}
+
+pub(crate) fn recent_project_log_list(projects: &[PathBuf]) -> String {
+    if projects.is_empty() {
+        return "<empty>".to_owned();
+    }
+    projects
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn recent_projects_file() -> Option<PathBuf> {

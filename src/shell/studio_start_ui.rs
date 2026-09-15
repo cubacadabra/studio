@@ -2,6 +2,14 @@ use super::*;
 
 impl StudioShell {
     pub(crate) fn show_start_screen(&mut self, root: &mut egui::Ui) {
+        if !self.start_screen_logged {
+            log::info!(
+                "start screen: rendering {} recent project(s): {}",
+                self.recent_projects.len(),
+                crate::recent_project_log_list(&self.recent_projects)
+            );
+            self.start_screen_logged = true;
+        }
         let colors = palette(root);
         egui::CentralPanel::default()
             .frame(editor_frame(colors.surface_deep))
@@ -9,7 +17,11 @@ impl StudioShell {
                 let content_width = ui.available_width().min(640.0);
                 let content_height = ui.available_height();
                 ui.vertical_centered(|ui| {
-                    ui.set_max_width(content_width);
+                    // Centered layouts otherwise size child frames from their
+                    // contents. Give the recent-project rows a concrete width
+                    // so their horizontally-laid-out contents are not clipped
+                    // down to an empty rectangle.
+                    ui.set_width(content_width);
                     ui.add_space((content_height - 430.0).max(28.0) * 0.42);
                     ui.add(
                         egui::Image::from_texture(&self.logo_texture)
