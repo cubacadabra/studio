@@ -423,135 +423,148 @@ impl StudioShell {
                     .color(colors.muted),
             );
         });
-        content_frame().show(ui, |ui| match kind {
-            SourceAssetKind::Image => {
-                if let Some((_, texture, dimensions)) = &self.source_asset_texture {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(8.0);
-                        let size = fit_preview_size(ui.available_size(), *dimensions);
-                        ui.add(egui::Image::from_texture(texture).fit_to_exact_size(size));
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(format!("{} × {}", dimensions[0], dimensions[1]))
+        egui::ScrollArea::vertical()
+            .id_salt("source_asset_preview")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                content_frame().show(ui, |ui| match kind {
+                    SourceAssetKind::Image => {
+                        if let Some((_, texture, dimensions)) = &self.source_asset_texture {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(8.0);
+                                let size = fit_preview_size(ui.available_size(), *dimensions);
+                                ui.add(egui::Image::from_texture(texture).fit_to_exact_size(size));
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(format!("{} × {}", dimensions[0], dimensions[1]))
+                                        .size(TYPE.meta)
+                                        .color(colors.muted),
+                                );
+                            });
+                        } else {
+                            ui.label(
+                                RichText::new("This image could not be decoded for preview.")
+                                    .size(TYPE.secondary)
+                                    .color(colors.muted),
+                            );
+                        }
+                        ui.add_space(12.0);
+                        property_section(ui, "World", |ui| {
+                            let button = ui.add_enabled(
+                                self.project_editable,
+                                egui::Button::new("Use as floor"),
+                            );
+                            if button.clicked() {
+                                self.scene_edit_requested =
+                                    Some(SceneEditRequest::UseImageAsFloor {
+                                        asset_path: path.clone(),
+                                    });
+                                self.notice =
+                                    "Floor changed — save, then Rebuild & Play".to_owned();
+                            }
+                            ui.label(
+                                RichText::new(
+                                    "Applies this image to the ground in the active world.",
+                                )
                                 .size(TYPE.meta)
                                 .color(colors.muted),
-                        );
-                    });
-                } else {
-                    ui.label(
-                        RichText::new("This image could not be decoded for preview.")
+                            );
+                            if !self.project_editable {
+                                ui.label(
+                                    RichText::new("Open a raw source project to edit the floor.")
+                                        .size(TYPE.meta)
+                                        .color(colors.muted),
+                                );
+                            }
+                        });
+                    }
+                    SourceAssetKind::Audio => {
+                        #[cfg(any(target_os = "macos", target_os = "windows"))]
+                        let (playing, elapsed, duration) = self
+                            .audio_preview
+                            .as_ref()
+                            .filter(|preview| preview.path == path)
+                            .map(|preview| {
+                                (
+                                    !preview.sink.is_paused() && !preview.sink.empty(),
+                                    preview.sink.get_pos(),
+                                    preview.duration,
+                                )
+                            })
+                            .unwrap_or((false, Duration::ZERO, None));
+                        #[cfg(target_os = "linux")]
+                        let (playing, elapsed, duration) = (false, Duration::ZERO, None);
+                        let mut toggle = false;
+                        let mut stop = false;
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(32.0);
+                            ui.label(
+                                RichText::new(
+                                    path.file_name()
+                                        .map(|name| name.to_string_lossy())
+                                        .unwrap_or_default(),
+                                )
+                                .font(semibold_font(TYPE.primary))
+                                .color(colors.text),
+                            );
+                            ui.add_space(16.0);
+                            ui.horizontal(|ui| {
+                                if toolbar_button(
+                                    ui,
+                                    if playing { Icon::Stop } else { Icon::Play },
+                                    if playing { "Pause" } else { "Play" },
+                                    playing,
+                                )
+                                .clicked()
+                                {
+                                    toggle = true;
+                                }
+                                if toolbar_button(ui, Icon::Stop, "Stop", false).clicked() {
+                                    stop = true;
+                                }
+                            });
+                            ui.add_space(14.0);
+                            let progress = duration
+                                .map(|duration| {
+                                    (elapsed.as_secs_f32() / duration.as_secs_f32().max(0.001))
+                                        .clamp(0.0, 1.0)
+                                })
+                                .unwrap_or(0.0);
+                            ui.add(
+                                egui::ProgressBar::new(progress)
+                                    .desired_width(ui.available_width().min(420.0))
+                                    .show_percentage(),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} / {}",
+                                    format_duration(elapsed),
+                                    duration
+                                        .map(format_duration)
+                                        .unwrap_or_else(|| "—".to_owned())
+                                ))
+                                .size(TYPE.meta)
+                                .color(colors.muted),
+                            );
+                        });
+                        if stop {
+                            self.stop_audio_preview();
+                        } else if toggle {
+                            self.toggle_audio_preview();
+                        }
+                    }
+                    SourceAssetKind::Other => {
+                        ui.label(
+                            RichText::new(
+                                "This asset is available to the game but has no Studio preview.",
+                            )
                             .size(TYPE.secondary)
                             .color(colors.muted),
-                    );
-                }
-                ui.add_space(12.0);
-                property_section(ui, "World", |ui| {
-                    let button =
-                        ui.add_enabled(self.project_editable, egui::Button::new("Use as floor"));
-                    if button.clicked() {
-                        self.scene_edit_requested = Some(SceneEditRequest::UseImageAsFloor {
-                            asset_path: path.clone(),
-                        });
-                        self.notice = "Floor changed — save, then Rebuild & Play".to_owned();
-                    }
-                    ui.label(
-                        RichText::new("Applies this image to the ground in the active world.")
-                            .size(TYPE.meta)
-                            .color(colors.muted),
-                    );
-                    if !self.project_editable {
-                        ui.label(
-                            RichText::new("Open a raw source project to edit the floor.")
-                                .size(TYPE.meta)
-                                .color(colors.muted),
                         );
                     }
                 });
-            }
-            SourceAssetKind::Audio => {
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                let (playing, elapsed, duration) = self
-                    .audio_preview
-                    .as_ref()
-                    .filter(|preview| preview.path == path)
-                    .map(|preview| {
-                        (
-                            !preview.sink.is_paused() && !preview.sink.empty(),
-                            preview.sink.get_pos(),
-                            preview.duration,
-                        )
-                    })
-                    .unwrap_or((false, Duration::ZERO, None));
-                #[cfg(target_os = "linux")]
-                let (playing, elapsed, duration) = (false, Duration::ZERO, None::<Duration>);
-                let mut toggle = false;
-                let mut stop = false;
-                ui.vertical_centered(|ui| {
-                    ui.add_space(32.0);
-                    ui.label(
-                        RichText::new(
-                            path.file_name()
-                                .map(|name| name.to_string_lossy())
-                                .unwrap_or_default(),
-                        )
-                        .font(semibold_font(TYPE.primary))
-                        .color(colors.text),
-                    );
-                    ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        if toolbar_button(
-                            ui,
-                            if playing { Icon::Stop } else { Icon::Play },
-                            if playing { "Pause" } else { "Play" },
-                            playing,
-                        )
-                        .clicked()
-                        {
-                            toggle = true;
-                        }
-                        if toolbar_button(ui, Icon::Stop, "Stop", false).clicked() {
-                            stop = true;
-                        }
-                    });
-                    ui.add_space(14.0);
-                    let progress = duration
-                        .map(|duration| {
-                            (elapsed.as_secs_f32() / duration.as_secs_f32().max(0.001))
-                                .clamp(0.0, 1.0)
-                        })
-                        .unwrap_or(0.0);
-                    ui.add(
-                        egui::ProgressBar::new(progress)
-                            .desired_width(ui.available_width().min(420.0))
-                            .show_percentage(),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(format!(
-                            "{} / {}",
-                            format_duration(elapsed),
-                            duration
-                                .map(format_duration)
-                                .unwrap_or_else(|| "—".to_owned())
-                        ))
-                        .size(TYPE.meta)
-                        .color(colors.muted),
-                    );
-                });
-                if stop {
-                    self.stop_audio_preview();
-                } else if toggle {
-                    self.toggle_audio_preview();
-                }
-            }
-            SourceAssetKind::Other => {
-                ui.label(
-                    RichText::new("This asset is available to the game but has no Studio preview.")
-                        .size(TYPE.secondary)
-                        .color(colors.muted),
-                );
-            }
-        });
+            });
     }
 }
 
