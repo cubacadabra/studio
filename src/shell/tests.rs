@@ -75,6 +75,38 @@ fn scene_outline_uses_artist_facing_manifest_content() {
 }
 
 #[test]
+fn scene_outline_exposes_every_placeable_object_to_viewport_tools() {
+    let outline = SceneOutline::parse(
+        r#"{
+            "id": "tools",
+            "worlds": {
+                "course": {
+                    "blocks": [{"position": [1, 2, 3], "size": [4, 1, 4]}],
+                    "signs": [{"text": "Hi", "position": [2, 3, 4]}],
+                    "ladders": [{"id": "ladder", "position": [3, 4, 5], "size": [2, 6, 1]}],
+                    "interactions": [{"id": "use", "position": [4, 5, 6]}],
+                    "checkpoints": [{"id": "save", "position": [5, 6, 7]}],
+                    "hazards": [{"id": "hurt", "position": [6, 7, 8], "size": [3, 1, 3]}],
+                    "safeZones": [{"id": "safe", "position": [7, 8, 9]}]
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let objects = outline.placeable_object_geometries();
+    assert_eq!(objects.len(), SceneObjectKind::ALL.len());
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|object| object.size.is_some())
+            .count(),
+        3
+    );
+    assert!(objects.iter().all(|object| is_scene_object(&object.id)));
+}
+
+#[test]
 fn scene_outline_surfaces_runtime_game_ui_without_exposing_source_files() {
     let mut outline = SceneOutline::parse(
         r#"{

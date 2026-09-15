@@ -83,6 +83,7 @@ impl StudioApp {
             pointer_position: None,
             pointer_active: false,
             camera_pointer_active: false,
+            scene_pointer_active: false,
             movement_pointer_active: false,
             movement_pointer_origin: None,
             ui_pointer_active: false,
@@ -368,6 +369,7 @@ impl StudioApp {
         if draft_export_requested {
             self.export_morph_draft();
         }
+        self.update_scene_object_projections();
         // Morph requests can turn the loading veil on or commit the first
         // native v2 appearance. Prepare the overlay after those transitions
         // so the old bundled character never reaches a visible frame.
@@ -381,6 +383,18 @@ impl StudioApp {
             .is_some_and(StudioShell::take_codex_undo_request);
         if undo_codex_requested {
             self.undo_codex_changes();
+        }
+        if let Some(edit) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_scene_viewport_edit_request)
+            .and_then(|request| self.resolve_scene_viewport_edit(request))
+        {
+            if let Err(message) = self.apply_scene_edit(edit)
+                && let Some(shell) = &mut self.shell
+            {
+                shell.set_project_error(message);
+            }
         }
         if let Some(edit) = self
             .shell
@@ -609,6 +623,135 @@ impl StudioApp {
         }
     }
 
+    fn update_scene_object_projections(&mut self) {
+        let Some(window) = &self.window else { return };
+        let scale = window.scale_factor() as f32;
+        let active_world = self.client.engine().active_world_id();
+        let geometries = self
+            .shell
+            .as_ref()
+            .map(StudioShell::scene_object_geometries)
+            .unwrap_or_default();
+        let projections = self.renderer.as_ref().map_or_else(Vec::new, |renderer| {
+            geometries
+                .into_iter()
+                .filter(|geometry| {
+                    active_world.is_none_or(|world| scene_world_id(&geometry.id) == Some(world))
+                })
+                .filter_map(|geometry| {
+                    let [x, y, z] = geometry.position;
+                    let [center_x, center_y] = renderer.studio_project_world_point([x, y, z])?;
+                    let (world_corners, screen_corners) =
+                        geometry
+                            .size
+                            .map_or((None, None), |[width, height, depth]| {
+                                let top = y + height * 0.5;
+                                let corners = [
+                                    [x - width * 0.5, top, z - depth * 0.5],
+                                    [x + width * 0.5, top, z - depth * 0.5],
+                                    [x + width * 0.5, top, z + depth * 0.5],
+                                    [x - width * 0.5, top, z + depth * 0.5],
+                                ];
+                                let projected = corners
+                                    .map(|point| renderer.studio_project_world_point(point))
+                                    .into_iter()
+                                    .collect::<Option<Vec<_>>>()
+                                    .and_then(|points| points.try_into().ok())
+                                    .map(|points: [[f32; 2]; 4]| {
+                                        points.map(|[x, y]| egui::pos2(x / scale, y / scale))
+                                    });
+                                (Some(corners), projected)
+                            });
+                    Some(SceneObjectProjection {
+                        id: geometry.id,
+                        position: geometry.position,
+                        size: geometry.size,
+                        center_screen: egui::pos2(center_x / scale, center_y / scale),
+                        world_corners,
+                        screen_corners,
+                    })
+                })
+                .collect()
+        });
+        if let Some(shell) = &mut self.shell {
+            shell.set_scene_object_projections(projections);
+        }
+    }
+
+    fn resolve_scene_viewport_edit(
+        &self,
+        request: SceneViewportEditRequest,
+    ) -> Option<SceneEditRequest> {
+        let renderer = self.renderer.as_ref()?;
+        let scale = self.window.as_ref()?.scale_factor() as f32;
+        let world_point = |point: egui::Pos2, plane_y: f32| {
+            renderer
+                .studio_world_point_on_horizontal_plane([point.x * scale, point.y * scale], plane_y)
+        };
+        match request {
+            SceneViewportEditRequest::Move {
+                target,
+                origin_screen,
+                current_screen,
+                origin_position,
+                size,
+            } => {
+                let origin = world_point(origin_screen, origin_position[1])?;
+                let current = world_point(current_screen, origin_position[1])?;
+                let position = [
+                    snap_scene_value(origin_position[0] + current[0] - origin[0]),
+                    origin_position[1],
+                    snap_scene_value(origin_position[2] + current[2] - origin[2]),
+                ];
+                Some(SceneEditRequest::UpdateTransform {
+                    target,
+                    position,
+                    size,
+                })
+            }
+            SceneViewportEditRequest::Resize {
+                target,
+                current_screen,
+                fixed_corner,
+                origin_position,
+                origin_size,
+            } => {
+                let mut moving = world_point(current_screen, fixed_corner[1])?;
+                moving[0] = snap_scene_value(moving[0]);
+                moving[2] = snap_scene_value(moving[2]);
+                let x_direction = if fixed_corner[0] <= origin_position[0] {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let z_direction = if fixed_corner[2] <= origin_position[2] {
+                    1.0
+                } else {
+                    -1.0
+                };
+                if (moving[0] - fixed_corner[0]).abs() < 0.25 {
+                    moving[0] = fixed_corner[0] + 0.25 * x_direction;
+                }
+                if (moving[2] - fixed_corner[2]).abs() < 0.25 {
+                    moving[2] = fixed_corner[2] + 0.25 * z_direction;
+                }
+                Some(SceneEditRequest::UpdateTransform {
+                    target,
+                    position: [
+                        (moving[0] + fixed_corner[0]) * 0.5,
+                        origin_position[1],
+                        (moving[2] + fixed_corner[2]) * 0.5,
+                    ],
+                    size: Some([
+                        (moving[0] - fixed_corner[0]).abs(),
+                        origin_size[1],
+                        (moving[2] - fixed_corner[2]).abs(),
+                    ]),
+                })
+            }
+        }
+    }
+
     fn refresh_runtime_ui_outline(&mut self) {
         let revision = self.client.engine().studio_ui_document_revision();
         if revision == self.runtime_ui_revision {
@@ -620,6 +763,10 @@ impl StudioApp {
             shell.set_runtime_ui_nodes(&nodes);
         }
     }
+}
+
+fn snap_scene_value(value: f32) -> f32 {
+    (value * 4.0).round() * 0.25
 }
 impl Drop for StudioApp {
     fn drop(&mut self) {

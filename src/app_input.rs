@@ -7,6 +7,7 @@ impl StudioApp {
         self.climb = false;
         self.pointer_active = false;
         self.camera_pointer_active = false;
+        self.scene_pointer_active = false;
         self.movement_pointer_active = false;
         self.movement_pointer_origin = None;
         self.ui_pointer_active = false;
@@ -69,6 +70,10 @@ impl StudioApp {
     pub(crate) fn handle_cursor_move(&mut self, x: f64, y: f64) {
         let scale = self.window.as_ref().map_or(1.0, Window::scale_factor) as f32;
         let logical = (x as f32 / scale, y as f32 / scale);
+        if self.scene_pointer_active {
+            self.pointer_position = Some(logical);
+            return;
+        }
         if let Some(previous) = self.pointer_position {
             if (self.pointer_active || self.camera_pointer_active) && !self.ui_pointer_active {
                 self.look_delta.0 += logical.0 - previous.0;
@@ -109,6 +114,24 @@ impl StudioApp {
         let Some((x, y)) = self.pointer_position else {
             return;
         };
+        if matches!(button, MouseButton::Left | MouseButton::Right) {
+            if state == ElementState::Pressed
+                && self
+                    .shell
+                    .as_ref()
+                    .is_some_and(|shell| shell.scene_editor_hit_test(egui::pos2(x, y)))
+            {
+                self.scene_pointer_active = true;
+                self.pointer_active = false;
+                self.camera_pointer_active = false;
+                self.ui_pointer_active = false;
+                return;
+            }
+            if state == ElementState::Released && self.scene_pointer_active {
+                self.scene_pointer_active = false;
+                return;
+            }
+        }
         let morph_preview = self
             .shell
             .as_ref()

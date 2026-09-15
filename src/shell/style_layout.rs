@@ -178,6 +178,8 @@ pub(crate) fn show_scene_node(
     depth: usize,
     expanded_nodes: &mut BTreeSet<String>,
     selected: &mut String,
+    editable: bool,
+    edit_request: &mut Option<SceneEditRequest>,
 ) {
     let expanded = expanded_nodes.contains(&node.id);
     let has_children = !node.children.is_empty();
@@ -308,9 +310,50 @@ pub(crate) fn show_scene_node(
             }
         }
     }
+    response.clone().context_menu(|ui| {
+        if !editable {
+            ui.label(RichText::new("Read-only preview").color(palette(ui).muted));
+            return;
+        }
+        if let Some(world_id) = scene_world_id(&node.id).map(str::to_owned) {
+            ui.menu_button("Add", |ui| {
+                for kind in SceneObjectKind::ALL {
+                    if ui.button(kind.label()).clicked() {
+                        *edit_request = Some(SceneEditRequest::AddObject {
+                            world_id: Some(world_id.clone()),
+                            kind,
+                        });
+                        ui.close();
+                    }
+                }
+            });
+        }
+        if is_scene_object(&node.id) {
+            if ui.button("Duplicate").clicked() {
+                *edit_request = Some(SceneEditRequest::DuplicateObject {
+                    target: node.id.clone(),
+                });
+                ui.close();
+            }
+            if ui.button("Delete").clicked() {
+                *edit_request = Some(SceneEditRequest::DeleteObject {
+                    target: node.id.clone(),
+                });
+                ui.close();
+            }
+        }
+    });
     if expanded {
         for child in &node.children {
-            show_scene_node(ui, child, depth + 1, expanded_nodes, selected);
+            show_scene_node(
+                ui,
+                child,
+                depth + 1,
+                expanded_nodes,
+                selected,
+                editable,
+                edit_request,
+            );
         }
     }
 }

@@ -150,6 +150,27 @@ impl StudioShell {
         self.scene_edit_requested.take()
     }
 
+    pub(crate) fn scene_object_geometries(&self) -> Vec<SceneObjectGeometry> {
+        self.scene_outline.placeable_object_geometries()
+    }
+
+    pub(crate) fn set_scene_object_projections(&mut self, projections: Vec<SceneObjectProjection>) {
+        self.scene_object_projections = projections;
+    }
+
+    pub(crate) fn take_scene_viewport_edit_request(&mut self) -> Option<SceneViewportEditRequest> {
+        self.scene_viewport_edit_requested.take()
+    }
+
+    pub(crate) fn scene_editor_hit_test(&self, point: Pos2) -> bool {
+        self.workspace == Workspace::World
+            && self.project_editable
+            && self
+                .scene_object_projections
+                .iter()
+                .any(|projection| projection.contains(point))
+    }
+
     pub(crate) fn select_scene_node(&mut self, id: &str) -> bool {
         if self.scene_outline.root.find(id).is_none() {
             return false;

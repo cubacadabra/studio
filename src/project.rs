@@ -694,28 +694,39 @@ pub(crate) fn project_asset_slug(asset_id: &str) -> Result<String, String> {
 }
 
 pub(crate) enum SceneEditOperation {
-    Update { position: [f32; 3], size: [f32; 3] },
+    UpdateTransform {
+        position: [f32; 3],
+        size: Option<[f32; 3]>,
+    },
+    UpdateProperty {
+        key: String,
+        value: Value,
+    },
     Duplicate,
     Delete,
 }
 
-pub(crate) fn parse_block_target(target: &str) -> Result<(String, usize), String> {
+pub(crate) fn parse_scene_object_target(target: &str) -> Result<(String, String, usize), String> {
     let mut parts = target.split('/');
     let kind = parts.next();
     let world = parts.next();
     let collection = parts.next();
     let index = parts.next();
-    if kind != Some("world") || collection != Some("blocks") || parts.next().is_some() {
-        return Err(format!("`{target}` is not an editable platform"));
+    if kind != Some("world") || collection.is_none() || parts.next().is_some() {
+        return Err(format!("`{target}` is not an editable scene object"));
     }
     let world = world
         .filter(|world| !world.is_empty())
         .ok_or_else(|| format!("`{target}` has no world"))?;
     let index = index
-        .ok_or_else(|| format!("`{target}` has no block index"))?
+        .ok_or_else(|| format!("`{target}` has no object index"))?
         .parse::<usize>()
-        .map_err(|_| format!("`{target}` has an invalid block index"))?;
-    Ok((world.to_owned(), index))
+        .map_err(|_| format!("`{target}` has an invalid object index"))?;
+    Ok((
+        world.to_owned(),
+        collection.unwrap_or_default().to_owned(),
+        index,
+    ))
 }
 
 pub(crate) fn update_manifest_sign_text(

@@ -15,7 +15,7 @@ use egui::FontTweak;
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{
     Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout, Margin,
-    Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
+    Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2,
 };
 use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
 #[cfg(test)]
@@ -242,24 +242,155 @@ pub(crate) struct CodexChatSendRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum SceneEditRequest {
-    AddBlock,
+    AddObject {
+        world_id: Option<String>,
+        kind: SceneObjectKind,
+    },
     UseImageAsFloor {
         asset_path: PathBuf,
     },
-    UpdateBlock {
+    UpdateTransform {
         target: String,
         position: [f32; 3],
-        size: [f32; 3],
+        size: Option<[f32; 3]>,
     },
     UpdateSignText {
         target: String,
         text: String,
     },
-    DuplicateBlock {
+    UpdateProperty {
+        target: String,
+        key: String,
+        value: Value,
+    },
+    DuplicateObject {
         target: String,
     },
-    DeleteBlock {
+    DeleteObject {
         target: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SceneObjectKind {
+    Block,
+    Sign,
+    Ladder,
+    Interaction,
+    Checkpoint,
+    Hazard,
+    SafeZone,
+}
+
+impl SceneObjectKind {
+    pub(crate) const ALL: [Self; 7] = [
+        Self::Block,
+        Self::Sign,
+        Self::Ladder,
+        Self::Interaction,
+        Self::Checkpoint,
+        Self::Hazard,
+        Self::SafeZone,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Block => "Block",
+            Self::Sign => "Sign",
+            Self::Ladder => "Ladder",
+            Self::Interaction => "Interaction",
+            Self::Checkpoint => "Checkpoint",
+            Self::Hazard => "Hazard",
+            Self::SafeZone => "Safe zone",
+        }
+    }
+
+    pub(crate) fn collection(self) -> &'static str {
+        match self {
+            Self::Block => "blocks",
+            Self::Sign => "signs",
+            Self::Ladder => "ladders",
+            Self::Interaction => "interactions",
+            Self::Checkpoint => "checkpoints",
+            Self::Hazard => "hazards",
+            Self::SafeZone => "safeZones",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SceneViewportTool {
+    #[default]
+    Move,
+    Resize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SceneObjectGeometry {
+    pub(crate) id: String,
+    pub(crate) position: [f32; 3],
+    pub(crate) size: Option<[f32; 3]>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SceneObjectProjection {
+    pub(crate) id: String,
+    pub(crate) position: [f32; 3],
+    pub(crate) size: Option<[f32; 3]>,
+    pub(crate) center_screen: Pos2,
+    pub(crate) world_corners: Option<[[f32; 3]; 4]>,
+    pub(crate) screen_corners: Option<[Pos2; 4]>,
+}
+
+impl SceneObjectProjection {
+    pub(crate) fn bounds(&self) -> Rect {
+        self.screen_corners.map_or_else(
+            || Rect::from_center_size(self.center_screen, Vec2::splat(20.0)),
+            |corners| Rect::from_points(&corners).expand(4.0),
+        )
+    }
+
+    pub(crate) fn contains(&self, point: Pos2) -> bool {
+        self.screen_corners.map_or_else(
+            || self.center_screen.distance(point) <= 10.0,
+            |corners| point_in_scene_quad(point, corners),
+        )
+    }
+}
+
+fn point_in_scene_quad(point: Pos2, corners: [Pos2; 4]) -> bool {
+    let mut sign = 0.0_f32;
+    for index in 0..4 {
+        let a = corners[index];
+        let b = corners[(index + 1) % 4];
+        let cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+        if cross.abs() <= f32::EPSILON {
+            continue;
+        }
+        if sign == 0.0 {
+            sign = cross.signum();
+        } else if sign != cross.signum() {
+            return false;
+        }
+    }
+    true
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum SceneViewportEditRequest {
+    Move {
+        target: String,
+        origin_screen: Pos2,
+        current_screen: Pos2,
+        origin_position: [f32; 3],
+        size: Option<[f32; 3]>,
+    },
+    Resize {
+        target: String,
+        current_screen: Pos2,
+        fixed_corner: [f32; 3],
+        origin_position: [f32; 3],
+        origin_size: [f32; 3],
     },
 }
 
@@ -276,7 +407,13 @@ pub(crate) struct StudioShell {
     scene_editor_target: String,
     scene_editor_position: [f32; 3],
     scene_editor_size: [f32; 3],
+    scene_editor_position_text: [String; 3],
+    scene_editor_size_text: [String; 3],
     scene_editor_text: String,
+    scene_editor_properties: BTreeMap<String, String>,
+    scene_viewport_tool: SceneViewportTool,
+    scene_object_projections: Vec<SceneObjectProjection>,
+    scene_viewport_edit_requested: Option<SceneViewportEditRequest>,
     selected_world_asset: String,
     selected_asset: &'static str,
     test_tool: &'static str,

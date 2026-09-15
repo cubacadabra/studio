@@ -47,7 +47,10 @@ use morphs::{
 use network::{BackendClient, BackendEvent};
 use options::*;
 use project::*;
-use shell::{PreparedShell, SceneEditRequest, StudioShell};
+use shell::{
+    PreparedShell, SceneEditRequest, SceneObjectKind, SceneObjectProjection,
+    SceneViewportEditRequest, StudioShell, scene_world_id,
+};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 use winit::{
@@ -221,6 +224,7 @@ struct StudioApp {
     pointer_position: Option<(f32, f32)>,
     pointer_active: bool,
     camera_pointer_active: bool,
+    scene_pointer_active: bool,
     movement_pointer_active: bool,
     movement_pointer_origin: Option<(f32, f32)>,
     ui_pointer_active: bool,
@@ -235,9 +239,9 @@ mod tests {
         ProjectFileSnapshot, STANDALONE_PREVIEW_MANIFEST, SourceAssetKind, add_image_asset,
         diff_project_files, joystick_movement, load_game_sources, load_local_morph_catalog,
         load_project_in_background, load_source_assets, load_source_directories, load_source_files,
-        project_asset_slug, project_manifest, set_image_as_ground_material,
-        should_forward_gameplay_key, should_forward_gameplay_keyboard, update_manifest_sign_text,
-        update_project_morph_catalog,
+        parse_scene_object_target, project_asset_slug, project_manifest,
+        set_image_as_ground_material, should_forward_gameplay_key,
+        should_forward_gameplay_keyboard, update_manifest_sign_text, update_project_morph_catalog,
     };
     use crate::game_creator;
     use std::{fs, path::Path};
@@ -382,6 +386,16 @@ mod tests {
         assert!(rendered.find("\"displayName\"").unwrap() < rendered.find("\"worlds\"").unwrap());
         assert!(rendered.find("\"worlds\"").unwrap() < rendered.find("\"sdkVersion\"").unwrap());
         assert!(rendered.contains("\"text\": \"After\""));
+    }
+
+    #[test]
+    fn editable_scene_targets_include_their_world_collection_and_index() {
+        assert_eq!(
+            parse_scene_object_target("world/course/checkpoints/2").unwrap(),
+            ("course".to_owned(), "checkpoints".to_owned(), 2)
+        );
+        assert!(parse_scene_object_target("world/course/checkpoints").is_err());
+        assert!(parse_scene_object_target("game/interface/button/0").is_err());
     }
 
     #[test]

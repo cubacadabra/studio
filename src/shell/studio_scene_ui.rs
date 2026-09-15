@@ -7,10 +7,8 @@ impl StudioShell {
         let previous_selection = self.selected_scene.clone();
         panel_header(ui, Icon::World, "Scene", |ui| {
             if self.project_editable {
-                if ui.button("Add block").clicked() {
-                    self.scene_edit_requested = Some(SceneEditRequest::AddBlock);
-                    self.notice = "Adding platform…".to_owned();
-                }
+                let world_id = scene_world_id(&self.selected_scene).map(str::to_owned);
+                scene_add_menu(ui, world_id, &mut self.scene_edit_requested);
             } else {
                 ui.label(
                     RichText::new("Read-only")
@@ -33,6 +31,8 @@ impl StudioShell {
                             0,
                             &mut self.expanded_scene,
                             &mut self.selected_scene,
+                            self.project_editable,
+                            &mut self.scene_edit_requested,
                         );
                     });
             });
@@ -58,6 +58,11 @@ impl StudioShell {
                 self.block_inspector(ui, &selected);
             } else if selected.kind == "Sign" {
                 self.sign_inspector(ui, &selected);
+            } else if self.project_editable
+                && is_scene_object(&selected.id)
+                && vector_property(&selected, "Position").is_some()
+            {
+                self.scene_object_inspector(ui, &selected);
             } else if selected.properties.is_empty() {
                 ui.label(
                     RichText::new(if selected.kind == "Collection" {
@@ -80,67 +85,17 @@ impl StudioShell {
                         .color(palette(ui).muted),
                 );
             }
+            if self.project_editable && is_scene_object(&selected.id) {
+                self.scene_object_actions(ui, &selected);
+            }
         });
     }
 
     pub(crate) fn block_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
-        if self.scene_editor_target != selected.id {
-            self.scene_editor_target = selected.id.clone();
-            self.scene_editor_position = vector_property(selected, "Position").unwrap_or([0.0; 3]);
-            self.scene_editor_size = vector_property(selected, "Size").unwrap_or([1.0; 3]);
-        }
-
-        property_section(ui, "Transform", |ui| {
-            let mut position_changed = false;
-            let mut size_changed = false;
-            ui.add_enabled_ui(self.project_editable, |ui| {
-                position_changed =
-                    vector_editor(ui, "Position", &mut self.scene_editor_position, 0.1);
-                size_changed = vector_editor(ui, "Size", &mut self.scene_editor_size, 0.1);
-            });
-            if position_changed || size_changed {
-                self.project_dirty = true;
-                self.project_error = None;
-                self.scene_edit_requested = Some(SceneEditRequest::UpdateBlock {
-                    target: selected.id.clone(),
-                    position: self.scene_editor_position,
-                    size: self.scene_editor_size,
-                });
-                self.notice = "Platform changed — save to keep it".to_owned();
-            }
-        });
-        property_section(ui, "Actions", |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(self.project_editable, egui::Button::new("Duplicate"))
-                    .on_disabled_hover_text("Open a raw source project to edit the scene")
-                    .clicked()
-                {
-                    self.scene_edit_requested = Some(SceneEditRequest::DuplicateBlock {
-                        target: selected.id.clone(),
-                    });
-                    self.notice = "Duplicating platform…".to_owned();
-                }
-                if ui
-                    .add_enabled(self.project_editable, egui::Button::new("Delete"))
-                    .on_disabled_hover_text("Open a raw source project to edit the scene")
-                    .clicked()
-                {
-                    self.scene_edit_requested = Some(SceneEditRequest::DeleteBlock {
-                        target: selected.id.clone(),
-                    });
-                    self.notice = "Deleting platform…".to_owned();
-                }
-            });
-        });
-        property_section(ui, "Manifest", |ui| {
-            for (label, value) in &selected.properties {
-                if label != "Position" && label != "Size" {
-                    property_row(ui, label, value);
-                }
-            }
-        });
+        self.sync_scene_editor(selected);
+        self.scene_transform_editor(ui, selected, true);
+        self.scene_manifest_properties(ui, selected, &["Position", "Size"]);
         if !self.project_editable {
             ui.label(
                 RichText::new("Open a raw source project to edit scene objects.")
@@ -152,15 +107,8 @@ impl StudioShell {
 
     pub(crate) fn sign_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
-        if self.scene_editor_target != selected.id {
-            self.scene_editor_target = selected.id.clone();
-            self.scene_editor_text = selected
-                .properties
-                .iter()
-                .find(|(label, _)| label == "Text")
-                .map(|(_, value)| value.clone())
-                .unwrap_or_default();
-        }
+        self.sync_scene_editor(selected);
+        self.scene_transform_editor(ui, selected, false);
 
         property_section(ui, "Content", |ui| {
             ui.label(
@@ -187,6 +135,7 @@ impl StudioShell {
                 self.notice = "Sign text changed — save to keep it".to_owned();
             }
         });
+        self.scene_manifest_properties(ui, selected, &["Position", "Text"]);
         ui.label(
             RichText::new(if self.project_editable {
                 "Save, then Rebuild & Play to see the updated sign in the game."
@@ -196,5 +145,251 @@ impl StudioShell {
             .size(TYPE.meta)
             .color(colors.muted),
         );
+    }
+
+    fn scene_object_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
+        self.sync_scene_editor(selected);
+        let has_size = vector_property(selected, "Size").is_some();
+        self.scene_transform_editor(ui, selected, has_size);
+        self.scene_manifest_properties(ui, selected, &["Position", "Size"]);
+    }
+
+    fn sync_scene_editor(&mut self, selected: &SceneNode) {
+        if self.scene_editor_target == selected.id {
+            return;
+        }
+        self.scene_editor_target = selected.id.clone();
+        self.scene_editor_position = vector_property(selected, "Position").unwrap_or([0.0; 3]);
+        self.scene_editor_size = vector_property(selected, "Size").unwrap_or([1.0; 3]);
+        self.scene_editor_position_text = scene_vector_text(self.scene_editor_position);
+        self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
+        self.scene_editor_text = selected
+            .properties
+            .iter()
+            .find(|(label, _)| label == "Text")
+            .map(|(_, value)| value.clone())
+            .unwrap_or_default();
+        self.scene_editor_properties = selected.properties.iter().cloned().collect();
+    }
+
+    fn scene_transform_editor(&mut self, ui: &mut egui::Ui, selected: &SceneNode, has_size: bool) {
+        property_section(ui, "Transform", |ui| {
+            let mut changed = false;
+            ui.add_enabled_ui(self.project_editable, |ui| {
+                changed |= vector_editor(
+                    ui,
+                    "Position",
+                    &mut self.scene_editor_position,
+                    &mut self.scene_editor_position_text,
+                );
+                if has_size {
+                    changed |= vector_editor(
+                        ui,
+                        "Size",
+                        &mut self.scene_editor_size,
+                        &mut self.scene_editor_size_text,
+                    );
+                }
+            });
+            if changed {
+                if has_size {
+                    self.scene_editor_size = self.scene_editor_size.map(|value| value.max(0.05));
+                    self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
+                }
+                self.project_dirty = true;
+                self.project_error = None;
+                self.scene_edit_requested = Some(SceneEditRequest::UpdateTransform {
+                    target: selected.id.clone(),
+                    position: self.scene_editor_position,
+                    size: has_size.then_some(self.scene_editor_size),
+                });
+                self.notice = "Scene object changed — save to keep it".to_owned();
+            }
+        });
+    }
+
+    fn scene_object_actions(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
+        property_section(ui, "Actions", |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Duplicate").clicked() {
+                    self.scene_edit_requested = Some(SceneEditRequest::DuplicateObject {
+                        target: selected.id.clone(),
+                    });
+                    self.notice = "Duplicating scene object…".to_owned();
+                }
+                if ui.button("Delete").clicked() {
+                    self.scene_edit_requested = Some(SceneEditRequest::DeleteObject {
+                        target: selected.id.clone(),
+                    });
+                    self.notice = "Deleting scene object…".to_owned();
+                }
+            });
+        });
+    }
+
+    fn scene_manifest_properties(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected: &SceneNode,
+        excluded: &[&str],
+    ) {
+        let properties = selected
+            .properties
+            .iter()
+            .filter(|(label, _)| !excluded.contains(&label.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if properties.is_empty() {
+            return;
+        }
+        property_section(ui, "Properties", |ui| {
+            for (label, value) in properties {
+                if self.project_editable
+                    && let Some((key, kind)) = editable_scene_property(&label)
+                {
+                    self.scene_property_editor(ui, selected, &label, &value, key, kind);
+                } else {
+                    property_row(ui, &label, &value);
+                }
+            }
+        });
+    }
+
+    fn scene_property_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected: &SceneNode,
+        label: &str,
+        current: &str,
+        key: &str,
+        kind: ScenePropertyKind,
+    ) {
+        let field = property_field(ui, label);
+        let mut text = self
+            .scene_editor_properties
+            .remove(label)
+            .unwrap_or_else(|| current.to_owned());
+        let response = ui.put(
+            field,
+            egui::TextEdit::singleline(&mut text)
+                .id_salt(("scene-property", &selected.id, key))
+                .horizontal_align(Align::RIGHT),
+        );
+        let commit = response.lost_focus() && text.trim() != current;
+        self.scene_editor_properties
+            .insert(label.to_owned(), text.clone());
+        if !commit {
+            return;
+        }
+        let value = match kind.parse(&text) {
+            Ok(value) => value,
+            Err(message) => {
+                self.notice = format!("{label}: {message}");
+                return;
+            }
+        };
+        self.project_dirty = true;
+        self.project_error = None;
+        self.scene_edit_requested = Some(SceneEditRequest::UpdateProperty {
+            target: selected.id.clone(),
+            key: key.to_owned(),
+            value,
+        });
+        self.notice = format!("{label} changed — save to keep it");
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ScenePropertyKind {
+    Text,
+    Number,
+    Boolean,
+}
+
+impl ScenePropertyKind {
+    fn parse(self, source: &str) -> Result<Value, &'static str> {
+        let source = source.trim();
+        match self {
+            Self::Text if !source.is_empty() => Ok(Value::String(source.to_owned())),
+            Self::Text => Err("enter a value"),
+            Self::Number => source
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(Value::from)
+                .ok_or("enter a valid number"),
+            Self::Boolean
+                if source.eq_ignore_ascii_case("yes") || source.eq_ignore_ascii_case("true") =>
+            {
+                Ok(Value::Bool(true))
+            }
+            Self::Boolean
+                if source.eq_ignore_ascii_case("no") || source.eq_ignore_ascii_case("false") =>
+            {
+                Ok(Value::Bool(false))
+            }
+            Self::Boolean => Err("enter Yes or No"),
+        }
+    }
+}
+
+fn editable_scene_property(label: &str) -> Option<(&'static str, ScenePropertyKind)> {
+    Some(match label {
+        "Id" => ("id", ScenePropertyKind::Text),
+        "Label" => ("label", ScenePropertyKind::Text),
+        "Kind" => ("kind", ScenePropertyKind::Text),
+        "Color" => ("color", ScenePropertyKind::Text),
+        "Material" => ("material", ScenePropertyKind::Text),
+        "Visual" => ("visual", ScenePropertyKind::Text),
+        "Climb Axis" => ("climbAxis", ScenePropertyKind::Text),
+        "Radius" => ("radius", ScenePropertyKind::Number),
+        "Yaw" => ("yaw", ScenePropertyKind::Number),
+        "Max Width" => ("maxWidth", ScenePropertyKind::Number),
+        "Climb Speed" => ("climbSpeed", ScenePropertyKind::Number),
+        "Damage Per Second" => ("damagePerSecond", ScenePropertyKind::Number),
+        "Heal Per Second" => ("healPerSecond", ScenePropertyKind::Number),
+        "Outline" => ("outline", ScenePropertyKind::Boolean),
+        "Framed" => ("framed", ScenePropertyKind::Boolean),
+        _ => return None,
+    })
+}
+
+fn scene_add_menu(
+    ui: &mut egui::Ui,
+    world_id: Option<String>,
+    request: &mut Option<SceneEditRequest>,
+) {
+    ui.menu_button("Add", |ui| {
+        for kind in SceneObjectKind::ALL {
+            if ui.button(kind.label()).clicked() {
+                *request = Some(SceneEditRequest::AddObject {
+                    world_id: world_id.clone(),
+                    kind,
+                });
+                ui.close();
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inspector_property_values_keep_their_manifest_types() {
+        assert_eq!(
+            ScenePropertyKind::Number.parse("3.5").unwrap(),
+            serde_json::json!(3.5)
+        );
+        assert_eq!(
+            ScenePropertyKind::Boolean.parse("Yes").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            ScenePropertyKind::Text.parse("signal").unwrap(),
+            Value::String("signal".to_owned())
+        );
+        assert!(ScenePropertyKind::Number.parse("wide").is_err());
     }
 }

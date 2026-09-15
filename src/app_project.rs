@@ -342,104 +342,97 @@ impl StudioApp {
             }
             return Ok(());
         }
-        if matches!(request, SceneEditRequest::AddBlock) {
-            let world_id = manifest
-                .pointer("/launch/destinationWorld")
-                .and_then(Value::as_str)
-                .or_else(|| manifest.get("startWorld").and_then(Value::as_str))
-                .unwrap_or("lobby")
-                .to_owned();
-            let world = if world_id == "lobby" {
-                &mut manifest
-            } else {
-                manifest
-                    .get_mut("worlds")
-                    .and_then(Value::as_object_mut)
-                    .and_then(|worlds| worlds.get_mut(&world_id))
-                    .ok_or_else(|| format!("scene world `{world_id}` was not found"))?
-            };
-            let blocks = world
-                .get_mut("blocks")
-                .and_then(Value::as_array_mut)
-                .ok_or_else(|| format!("scene world `{world_id}` has no blocks"))?;
-            let block_index = blocks.len();
-            let id = format!("platform-new-{}", block_index + 1);
-            blocks.push(serde_json::json!({
-                "id": id,
-                "position": [0, 1, 0],
-                "size": [4, 1, 4],
-                "color": "signal"
-            }));
+        if let SceneEditRequest::AddObject { ref world_id, kind } = request {
+            let world_id = world_id
+                .clone()
+                .unwrap_or_else(|| active_manifest_world_id(&manifest));
+            let collection = kind.collection();
+            let world = manifest_world_mut(&mut manifest, &world_id)?;
+            let items = ensure_scene_collection(world, collection)?;
+            let index = items.len();
+            items.push(default_scene_object(kind, index));
             let source = serde_json::to_string_pretty(&manifest)
                 .map_err(|error| format!("could not serialize the scene manifest: {error}"))?
                 + "\n";
             self.authored_manifest_source = source.clone();
             if let Some(shell) = &mut self.shell {
                 shell.set_source_manifest(&source, true);
-                let scene_id = format!("world/{world_id}/blocks/{block_index}");
+                let scene_id = format!("world/{world_id}/{collection}/{index}");
                 shell.select_scene_node(&scene_id);
-                shell.set_notice("Platform added — save, then Rebuild & Play".to_owned());
+                shell.set_notice(format!(
+                    "{} added — save, then Rebuild & Play",
+                    kind.label()
+                ));
             }
             return Ok(());
         }
         let (target, operation) = match request {
-            SceneEditRequest::AddBlock => {
-                return Err("new block edit was not handled".to_owned());
+            SceneEditRequest::AddObject { .. } => {
+                return Err("new scene object edit was not handled".to_owned());
             }
             SceneEditRequest::UseImageAsFloor { .. } => {
                 return Err("floor image edit was not handled".to_owned());
             }
-            SceneEditRequest::UpdateBlock {
+            SceneEditRequest::UpdateTransform {
                 target,
                 position,
                 size,
-            } => (target, SceneEditOperation::Update { position, size }),
-            SceneEditRequest::DuplicateBlock { target } => (target, SceneEditOperation::Duplicate),
-            SceneEditRequest::DeleteBlock { target } => (target, SceneEditOperation::Delete),
+            } => (
+                target,
+                SceneEditOperation::UpdateTransform { position, size },
+            ),
+            SceneEditRequest::DuplicateObject { target } => (target, SceneEditOperation::Duplicate),
+            SceneEditRequest::DeleteObject { target } => (target, SceneEditOperation::Delete),
             SceneEditRequest::UpdateSignText { .. } => {
                 return Err("sign text edit was not handled".to_owned());
             }
+            SceneEditRequest::UpdateProperty { target, key, value } => {
+                (target, SceneEditOperation::UpdateProperty { key, value })
+            }
         };
-        let (world_id, index) = parse_block_target(&target)?;
-        let world = if world_id == "lobby" {
-            &mut manifest
-        } else {
-            manifest
-                .get_mut("worlds")
-                .and_then(Value::as_object_mut)
-                .and_then(|worlds| worlds.get_mut(&world_id))
-                .ok_or_else(|| format!("scene world `{world_id}` was not found"))?
-        };
-        let blocks = world
-            .get_mut("blocks")
+        let (world_id, collection, index) = parse_scene_object_target(&target)?;
+        let world = manifest_world_mut(&mut manifest, &world_id)?;
+        let items = world
+            .get_mut(&collection)
             .and_then(Value::as_array_mut)
-            .ok_or_else(|| format!("scene world `{world_id}` has no blocks"))?;
-        let block = blocks
+            .ok_or_else(|| format!("scene world `{world_id}` has no {collection}"))?;
+        let object = items
             .get_mut(index)
             .and_then(Value::as_object_mut)
-            .ok_or_else(|| format!("scene block `{target}` was not found"))?;
-        match operation {
-            SceneEditOperation::Update { position, size } => {
-                block.insert("position".to_owned(), serde_json::json!(position));
-                block.insert("size".to_owned(), serde_json::json!(size));
+            .ok_or_else(|| format!("scene object `{target}` was not found"))?;
+        let mut selection_after_edit = None;
+        match &operation {
+            SceneEditOperation::UpdateTransform { position, size } => {
+                object.insert("position".to_owned(), serde_json::json!(position));
+                if let Some(size) = size {
+                    object.insert("size".to_owned(), serde_json::json!(size));
+                }
+            }
+            SceneEditOperation::UpdateProperty { key, value } => {
+                object.insert(key.clone(), value.clone());
             }
             SceneEditOperation::Duplicate => {
-                let mut copy = Value::Object(block.clone());
+                let mut copy = Value::Object(object.clone());
                 let copy_object = copy
                     .as_object_mut()
-                    .ok_or_else(|| "scene block could not be duplicated".to_owned())?;
-                let base_id = copy_object
+                    .ok_or_else(|| "scene object could not be duplicated".to_owned())?;
+                if let Some(base_id) = copy_object
                     .get("id")
                     .and_then(Value::as_str)
-                    .unwrap_or("platform");
-                copy_object.insert(
-                    "id".to_owned(),
-                    Value::String(format!("{base_id}-copy-{}", blocks.len() + 1)),
-                );
-                blocks.push(copy);
+                    .map(str::to_owned)
+                {
+                    copy_object.insert(
+                        "id".to_owned(),
+                        Value::String(format!("{base_id}-copy-{}", items.len() + 1)),
+                    );
+                }
+                items.push(copy);
+                selection_after_edit =
+                    Some(format!("world/{world_id}/{collection}/{}", items.len() - 1));
             }
             SceneEditOperation::Delete => {
-                blocks.remove(index);
+                items.remove(index);
+                selection_after_edit = Some(format!("world/{world_id}/{collection}"));
             }
         }
         let source = serde_json::to_string_pretty(&manifest)
@@ -448,12 +441,20 @@ impl StudioApp {
         self.authored_manifest_source = source.clone();
         if let Some(shell) = &mut self.shell {
             shell.set_source_manifest(&source, true);
-            shell.set_notice(match operation {
-                SceneEditOperation::Update { .. } => {
-                    "Platform changed — save to keep it".to_owned()
+            if let Some(selection) = selection_after_edit {
+                shell.select_scene_node(&selection);
+            }
+            shell.set_notice(match &operation {
+                SceneEditOperation::UpdateTransform { .. } => {
+                    "Scene object changed — save to keep it".to_owned()
                 }
-                SceneEditOperation::Duplicate => "Platform duplicated — save to keep it".to_owned(),
-                SceneEditOperation::Delete => "Platform deleted — save to keep it".to_owned(),
+                SceneEditOperation::UpdateProperty { .. } => {
+                    "Property changed — save to keep it".to_owned()
+                }
+                SceneEditOperation::Duplicate => {
+                    "Scene object duplicated — save to keep it".to_owned()
+                }
+                SceneEditOperation::Delete => "Scene object deleted — save to keep it".to_owned(),
             });
         }
         Ok(())
@@ -845,6 +846,119 @@ impl StudioApp {
         }
         self.update_viewport();
         Ok(())
+    }
+}
+
+fn active_manifest_world_id(manifest: &Value) -> String {
+    manifest
+        .pointer("/launch/destinationWorld")
+        .and_then(Value::as_str)
+        .or_else(|| manifest.get("startWorld").and_then(Value::as_str))
+        .unwrap_or("lobby")
+        .to_owned()
+}
+
+fn manifest_world_mut<'a>(
+    manifest: &'a mut Value,
+    world_id: &str,
+) -> Result<&'a mut Value, String> {
+    if world_id == "lobby" {
+        return Ok(manifest);
+    }
+    manifest
+        .get_mut("worlds")
+        .and_then(Value::as_object_mut)
+        .and_then(|worlds| worlds.get_mut(world_id))
+        .ok_or_else(|| format!("scene world `{world_id}` was not found"))
+}
+
+fn ensure_scene_collection<'a>(
+    world: &'a mut Value,
+    collection: &str,
+) -> Result<&'a mut Vec<Value>, String> {
+    let world = world
+        .as_object_mut()
+        .ok_or_else(|| "scene world is not a JSON object".to_owned())?;
+    let value = world
+        .entry(collection.to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    value
+        .as_array_mut()
+        .ok_or_else(|| format!("scene collection `{collection}` is not an array"))
+}
+
+fn default_scene_object(kind: SceneObjectKind, index: usize) -> Value {
+    let number = index + 1;
+    match kind {
+        SceneObjectKind::Block => serde_json::json!({
+            "id": format!("block-{number}"),
+            "position": [0, 1, 0],
+            "size": [4, 1, 4],
+            "color": "signal"
+        }),
+        SceneObjectKind::Sign => serde_json::json!({
+            "text": format!("New sign {number}"),
+            "position": [0, 2, 0],
+            "maxWidth": 5,
+            "color": "paper"
+        }),
+        SceneObjectKind::Ladder => serde_json::json!({
+            "id": format!("ladder-{number}"),
+            "position": [0, 3, 0],
+            "size": [2, 6, 1],
+            "climbAxis": "z",
+            "color": "signal"
+        }),
+        SceneObjectKind::Interaction => serde_json::json!({
+            "id": format!("interaction-{number}"),
+            "label": format!("Interaction {number}"),
+            "kind": "zone",
+            "position": [0, 1, 0],
+            "radius": 3,
+            "color": "signal"
+        }),
+        SceneObjectKind::Checkpoint => serde_json::json!({
+            "id": format!("checkpoint-{number}"),
+            "position": [0, 1, 0],
+            "radius": 3
+        }),
+        SceneObjectKind::Hazard => serde_json::json!({
+            "id": format!("hazard-{number}"),
+            "kind": "damage",
+            "position": [0, 0.5, 0],
+            "size": [4, 1, 4],
+            "damagePerSecond": 10
+        }),
+        SceneObjectKind::SafeZone => serde_json::json!({
+            "id": format!("safe-zone-{number}"),
+            "position": [0, 1, 0],
+            "radius": 5,
+            "healPerSecond": 10
+        }),
+    }
+}
+
+#[cfg(test)]
+mod scene_edit_tests {
+    use super::*;
+
+    #[test]
+    fn every_insertable_scene_kind_has_a_valid_position_and_collection() {
+        let mut world = serde_json::json!({});
+        for kind in SceneObjectKind::ALL {
+            let collection = kind.collection();
+            ensure_scene_collection(&mut world, collection)
+                .expect("collection")
+                .push(default_scene_object(kind, 0));
+            let object = &world[collection][0];
+            assert_eq!(object["position"].as_array().map(Vec::len), Some(3));
+        }
+
+        assert_eq!(world["blocks"][0]["size"], serde_json::json!([4, 1, 4]));
+        assert_eq!(world["ladders"][0]["climbAxis"], "z");
+        assert_eq!(world["interactions"][0]["kind"], "zone");
+        assert_eq!(world["hazards"][0]["kind"], "damage");
+        assert_eq!(world["safeZones"][0]["radius"], 5);
     }
 }
 

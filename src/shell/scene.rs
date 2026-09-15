@@ -54,6 +54,21 @@ impl SceneNode {
         }
         self.children.iter().find_map(|child| child.find(id))
     }
+
+    fn collect_placeable_objects(&self, objects: &mut Vec<SceneObjectGeometry>) {
+        if is_scene_object(&self.id)
+            && let Some(position) = vector_property(self, "Position")
+        {
+            objects.push(SceneObjectGeometry {
+                id: self.id.clone(),
+                position,
+                size: vector_property(self, "Size"),
+            });
+        }
+        for child in &self.children {
+            child.collect_placeable_objects(objects);
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -82,6 +97,12 @@ pub(crate) struct ManifestAsset {
 }
 
 impl SceneOutline {
+    pub(crate) fn placeable_object_geometries(&self) -> Vec<SceneObjectGeometry> {
+        let mut objects = Vec::new();
+        self.root.collect_placeable_objects(&mut objects);
+        objects
+    }
+
     pub(crate) fn parse(source: &str) -> Result<Self, serde_json::Error> {
         let manifest: Value = serde_json::from_str(source)?;
         let assets = manifest_assets(&manifest);
@@ -264,6 +285,29 @@ impl SceneOutline {
             children,
         });
     }
+}
+
+pub(crate) fn scene_world_id(node_id: &str) -> Option<&str> {
+    let mut parts = node_id.split('/');
+    (parts.next() == Some("world"))
+        .then(|| parts.next())
+        .flatten()
+        .filter(|world| !world.is_empty())
+}
+
+pub(crate) fn is_scene_object(node_id: &str) -> bool {
+    let mut parts = node_id.split('/');
+    if parts.next() != Some("world") || parts.next().is_none() {
+        return false;
+    }
+    let Some(collection) = parts.next() else {
+        return false;
+    };
+    parts.next().is_some()
+        && parts.next().is_none()
+        && SceneObjectKind::ALL
+            .iter()
+            .any(|kind| kind.collection() == collection)
 }
 
 pub(crate) const WORLD_COLLECTIONS: [(&str, &str, &str, Icon); 11] = [
@@ -482,31 +526,56 @@ pub(crate) fn vector_editor(
     ui: &mut egui::Ui,
     label: &str,
     values: &mut [f32; 3],
-    speed: f32,
+    texts: &mut [String; 3],
 ) -> bool {
     let colors = palette(ui);
     let mut changed = false;
+    ui.label(
+        RichText::new(label)
+            .size(TYPE.secondary)
+            .color(colors.secondary_text),
+    );
     ui.horizontal(|ui| {
-        ui.add_sized(
-            [72.0, CONTROL_HEIGHT],
-            egui::Label::new(
-                RichText::new(label)
-                    .size(TYPE.secondary)
-                    .color(colors.secondary_text),
-            ),
-        );
-        for (axis, value) in values.iter_mut().enumerate() {
-            changed |= ui
-                .add(
-                    egui::DragValue::new(value)
-                        .speed(speed)
-                        .prefix(["X ", "Y ", "Z "][axis])
-                        .min_decimals(1),
-                )
-                .changed();
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let field_width = ((ui.available_width() - 36.0) / 3.0).max(38.0);
+        for axis in 0..3 {
+            ui.label(
+                RichText::new(["X", "Y", "Z"][axis])
+                    .size(TYPE.meta)
+                    .color(colors.muted),
+            );
+            let response = ui.add_sized(
+                [field_width, CONTROL_HEIGHT],
+                egui::TextEdit::singleline(&mut texts[axis])
+                    .id_salt((label, axis))
+                    .horizontal_align(Align::RIGHT),
+            );
+            if response.changed()
+                && let Ok(value) = texts[axis].trim().parse::<f32>()
+                && value.is_finite()
+                && values[axis] != value
+            {
+                values[axis] = value;
+                changed = true;
+            }
+            if response.lost_focus() {
+                texts[axis] = format_scene_number(values[axis]);
+            }
         }
     });
     changed
+}
+
+pub(crate) fn scene_vector_text(values: [f32; 3]) -> [String; 3] {
+    values.map(format_scene_number)
+}
+
+fn format_scene_number(value: f32) -> String {
+    let formatted = format!("{value:.3}");
+    formatted
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
 }
 
 fn avatar_properties(value: &Value) -> Vec<(String, String)> {

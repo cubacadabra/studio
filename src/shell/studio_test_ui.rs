@@ -118,6 +118,19 @@ impl StudioShell {
             .frame(Frame::NONE.fill(Color32::TRANSPARENT))
             .show(root, |ui| {
                 let available = ui.available_rect_before_wrap();
+                let selected_projection = self
+                    .scene_object_projections
+                    .iter()
+                    .find(|projection| projection.id == self.selected_scene);
+                let selected_is_placeable = selected_projection.is_some();
+                let selected_can_resize = selected_projection
+                    .is_some_and(|item| item.size.is_some() && item.screen_corners.is_some());
+                if selected_is_placeable
+                    && !selected_can_resize
+                    && self.scene_viewport_tool == SceneViewportTool::Resize
+                {
+                    self.scene_viewport_tool = SceneViewportTool::Move;
+                }
                 let header = editor_header(ui, |ui| {
                     inline_icon(ui, Icon::Camera, colors.muted);
                     ui.label(
@@ -131,6 +144,32 @@ impl StudioShell {
                             .size(TYPE.secondary)
                             .color(colors.secondary_text),
                     );
+                    if self.project_editable && selected_is_placeable {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if selected_can_resize {
+                                if ui
+                                    .selectable_label(
+                                        self.scene_viewport_tool == SceneViewportTool::Resize,
+                                        "Resize",
+                                    )
+                                    .on_hover_text("Resize the selected object on the X/Z plane")
+                                    .clicked()
+                                {
+                                    self.scene_viewport_tool = SceneViewportTool::Resize;
+                                }
+                            }
+                            if ui
+                                .selectable_label(
+                                    self.scene_viewport_tool == SceneViewportTool::Move,
+                                    "Move",
+                                )
+                                .on_hover_text("Move the selected object on the X/Z plane")
+                                .clicked()
+                            {
+                                self.scene_viewport_tool = SceneViewportTool::Move;
+                            }
+                        });
+                    }
                 });
                 self.runtime_viewport = Rect::from_min_max(
                     egui::pos2(available.min.x + 1.0, header.max.y),
@@ -142,12 +181,8 @@ impl StudioShell {
                     Stroke::new(1.0, colors.border),
                     StrokeKind::Inside,
                 );
-                if let Some(selected) = self
-                    .scene_outline
-                    .root
-                    .find(&self.selected_scene)
-                    .filter(|node| node.kind == "Block")
-                {
+                self.show_scene_object_handles(ui);
+                if let Some(selected) = self.scene_outline.root.find(&self.selected_scene) {
                     let badge = Rect::from_min_size(
                         self.runtime_viewport.min + egui::vec2(12.0, 12.0),
                         egui::vec2(220.0, 42.0),
@@ -167,15 +202,207 @@ impl StudioShell {
                         semibold_font(TYPE.meta),
                         colors.text,
                     );
+                    let hint = match (
+                        selected_is_placeable,
+                        selected_can_resize,
+                        self.scene_viewport_tool,
+                    ) {
+                        (true, _, SceneViewportTool::Move) if self.project_editable => {
+                            "Drag the outline to move on X / Z"
+                        }
+                        (true, true, SceneViewportTool::Resize) if self.project_editable => {
+                            "Drag a corner to resize on X / Z"
+                        }
+                        (true, _, _) => "Open a source project to edit this object",
+                        _ => "Properties appear in the Inspector",
+                    };
                     ui.painter().text(
                         badge.min + egui::vec2(10.0, 29.0),
                         Align2::LEFT_CENTER,
-                        "Edit position or size in Inspector",
+                        hint,
                         FontId::proportional(TYPE.meta - 1.0),
                         colors.secondary_text,
                     );
                 }
                 ui.allocate_rect(self.runtime_viewport, Sense::hover());
             });
+    }
+
+    fn show_scene_object_handles(&mut self, ui: &mut egui::Ui) {
+        let colors = palette(ui);
+        let viewport = self.runtime_viewport;
+        let projections = self.scene_object_projections.clone();
+        for projection in projections.into_iter().rev() {
+            let bounds = projection.bounds();
+            if !bounds.intersects(viewport) {
+                continue;
+            }
+            let selected = self.selected_scene == projection.id;
+            let sense = if selected
+                && self.project_editable
+                && self.scene_viewport_tool == SceneViewportTool::Move
+            {
+                Sense::click_and_drag()
+            } else {
+                Sense::click()
+            };
+            let response = ui.interact(
+                bounds.intersect(viewport),
+                ui.id().with(("scene-object", &projection.id)),
+                sense,
+            );
+            let pointer_over_shape = response
+                .interact_pointer_pos()
+                .is_some_and(|point| projection.contains(point));
+            if response.clicked() && pointer_over_shape {
+                self.select_scene_node(&projection.id);
+                self.notice = if projection.size.is_some() {
+                    "Object selected — use Move or Resize in the viewport"
+                } else {
+                    "Object selected — use Move in the viewport"
+                }
+                .to_owned();
+            }
+            if selected || (response.hovered() && pointer_over_shape) {
+                let stroke = Stroke::new(
+                    if selected { 2.0 } else { 1.0 },
+                    if selected {
+                        colors.accent
+                    } else {
+                        colors.secondary_text
+                    },
+                );
+                if let Some(corners) = projection.screen_corners {
+                    for index in 0..4 {
+                        ui.painter()
+                            .line_segment([corners[index], corners[(index + 1) % 4]], stroke);
+                    }
+                } else {
+                    ui.painter()
+                        .circle_filled(projection.center_screen, 6.0, colors.panel_raised);
+                    ui.painter()
+                        .circle_stroke(projection.center_screen, 7.0, stroke);
+                    ui.painter().line_segment(
+                        [
+                            projection.center_screen - egui::vec2(10.0, 0.0),
+                            projection.center_screen + egui::vec2(10.0, 0.0),
+                        ],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [
+                            projection.center_screen - egui::vec2(0.0, 10.0),
+                            projection.center_screen + egui::vec2(0.0, 10.0),
+                        ],
+                        stroke,
+                    );
+                }
+            }
+            if selected
+                && self.project_editable
+                && self.scene_viewport_tool == SceneViewportTool::Move
+            {
+                let drag_id = response.id.with("origin");
+                if response.drag_started() && pointer_over_shape {
+                    ui.data_mut(|data| {
+                        data.insert_temp(drag_id, (projection.position, projection.size));
+                    });
+                }
+                if response.dragged()
+                    && let Some(current_screen) = response.interact_pointer_pos()
+                    && let Some((origin_position, size)) =
+                        ui.data(|data| data.get_temp::<([f32; 3], Option<[f32; 3]>)>(drag_id))
+                {
+                    self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
+                        target: projection.id.clone(),
+                        origin_screen: current_screen - response.drag_delta(),
+                        current_screen,
+                        origin_position,
+                        size,
+                    });
+                }
+                if response.drag_stopped() {
+                    ui.data_mut(|data| data.remove::<([f32; 3], Option<[f32; 3]>)>(drag_id));
+                }
+            }
+            response.clone().context_menu(|ui| {
+                if self.project_editable {
+                    if ui.button("Duplicate").clicked() {
+                        self.scene_edit_requested = Some(SceneEditRequest::DuplicateObject {
+                            target: projection.id.clone(),
+                        });
+                        ui.close();
+                    }
+                    if ui.button("Delete").clicked() {
+                        self.scene_edit_requested = Some(SceneEditRequest::DeleteObject {
+                            target: projection.id.clone(),
+                        });
+                        ui.close();
+                    }
+                }
+            });
+
+            if selected
+                && self.project_editable
+                && self.scene_viewport_tool == SceneViewportTool::Resize
+                && let (Some(screen_corners), Some(world_corners), Some(size)) = (
+                    projection.screen_corners,
+                    projection.world_corners,
+                    projection.size,
+                )
+            {
+                for index in 0..4 {
+                    let center = screen_corners[index];
+                    let handle = Rect::from_center_size(center, Vec2::splat(12.0));
+                    let handle_response = ui
+                        .interact(
+                            handle,
+                            ui.id().with(("scene-object-resize", &projection.id, index)),
+                            Sense::drag(),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::ResizeNwSe);
+                    let fill = if handle_response.hovered() || handle_response.dragged() {
+                        colors.accent
+                    } else {
+                        colors.panel_raised
+                    };
+                    ui.painter().rect(
+                        handle.shrink(2.0),
+                        2.0,
+                        fill,
+                        Stroke::new(1.0, colors.accent),
+                        StrokeKind::Inside,
+                    );
+                    let drag_id = handle_response.id.with("origin");
+                    if handle_response.drag_started() {
+                        ui.data_mut(|data| {
+                            data.insert_temp(
+                                drag_id,
+                                (projection.position, size, world_corners[(index + 2) % 4]),
+                            );
+                        });
+                    }
+                    if handle_response.dragged()
+                        && let Some(current_screen) = handle_response.interact_pointer_pos()
+                        && let Some((origin_position, origin_size, fixed_corner)) =
+                            ui.data(|data| data.get_temp::<([f32; 3], [f32; 3], [f32; 3])>(drag_id))
+                    {
+                        self.scene_viewport_edit_requested =
+                            Some(SceneViewportEditRequest::Resize {
+                                target: projection.id.clone(),
+                                current_screen,
+                                fixed_corner,
+                                origin_position,
+                                origin_size,
+                            });
+                    }
+                    if handle_response.drag_stopped() {
+                        ui.data_mut(|data| {
+                            data.remove::<([f32; 3], [f32; 3], [f32; 3])>(drag_id);
+                        });
+                    }
+                }
+            }
+        }
     }
 }
