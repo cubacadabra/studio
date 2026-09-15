@@ -44,6 +44,14 @@ jobs:
           ref: main
           path: rust
 
+      # The starter-project generator embeds SDK modules from this repository.
+      - name: Check out shared tools
+        uses: actions/checkout@v4
+        with:
+          repository: cubacadabra/tools
+          ref: main
+          path: tools
+
       - name: Validate release tag
         shell: bash
         run: |

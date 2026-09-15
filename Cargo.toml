@@ -21,7 +21,6 @@ getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log = "0.4"
 rfd = "0.15"
-rodio = "0.21"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
@@ -30,6 +29,11 @@ tungstenite = { version = "0.27", features = ["native-tls"] }
 ureq = { version = "3", default-features = true }
 url = "2"
 winit = "0.30"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# Keep Linux builds independent of a system ALSA development package; the
+# source browser reports audio preview as unavailable on that platform.
+rodio = "0.21"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

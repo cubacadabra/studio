@@ -92,6 +92,7 @@ use style_icons::*;
 use style_layout::*;
 pub(crate) use theme::*;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 struct SourceAudioPreview {
     path: PathBuf,
     _stream: rodio::OutputStream,
@@ -339,6 +340,7 @@ pub(crate) struct StudioShell {
     selected_source_file: Option<PathBuf>,
     selected_source_asset: Option<PathBuf>,
     source_asset_texture: Option<(PathBuf, egui::TextureHandle, [usize; 2])>,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     audio_preview: Option<SourceAudioPreview>,
     source_editor_text: String,
     source_editor: CodeEditor,

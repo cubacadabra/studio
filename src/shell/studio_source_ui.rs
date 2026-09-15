@@ -1,5 +1,7 @@
 use super::*;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use rodio::Source;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::io::Cursor;
 
 enum SourceTreeRow {
@@ -111,60 +113,70 @@ impl StudioShell {
     }
 
     fn stop_audio_preview(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(preview) = self.audio_preview.take() {
             preview.sink.stop();
         }
     }
 
     fn toggle_audio_preview(&mut self) {
-        let Some(path) = self.selected_source_asset.clone() else {
-            return;
-        };
-        let Some(asset) = self.source_assets.get(&path) else {
-            return;
-        };
-        let (kind, bytes) = (asset.kind, asset.bytes.clone());
-        if kind != SourceAssetKind::Audio {
-            return;
-        }
-
-        if let Some(preview) = &self.audio_preview
-            && preview.path == path
-            && !preview.sink.empty()
+        #[cfg(target_os = "linux")]
         {
-            if preview.sink.is_paused() {
-                preview.sink.play();
-            } else {
-                preview.sink.pause();
-            }
+            self.notice = "Audio preview is unavailable in this Linux build.".to_owned();
             return;
         }
 
-        self.stop_audio_preview();
-        let stream = match rodio::OutputStreamBuilder::open_default_stream() {
-            Ok(stream) => stream,
-            Err(error) => {
-                self.notice = format!("Audio playback is unavailable: {error}");
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let Some(path) = self.selected_source_asset.clone() else {
+                return;
+            };
+            let Some(asset) = self.source_assets.get(&path) else {
+                return;
+            };
+            let (kind, bytes) = (asset.kind, asset.bytes.clone());
+            if kind != SourceAssetKind::Audio {
                 return;
             }
-        };
-        let decoder = match rodio::Decoder::try_from(Cursor::new(bytes)) {
-            Ok(decoder) => decoder,
-            Err(error) => {
-                self.notice = format!("Could not decode {}: {error}", path.display());
+
+            if let Some(preview) = &self.audio_preview
+                && preview.path == path
+                && !preview.sink.empty()
+            {
+                if preview.sink.is_paused() {
+                    preview.sink.play();
+                } else {
+                    preview.sink.pause();
+                }
                 return;
             }
-        };
-        let duration = decoder.total_duration();
-        let sink = rodio::Sink::connect_new(stream.mixer());
-        sink.append(decoder);
-        sink.play();
-        self.audio_preview = Some(SourceAudioPreview {
-            path,
-            _stream: stream,
-            sink,
-            duration,
-        });
+
+            self.stop_audio_preview();
+            let stream = match rodio::OutputStreamBuilder::open_default_stream() {
+                Ok(stream) => stream,
+                Err(error) => {
+                    self.notice = format!("Audio playback is unavailable: {error}");
+                    return;
+                }
+            };
+            let decoder = match rodio::Decoder::try_from(Cursor::new(bytes)) {
+                Ok(decoder) => decoder,
+                Err(error) => {
+                    self.notice = format!("Could not decode {}: {error}", path.display());
+                    return;
+                }
+            };
+            let duration = decoder.total_duration();
+            let sink = rodio::Sink::connect_new(stream.mixer());
+            sink.append(decoder);
+            sink.play();
+            self.audio_preview = Some(SourceAudioPreview {
+                path,
+                _stream: stream,
+                sink,
+                duration,
+            });
+        }
     }
 
     pub(crate) fn show_scripts(&mut self, root: &mut egui::Ui) {
@@ -410,6 +422,7 @@ impl StudioShell {
                 }
             }
             SourceAssetKind::Audio => {
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 let (playing, elapsed, duration) = self
                     .audio_preview
                     .as_ref()
@@ -422,6 +435,8 @@ impl StudioShell {
                         )
                     })
                     .unwrap_or((false, Duration::ZERO, None));
+                #[cfg(target_os = "linux")]
+                let (playing, elapsed, duration) = (false, Duration::ZERO, None);
                 let mut toggle = false;
                 let mut stop = false;
                 ui.vertical_centered(|ui| {

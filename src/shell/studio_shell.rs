@@ -169,6 +169,7 @@ impl StudioShell {
             selected_source_file: None,
             selected_source_asset: None,
             source_asset_texture: None,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             audio_preview: None,
             source_editor_text: String::new(),
             source_editor: CodeEditor::default(),
