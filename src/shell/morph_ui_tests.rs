@@ -10,6 +10,83 @@ impl HasDisplayHandle for HeadlessDisplay {
 }
 
 #[test]
+#[ignore = "requires a GPU to construct the shell; does not capture the screen"]
+fn start_screen_recents_are_visible_and_clickable() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let context = egui::Context::default();
+    configure_context(&context);
+    let state = EguiState::new(
+        context.clone(),
+        egui::ViewportId::ROOT,
+        &HeadlessDisplay,
+        Some(1.),
+        None,
+        Some(4096),
+    );
+    let renderer = EguiRenderer::new(
+        &device,
+        wgpu::TextureFormat::Rgba8Unorm,
+        RendererOptions::default(),
+    );
+    let mut shell = StudioShell::from_egui(context, state, renderer);
+    shell.set_start_screen(true);
+    let projects = vec![
+        PathBuf::from("/projects/first-game"),
+        PathBuf::from("/projects/the-wild-west"),
+    ];
+    shell.set_recent_projects(projects.clone());
+    let mut time = 0.;
+    for size in [[1280, 800], [1440, 900], [768, 1024], [390, 844]] {
+        let bounds =
+            Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0] as f32, size[1] as f32));
+        let _ = frame(&mut shell, &mut time, size, vec![]);
+        let output = frame(&mut shell, &mut time, size, vec![]);
+        for project in &projects {
+            let label = crate::game_name(project);
+            let rect = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        let rect = Rect::from_min_size(text.pos, text.galley.size());
+                        eprintln!("{size:?}: {label} at {rect:?}, clip {:?}", shape.clip_rect);
+                        assert!(
+                            bounds.contains_rect(rect),
+                            "{label} is off screen: {rect:?}"
+                        );
+                        assert!(
+                            shape.clip_rect.contains_rect(rect),
+                            "{label} is clipped: {rect:?}"
+                        );
+                        Some(rect)
+                    }
+                    _ => None,
+                })
+                .expect("recent project label must be painted");
+            for pressed in [true, false] {
+                let _ = frame(
+                    &mut shell,
+                    &mut time,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(rect.center()),
+                        egui::Event::PointerButton {
+                            pos: rect.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(shell.take_recent_project_request().as_ref(), Some(project));
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires a GPU; optionally set CUBA_STUDIO_UI_CAPTURES to save PNGs"]
 fn morph_library_layout_and_interactions() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
