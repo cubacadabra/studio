@@ -89,13 +89,24 @@ impl StudioShell {
                                     egui::vec2(40.0, CONTROL_HEIGHT),
                                     Sense::hover(),
                                 );
-                                paint_status_label(ui, live.rect, colors.live, "Live");
+                                paint_status_label(
+                                    ui,
+                                    live.rect,
+                                    if self.playing {
+                                        colors.live
+                                    } else {
+                                        colors.accent
+                                    },
+                                    if self.playing { "Live" } else { "Edit" },
+                                );
                             }
                             let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
                             if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
                                 if self.playing {
                                     self.playing = false;
                                     self.notice = "Play session stopped".to_owned();
+                                } else if self.project_dirty || self.preview_stale {
+                                    self.request_rebuild_and_play();
                                 } else {
                                     self.playing = true;
                                     self.restart_requested = true;

@@ -359,10 +359,17 @@ impl StudioApp {
                 shell.set_source_manifest(&source, true);
                 let scene_id = format!("world/{world_id}/{collection}/{index}");
                 shell.select_scene_node(&scene_id);
-                shell.set_notice(format!(
-                    "{} added — save, then Rebuild & Play",
-                    kind.label()
-                ));
+                if kind == SceneObjectKind::Block {
+                    shell.set_playing(false);
+                    shell.set_notice(
+                        "Block added — drag it in the viewport, then press Play to test".to_owned(),
+                    );
+                } else {
+                    shell.set_notice(format!(
+                        "{} added — save, then Rebuild & Play",
+                        kind.label()
+                    ));
+                }
             }
             return Ok(());
         }
