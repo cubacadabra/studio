@@ -4,7 +4,6 @@ use std::collections::BTreeSet;
 const MAX_RECENT_PROJECTS: usize = 8;
 const MAX_PROJECT_IMAGE_ASSETS: usize = 16;
 const MAX_SOURCE_FILE_BYTES: u64 = 4 * 1024 * 1024;
-const CLI_PATH_ENV: &str = "CUBACADABRA_CLI_PATH";
 
 pub(crate) fn load_recent_projects() -> Vec<PathBuf> {
     let Some(path) = recent_projects_file() else {
@@ -245,116 +244,18 @@ pub(crate) fn build_raw_game_package(game_root: &Path) -> Result<PathBuf, Box<dy
             .map(|duration| duration.as_nanos())
             .unwrap_or_default()
     ));
-    let executable = cubacadabra_executable();
-    let mut command = if executable
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pyz"))
-    {
-        let interpreter = if cfg!(target_os = "windows") {
-            "python"
-        } else {
-            "python3"
-        };
-        let mut command = std::process::Command::new(interpreter);
-        command.arg(&executable);
-        command
-    } else {
-        std::process::Command::new(&executable)
-    };
-    command.args([
-        "build-game",
-        "--source",
-        game_root.to_str().ok_or_else(|| {
-            Box::new(StudioError("game path is not valid UTF-8".to_owned())) as Box<dyn Error>
-        })?,
-        "--output",
-        package.to_str().ok_or_else(|| {
-            Box::new(StudioError(
-                "temporary package path is not valid UTF-8".to_owned(),
-            )) as Box<dyn Error>
-        })?,
-    ]);
-    let result = match command.output() {
-        Ok(result) => result,
-        Err(error) if executable == Path::new("cubacadabra") => {
-            let tools_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/src");
-            if !tools_source.is_dir() {
-                return Err(Box::new(StudioError(format!(
-                    "could not start the cubacadabra builder: {error}. Install the Cubacadabra CLI or set {CLI_PATH_ENV} to its executable"
-                ))));
-            }
-            std::process::Command::new("python3")
-                .env("PYTHONPATH", tools_source)
-                .args([
-                    "-m",
-                    "cubacadabra",
-                    "build-game",
-                    "--source",
-                    game_root.to_str().unwrap_or_default(),
-                    "--output",
-                    package.to_str().unwrap_or_default(),
-                ])
-                .output()
-                .map_err(|python_error| {
-                    Box::new(StudioError(format!(
-                        "could not start the cubacadabra builder: {python_error}. Install the Cubacadabra CLI or set {CLI_PATH_ENV} to its executable"
-                    ))) as Box<dyn Error>
-                })?
-        }
-        Err(error) => {
-            return Err(Box::new(StudioError(format!(
-                "could not start the cubacadabra builder at {}: {error}",
-                executable.display()
-            ))));
-        }
-    };
-    if !result.status.success() {
-        let details = String::from_utf8_lossy(&result.stderr);
-        return Err(Box::new(StudioError(format!(
-            "could not build raw game project with cubacadabra: {}",
-            details.trim()
-        ))));
-    }
-    Ok(package)
-}
-
-fn cubacadabra_executable() -> PathBuf {
-    if let Some(path) = env::var_os(CLI_PATH_ENV).filter(|value| !value.is_empty()) {
-        return PathBuf::from(path);
-    }
-    if let Ok(current_executable) = env::current_exe()
-        && let Some(executable_dir) = current_executable.parent()
-    {
-        let filename = if cfg!(target_os = "windows") {
-            "cubacadabra.exe"
-        } else {
-            "cubacadabra"
-        };
-        let sibling = executable_dir.join(filename);
-        if sibling.is_file() {
-            return sibling;
-        }
-        if let Some(contents_dir) = executable_dir.parent() {
-            let resource = contents_dir.join("Resources").join(filename);
-            if resource.is_file() {
-                return resource;
-            }
-            let resource_zip = contents_dir.join("Resources").join("cubacadabra.pyz");
-            if resource_zip.is_file() {
-                return resource_zip;
-            }
-        }
-        let sibling_zip = executable_dir.join("cubacadabra.pyz");
-        if sibling_zip.is_file() {
-            return sibling_zip;
-        }
-    }
-    PathBuf::from(if cfg!(target_os = "windows") {
-        "cubacadabra.exe"
-    } else {
-        "cubacadabra"
+    cubacadabra_builder::build_game(&cubacadabra_builder::BuildOptions {
+        source_root: game_root.join("src"),
+        manifest_path: game_root.join("manifest.json"),
+        output: package.clone(),
+        zip_path: None,
     })
+    .map_err(|error| {
+        Box::new(StudioError(format!(
+            "could not build raw game project with cubacadabra: {error}"
+        ))) as Box<dyn Error>
+    })?;
+    Ok(package)
 }
 
 pub(crate) fn read_utf8_file(path: &Path, kind: &str) -> Result<String, Box<dyn Error>> {

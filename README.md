@@ -39,12 +39,10 @@ manifest.json
 src/main.luau
 ```
 
-When `--path` points at a raw project, Studio invokes a `cubacadabra
-build-game` executable next to the Studio binary (or in the macOS app's
-`Contents/Resources`), then falls back to `cubacadabra` on `PATH`. Development
-checkouts can use the sibling `../tools` Python source automatically. Set
-`CUBACADABRA_CLI_PATH` to test a specific builder. The package is loaded from a
-temporary Studio-owned directory and removed when Studio exits.
+When `--path` points at a raw project, Studio calls the shared Rust
+`cubacadabra-builder` library in-process. The package is loaded from a
+temporary Studio-owned directory and removed when Studio exits. The native
+`cubacadabra` CLI in `../tools` uses that same library for terminal builds.
 
 From this repository, run:
 
@@ -104,12 +102,12 @@ CUBACADABRA_CODEX_PATH=/absolute/path/to/codex \
   cargo run --release -- --path /Users/aa/test-for-studio
 ```
 
-Studio currently expects the sibling engine repository at `../rust` at build
-time. Release artifacts include the game builder as a Python zipapp, so the
-target machine needs Python 3 to build raw projects. Codex remains an optional
+Studio currently expects the sibling engine repository at `../rust` and the
+creator-toolchain repository at `../tools` at build time. Release artifacts
+contain native Rust binaries only; opening and rebuilding raw projects does
+not require Python or a separately installed CLI. Codex remains an optional
 integration and must be packaged separately or configured with
-`CUBACADABRA_CODEX_PATH`. The runtime reports missing dependencies instead of
-silently depending on a developer checkout.
+`CUBACADABRA_CODEX_PATH`.
 
 Studio connects the running game to the multiplayer Worker over WebSockets.
 The backend defaults to the local Worker at `http://127.0.0.1:8787`; set
