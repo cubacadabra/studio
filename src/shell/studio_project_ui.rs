@@ -81,15 +81,23 @@ impl StudioShell {
                             {
                                 self.new_project_folder_requested = true;
                             }
-                            ui.add(
+                            // Allocate the path's actual row width before laying out the
+                            // label. Without this bound, a long Windows path can become the
+                            // label's intrinsic width and push the rest of the dialog out of
+                            // view.
+                            let path_width = ui.available_width().max(0.0);
+                            let path = self.new_project_parent.display().to_string();
+                            ui.add_sized(
+                                [path_width, 26.0],
                                 egui::Label::new(
-                                    RichText::new(self.new_project_parent.display().to_string())
+                                    RichText::new(&path)
                                         .size(TYPE.secondary)
                                         .color(colors.secondary_text),
                                 )
-                                .truncate(),
+                                .truncate()
+                                .show_tooltip_when_elided(false),
                             )
-                            .on_hover_text(self.new_project_parent.display().to_string());
+                            .on_hover_text(path);
                         });
                     });
                 ui.add_space(6.0);
@@ -143,11 +151,11 @@ impl StudioShell {
                     }
                 });
             });
-        let escape_pressed = response.is_top_modal
-            && !response.any_popup_open
-            && context
-                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        if close_requested || escape_pressed {
+        // Let egui handle Escape and clicking outside the dialog as well as the
+        // explicit Cancel button. The backdrop is especially important on
+        // Windows, where the native folder picker can leave users returning to
+        // a dialog with no obvious close affordance if its contents overflow.
+        if close_requested || response.should_close() {
             self.new_project_dialog_open = false;
         }
     }
