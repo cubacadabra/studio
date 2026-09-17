@@ -394,11 +394,39 @@ pub(crate) enum SceneViewportEditRequest {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReviewCameraPreset {
+    Gameplay,
+    Overview,
+    Island,
+}
+
+impl ReviewCameraPreset {
+    pub(crate) const ALL: [Self; 3] = [Self::Gameplay, Self::Overview, Self::Island];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Gameplay => "Gameplay",
+            Self::Overview => "Overview",
+            Self::Island => "Island",
+        }
+    }
+
+    pub(crate) const fn renderer_value(self) -> u8 {
+        match self {
+            Self::Gameplay => 0,
+            Self::Overview => 1,
+            Self::Island => 2,
+        }
+    }
+}
+
 pub(crate) struct StudioShell {
     context: egui::Context,
     state: EguiState,
     renderer: EguiRenderer,
     workspace: Workspace,
+    review_camera: ReviewCameraPreset,
     runtime_viewport: Rect,
     scene_outline: SceneOutline,
     runtime_ui_nodes: Vec<cubacadabra_client::StudioUiNode>,

@@ -27,6 +27,15 @@ impl StudioShell {
         self.workspace == Workspace::Morphs
     }
 
+    pub(crate) fn review_camera(&self) -> ReviewCameraPreset {
+        self.review_camera
+    }
+
+    pub(crate) fn set_review_camera(&mut self, preset: ReviewCameraPreset) {
+        self.review_camera = preset;
+        self.notice = format!("{} review camera", preset.label());
+    }
+
     pub(crate) fn set_start_screen(&mut self, start_screen: bool) {
         self.start_screen = start_screen;
         self.start_screen_logged = false;

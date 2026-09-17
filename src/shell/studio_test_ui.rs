@@ -144,6 +144,17 @@ impl StudioShell {
                             .size(TYPE.secondary)
                             .color(colors.secondary_text),
                     );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        for preset in ReviewCameraPreset::ALL.into_iter().rev() {
+                            if ui
+                                .selectable_label(self.review_camera == preset, preset.label())
+                                .on_hover_text("Temporary deterministic Studio review view")
+                                .clicked()
+                            {
+                                self.set_review_camera(preset);
+                            }
+                        }
+                    });
                     if self.project_editable && selected_is_placeable {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if selected_can_resize {

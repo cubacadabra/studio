@@ -193,6 +193,13 @@ impl StudioApp {
             0.0,
         );
         if let Some(renderer) = &mut self.renderer {
+            renderer.set_studio_camera_preset(
+                self.shell
+                    .as_ref()
+                    .map(StudioShell::review_camera)
+                    .unwrap_or(crate::shell::ReviewCameraPreset::Gameplay)
+                    .renderer_value(),
+            );
             renderer.set_studio_viewport(Some([
                 viewport.min.x * scale,
                 viewport.min.y * scale,

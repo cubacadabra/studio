@@ -56,6 +56,7 @@ impl StudioShell {
             state,
             renderer,
             workspace: Workspace::default(),
+            review_camera: ReviewCameraPreset::Gameplay,
             runtime_viewport: Rect::NOTHING,
             scene_outline,
             runtime_ui_nodes: Vec::new(),
