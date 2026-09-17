@@ -726,6 +726,7 @@ impl StudioApp {
                             temporary_package,
                         },
                     image_atlas,
+                    world_models,
                     local_morph_catalog,
                 },
             mut client,
@@ -768,6 +769,14 @@ impl StudioApp {
             }
             return Err("the new game's image atlas could not be uploaded".to_owned());
         }
+        if let Some(renderer) = &mut self.renderer {
+            renderer.clear_world_meshes();
+            for model in &world_models {
+                renderer
+                    .register_world_mesh(&model.id, &model.bytes)
+                    .map_err(|error| format!("world model {} was rejected: {error}", model.id))?;
+            }
+        }
         let old_temporary_package = self.temporary_package.take();
         self.project_root = project_root;
         self.game_root = root;
@@ -779,6 +788,7 @@ impl StudioApp {
             self.recent_projects = remember_recent_project(&self.project_root);
         }
         self.image_atlas = image_atlas;
+        self.world_models = world_models;
         self.network = network;
         self.client = client;
         self.renderer_uses_base_package_generation = client_uses_base_package_generation;

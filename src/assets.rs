@@ -1,5 +1,54 @@
 use super::*;
 
+#[derive(Clone)]
+pub(crate) struct ModelAsset {
+    pub(crate) id: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+pub(crate) fn load_world_models(
+    root: &Path,
+    manifest_source: &str,
+) -> Result<Vec<ModelAsset>, Box<dyn Error>> {
+    let manifest: Value = serde_json::from_str(manifest_source)?;
+    let Some(models) = manifest
+        .get("assets")
+        .and_then(|assets| assets.get("models"))
+        .and_then(Value::as_object)
+    else {
+        return Ok(Vec::new());
+    };
+    if models.len() > 64 {
+        return Err(Box::new(StudioError(
+            "a game package may declare at most 64 world models".into(),
+        )));
+    }
+    models
+        .iter()
+        .map(|(id, definition)| {
+            let path = definition
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| StudioError(format!("model asset {id:?} has no path")))?;
+            if !path.to_ascii_lowercase().ends_with(".glb") {
+                return Err(Box::new(StudioError(format!(
+                    "model asset {id:?} must reference an embedded .glb file"
+                ))) as Box<dyn Error>);
+            }
+            let bytes = fs::read(safe_asset_path(root, path)?)?;
+            if bytes.is_empty() || bytes.len() > 16 * 1024 * 1024 {
+                return Err(Box::new(StudioError(format!(
+                    "model asset {id:?} is too large"
+                ))));
+            }
+            Ok(ModelAsset {
+                id: id.clone(),
+                bytes,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn game_name(root: &Path) -> String {
     root.file_name()
         .and_then(|name| name.to_str())

@@ -51,6 +51,7 @@ impl StudioApp {
         Ok(Self {
             project_root,
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
+            world_models: load_world_models(&game_root, &manifest_source)?,
             authored_manifest_source,
             manifest_source,
             game_root,
@@ -130,6 +131,13 @@ impl StudioApp {
                     "the game's image atlas could not be uploaded".to_owned(),
                 )));
             }
+        }
+        for model in &self.world_models {
+            renderer
+                .register_world_mesh(&model.id, &model.bytes)
+                .map_err(|error| {
+                    StudioError(format!("world model {} was rejected: {error}", model.id))
+                })?;
         }
 
         let mut shell = StudioShell::new(&window, &renderer, &self.manifest_source);

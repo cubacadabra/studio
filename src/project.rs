@@ -167,6 +167,8 @@ pub(crate) fn load_project_in_background(
             |image_progress| progress(0.44 + image_progress * 0.30),
         )
         .map_err(|error| error.to_string())?;
+        let world_models = load_world_models(&sources.root, &sources.manifest_source)
+            .map_err(|error| error.to_string())?;
         progress(0.76);
         let morph_catalog_path = discover_project_morph_catalog(&sources.project_root);
         let local_morph_catalog = morph_catalog_path
@@ -175,13 +177,14 @@ pub(crate) fn load_project_in_background(
             .transpose()
             .map_err(|error| error.to_string())?;
         progress(0.88);
-        Ok::<_, String>((image_atlas, local_morph_catalog))
+        Ok::<_, String>((image_atlas, world_models, local_morph_catalog))
     })();
 
     match prepared {
-        Ok((image_atlas, local_morph_catalog)) => Ok(BackgroundProjectLoad {
+        Ok((image_atlas, world_models, local_morph_catalog)) => Ok(BackgroundProjectLoad {
             sources,
             image_atlas,
+            world_models,
             local_morph_catalog,
         }),
         Err(error) => {

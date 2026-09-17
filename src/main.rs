@@ -126,6 +126,7 @@ struct GameSources {
 struct BackgroundProjectLoad {
     sources: GameSources,
     image_atlas: Option<ImageAtlas>,
+    world_models: Vec<ModelAsset>,
     local_morph_catalog: Option<LocalMorphCatalog>,
 }
 
@@ -201,6 +202,7 @@ struct StudioApp {
     client: ClientSession,
     recent_projects: Vec<PathBuf>,
     image_atlas: Option<ImageAtlas>,
+    world_models: Vec<ModelAsset>,
     window: Option<Window>,
     renderer: Option<Renderer>,
     shell: Option<StudioShell>,
