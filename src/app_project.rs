@@ -770,12 +770,13 @@ impl StudioApp {
             return Err("the new game's image atlas could not be uploaded".to_owned());
         }
         if let Some(renderer) = &mut self.renderer {
-            renderer.clear_world_meshes();
-            for model in &world_models {
-                renderer
-                    .register_world_mesh(&model.id, &model.bytes)
-                    .map_err(|error| format!("world model {} was rejected: {error}", model.id))?;
-            }
+            let sources = world_models
+                .iter()
+                .map(|model| (model.id.as_str(), model.bytes.as_slice()))
+                .collect::<Vec<_>>();
+            renderer
+                .replace_world_meshes(&sources)
+                .map_err(|error| format!("world model replacement was rejected: {error}"))?;
         }
         let old_temporary_package = self.temporary_package.take();
         self.project_root = project_root;
