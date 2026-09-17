@@ -398,25 +398,25 @@ pub(crate) enum SceneViewportEditRequest {
 pub(crate) enum ReviewCameraPreset {
     Gameplay,
     Overview,
-    Island,
+    Showcase,
 }
 
 impl ReviewCameraPreset {
-    pub(crate) const ALL: [Self; 3] = [Self::Gameplay, Self::Overview, Self::Island];
+    pub(crate) const ALL: [Self; 3] = [Self::Gameplay, Self::Overview, Self::Showcase];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Gameplay => "Gameplay",
             Self::Overview => "Overview",
-            Self::Island => "Island",
+            Self::Showcase => "Showcase",
         }
     }
 
-    pub(crate) const fn renderer_value(self) -> u8 {
+    pub(crate) const fn renderer_value(self) -> cubacadabra_client::StudioCameraPreset {
         match self {
-            Self::Gameplay => 0,
-            Self::Overview => 1,
-            Self::Island => 2,
+            Self::Gameplay => cubacadabra_client::StudioCameraPreset::Gameplay,
+            Self::Overview => cubacadabra_client::StudioCameraPreset::Overview,
+            Self::Showcase => cubacadabra_client::StudioCameraPreset::Showcase,
         }
     }
 }
