@@ -29,6 +29,8 @@ mod morph_application;
 mod morphs;
 mod network;
 mod options;
+#[cfg(debug_assertions)]
+mod preview_probe;
 mod project;
 mod shell;
 mod wardrobe;
@@ -192,6 +194,9 @@ struct LocalMorphPreset {
 }
 
 struct StudioApp {
+    initial_review_camera: crate::shell::ReviewCameraPreset,
+    #[cfg(debug_assertions)]
+    preview_probe: Option<preview_probe::PreviewProbe>,
     project_root: PathBuf,
     game_root: PathBuf,
     authored_manifest_source: String,
@@ -227,11 +232,13 @@ struct StudioApp {
     pointer_position: Option<(f32, f32)>,
     pointer_active: bool,
     camera_pointer_active: bool,
+    pan_pointer_active: bool,
     scene_pointer_active: bool,
     movement_pointer_active: bool,
     movement_pointer_origin: Option<(f32, f32)>,
     ui_pointer_active: bool,
     look_delta: (f32, f32),
+    pan_delta: (f32, f32),
     zoom_delta: f32,
     last_frame: Instant,
 }

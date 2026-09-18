@@ -148,7 +148,10 @@ impl StudioShell {
                         for preset in ReviewCameraPreset::ALL.into_iter().rev() {
                             if ui
                                 .selectable_label(self.review_camera == preset, preset.label())
-                                .on_hover_text("Temporary deterministic Studio review view")
+                                .on_hover_text(match preset {
+                                    ReviewCameraPreset::Gameplay => "Player camera: drag to orbit, scroll to zoom",
+                                    _ => "Drag to orbit · right/middle drag to pan · scroll/pinch to zoom · click preset again to frame the world",
+                                })
                                 .clicked()
                             {
                                 self.set_review_camera(preset);

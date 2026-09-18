@@ -33,7 +33,12 @@ impl StudioShell {
 
     pub(crate) fn set_review_camera(&mut self, preset: ReviewCameraPreset) {
         self.review_camera = preset;
+        self.review_camera_reset = true;
         self.notice = format!("{} review camera", preset.label());
+    }
+
+    pub(crate) fn take_review_camera_reset(&mut self) -> bool {
+        std::mem::take(&mut self.review_camera_reset)
     }
 
     pub(crate) fn set_start_screen(&mut self, start_screen: bool) {

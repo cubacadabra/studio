@@ -63,6 +63,15 @@ impl ApplicationHandler for StudioApp {
             }
             WindowEvent::RedrawRequested => {
                 self.render();
+                #[cfg(debug_assertions)]
+                if self
+                    .preview_probe
+                    .as_ref()
+                    .is_some_and(preview_probe::PreviewProbe::finished)
+                {
+                    event_loop.exit();
+                    return;
+                }
                 if self
                     .shell
                     .as_mut()
@@ -98,6 +107,11 @@ impl ApplicationHandler for StudioApp {
                     MouseScrollDelta::LineDelta(_, y) => y * 0.9,
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 100.0,
                 };
+            }
+            WindowEvent::PinchGesture { delta, .. }
+                if runtime_hovered && self.review_navigation_active() =>
+            {
+                self.zoom_delta += delta as f32 * 10.0;
             }
             WindowEvent::Focused(false) => {
                 self.pressed_keys.clear();

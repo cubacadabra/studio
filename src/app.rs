@@ -5,6 +5,7 @@ impl StudioApp {
         morph_catalog_path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
         let sources = load_game_sources(game_root)?;
+        let initial_review_camera = sources.review_camera;
         let authored_manifest_source = sources.authored_manifest_source;
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
@@ -49,6 +50,9 @@ impl StudioApp {
         }
 
         Ok(Self {
+            initial_review_camera,
+            #[cfg(debug_assertions)]
+            preview_probe: preview_probe::PreviewProbe::from_env(),
             project_root,
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             world_models: load_world_models(&game_root, &manifest_source)?,
@@ -84,11 +88,13 @@ impl StudioApp {
             pointer_position: None,
             pointer_active: false,
             camera_pointer_active: false,
+            pan_pointer_active: false,
             scene_pointer_active: false,
             movement_pointer_active: false,
             movement_pointer_origin: None,
             ui_pointer_active: false,
             look_delta: (0.0, 0.0),
+            pan_delta: (0.0, 0.0),
             zoom_delta: 0.0,
             last_frame: Instant::now(),
         })
@@ -141,6 +147,7 @@ impl StudioApp {
         }
 
         let mut shell = StudioShell::new(&window, &renderer, &self.manifest_source);
+        shell.set_review_camera(self.initial_review_camera);
         shell.set_project_asset_available(!self.standalone_preview);
         shell.set_project_editable(
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
@@ -200,6 +207,13 @@ impl StudioApp {
                     .unwrap_or(crate::shell::ReviewCameraPreset::Gameplay)
                     .renderer_value(),
             );
+            if self
+                .shell
+                .as_mut()
+                .is_some_and(StudioShell::take_review_camera_reset)
+            {
+                renderer.reset_studio_camera();
+            }
             renderer.set_studio_viewport(Some([
                 viewport.min.x * scale,
                 viewport.min.y * scale,
@@ -220,6 +234,11 @@ impl StudioApp {
     }
 
     pub(crate) fn render(&mut self) {
+        #[cfg(debug_assertions)]
+        if let Some(mut probe) = self.preview_probe.take() {
+            probe.step(self);
+            self.preview_probe = Some(probe);
+        }
         self.drain_backend_events();
         self.drain_codex_events();
         self.commit_ready_project_load();
@@ -284,6 +303,12 @@ impl StudioApp {
         }
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
+        #[cfg(debug_assertions)]
+        let delta = if self.preview_probe.is_some() {
+            1.0 / 60.0
+        } else {
+            delta
+        };
         self.last_frame = now;
 
         let project_name = game_name(&self.project_root);
@@ -547,6 +572,25 @@ impl StudioApp {
                 .as_ref()
                 .is_some_and(StudioShell::is_morphs_workspace);
         let controls_active = playing || morph_preview;
+        if self.review_navigation_active() && !project_loading {
+            if (self.look_delta != (0.0, 0.0)
+                || self.pan_delta != (0.0, 0.0)
+                || self.zoom_delta != 0.0)
+                && let (Some(renderer), Some(shell)) = (&mut self.renderer, &self.shell)
+            {
+                renderer.navigate_studio_camera(
+                    [self.look_delta.0, self.look_delta.1],
+                    [self.pan_delta.0, self.pan_delta.1],
+                    self.zoom_delta,
+                    shell.runtime_viewport().height(),
+                );
+            }
+            // Review input belongs to the visible editor camera, including
+            // while stopped. Do not also turn the hidden gameplay camera.
+            self.look_delta = (0.0, 0.0);
+            self.zoom_delta = 0.0;
+        }
+        self.pan_delta = (0.0, 0.0);
 
         let mut forward = if controls_active {
             axis(
@@ -623,9 +667,40 @@ impl StudioApp {
             renderer.sync(self.client.engine());
             match (&mut self.shell, prepared_shell) {
                 (Some(shell), Some(prepared)) => {
-                    renderer.draw_with_overlay(|device, queue, encoder, destination| {
-                        shell.paint(device, queue, encoder, destination, prepared);
-                    });
+                    #[cfg(debug_assertions)]
+                    let capture_path = self
+                        .preview_probe
+                        .as_ref()
+                        .and_then(preview_probe::PreviewProbe::capture_path);
+                    #[cfg(debug_assertions)]
+                    let mut readback = None;
+                    let overlay =
+                        |device: &egui_wgpu::wgpu::Device,
+                         queue: &egui_wgpu::wgpu::Queue,
+                         encoder: &mut egui_wgpu::wgpu::CommandEncoder,
+                         destination: &egui_wgpu::wgpu::TextureView| {
+                            shell.paint(device, queue, encoder, destination, prepared);
+                            #[cfg(debug_assertions)]
+                            if capture_path.is_some() {
+                                readback = Some(preview_probe::Readback::encode(
+                                    device,
+                                    encoder,
+                                    destination,
+                                ));
+                            }
+                        };
+                    #[cfg(debug_assertions)]
+                    if self.preview_probe.is_some() {
+                        renderer.capture_studio_frame(overlay);
+                    } else {
+                        renderer.draw_with_overlay(overlay);
+                    }
+                    #[cfg(not(debug_assertions))]
+                    renderer.draw_with_overlay(overlay);
+                    #[cfg(debug_assertions)]
+                    if let (Some(path), Some(readback)) = (capture_path, readback) {
+                        readback.save(renderer.device(), &path);
+                    }
                 }
                 _ => renderer.draw(),
             }

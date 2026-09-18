@@ -1,5 +1,13 @@
 use super::*;
 impl StudioApp {
+    pub(crate) fn review_navigation_active(&self) -> bool {
+        self.shell.as_ref().is_some_and(|shell| {
+            !shell.is_morphs_workspace()
+                && shell.review_camera() != crate::shell::ReviewCameraPreset::Gameplay
+                && !shell.is_project_loading()
+        })
+    }
+
     pub(crate) fn clear_pointer_controls(&mut self) {
         let cancel_ui_pointer = self.ui_pointer_active;
         self.pressed_keys.clear();
@@ -7,12 +15,14 @@ impl StudioApp {
         self.climb = false;
         self.pointer_active = false;
         self.camera_pointer_active = false;
+        self.pan_pointer_active = false;
         self.scene_pointer_active = false;
         self.movement_pointer_active = false;
         self.movement_pointer_origin = None;
         self.ui_pointer_active = false;
         self.joystick_input = (0.0, 0.0);
         self.look_delta = (0.0, 0.0);
+        self.pan_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
         if cancel_ui_pointer {
             self.pointer_event(3, 0.0, 0.0);
@@ -75,7 +85,11 @@ impl StudioApp {
             return;
         }
         if let Some(previous) = self.pointer_position {
-            if (self.pointer_active || self.camera_pointer_active) && !self.ui_pointer_active {
+            if self.pan_pointer_active {
+                self.pan_delta.0 += logical.0 - previous.0;
+                self.pan_delta.1 += logical.1 - previous.1;
+            } else if (self.pointer_active || self.camera_pointer_active) && !self.ui_pointer_active
+            {
                 self.look_delta.0 += logical.0 - previous.0;
                 self.look_delta.1 += logical.1 - previous.1;
             }
@@ -114,6 +128,18 @@ impl StudioApp {
         let Some((x, y)) = self.pointer_position else {
             return;
         };
+        if self.review_navigation_active()
+            && matches!(button, MouseButton::Right | MouseButton::Middle)
+        {
+            self.pan_pointer_active =
+                state == ElementState::Pressed && self.runtime_pointer(x, y, true).is_some();
+            return;
+        }
+        if state == ElementState::Released
+            && matches!(button, MouseButton::Right | MouseButton::Middle)
+        {
+            self.pan_pointer_active = false;
+        }
         if matches!(button, MouseButton::Left | MouseButton::Right) {
             if state == ElementState::Pressed
                 && self

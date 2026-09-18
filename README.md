@@ -88,7 +88,31 @@ Controls:
 - `Space`: jump
 - drag with the left mouse button: orbit the camera
 - mouse wheel: zoom
+- `Overview` / `Showcase`: inspect the world with left-drag orbit,
+  right- or middle-drag pan, and wheel/pinch zoom, including while stopped
+- click the current review preset again to reframe the world
 - `Close Window`: close Studio, with a save/discard prompt for dirty projects
+
+## Native preview verification
+
+Debug builds support an opt-in, app-owned GPU framebuffer probe. It renders
+the production scene and editor overlay without requiring OS screen-recording
+permission or an available on-screen drawable, writes PNGs, and exits:
+
+```sh
+CUBA_STUDIO_PROBE_DIR=/tmp/maze-gameplay \
+  cargo run -- --path ../examples/maze-101
+
+CUBA_STUDIO_PROBE_DIR=/tmp/maze-review CUBA_STUDIO_PROBE_REVIEW=1 \
+  CUBA_STUDIO_PROBE_WORLD=maze-world-reference \
+  cargo run -- --path ../examples/maze-101
+```
+
+The review probe exercises the native input handlers for stopped orbit/pan,
+zoom, and preset reset, asserting that the gameplay camera stays unchanged.
+It does not test OS event delivery, physical trackpad gestures, or presentation
+to the window surface. The probe and texture readback support are omitted from
+release builds.
 
 ## ChatGPT connection
 

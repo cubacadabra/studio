@@ -427,6 +427,7 @@ pub(crate) struct StudioShell {
     renderer: EguiRenderer,
     workspace: Workspace,
     review_camera: ReviewCameraPreset,
+    review_camera_reset: bool,
     runtime_viewport: Rect,
     scene_outline: SceneOutline,
     runtime_ui_nodes: Vec<cubacadabra_client::StudioUiNode>,
