@@ -722,6 +722,7 @@ impl StudioApp {
                             authored_manifest_source,
                             manifest_source,
                             script_source,
+                            review_camera,
                             standalone_preview,
                             temporary_package,
                         },
@@ -808,6 +809,7 @@ impl StudioApp {
         }
         if preserve_editor {
             if let Some(shell) = &mut self.shell {
+                shell.set_review_camera(review_camera);
                 shell.set_project_editable(
                     !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
                 );
@@ -839,6 +841,7 @@ impl StudioApp {
                 .ok_or_else(|| "Studio renderer is not ready.".to_owned())?;
             StudioShell::new(window, renderer, &self.manifest_source)
         };
+        shell.set_review_camera(review_camera);
         shell.set_project_asset_available(true);
         shell.set_project_editable(
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),

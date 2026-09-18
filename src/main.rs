@@ -119,6 +119,7 @@ struct GameSources {
     authored_manifest_source: String,
     manifest_source: String,
     script_source: String,
+    review_camera: crate::shell::ReviewCameraPreset,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
 }

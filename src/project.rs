@@ -1,4 +1,5 @@
 use super::*;
+use crate::shell::ReviewCameraPreset;
 use std::collections::BTreeSet;
 
 const MAX_RECENT_PROJECTS: usize = 8;
@@ -210,6 +211,7 @@ pub(crate) fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSource
             authored_manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             script_source: STANDALONE_PREVIEW_SCRIPT.to_owned(),
+            review_camera: ReviewCameraPreset::Gameplay,
             standalone_preview: true,
             temporary_package: None,
         });
@@ -227,15 +229,83 @@ pub(crate) fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSource
         ))));
     };
 
+    let manifest_source = read_utf8_file(&package_root.join("manifest.json"), "manifest")?;
+    let (manifest_source, review_camera) =
+        apply_studio_project_config(&game_root, manifest_source)?;
     Ok(GameSources {
         project_root: game_root,
         root: package_root.clone(),
         authored_manifest_source,
-        manifest_source: read_utf8_file(&package_root.join("manifest.json"), "manifest")?,
+        manifest_source,
         script_source: read_utf8_file(&package_root.join("game.luau"), "script")?,
+        review_camera,
         standalone_preview: false,
         temporary_package,
     })
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StudioProjectConfig {
+    #[serde(default)]
+    preview_world: Option<String>,
+    #[serde(default)]
+    review_camera: Option<String>,
+}
+
+fn apply_studio_project_config(
+    project_root: &Path,
+    manifest_source: String,
+) -> Result<(String, ReviewCameraPreset), Box<dyn Error>> {
+    let path = project_root.join("studio.json");
+    if !path.is_file() {
+        return Ok((manifest_source, ReviewCameraPreset::Gameplay));
+    }
+    let source = read_utf8_file(&path, "Studio project configuration")?;
+    let config: StudioProjectConfig = serde_json::from_str(&source).map_err(|error| {
+        Box::new(StudioError(format!(
+            "could not parse Studio project configuration {}: {error}",
+            path.display()
+        ))) as Box<dyn Error>
+    })?;
+    let review_camera = match config.review_camera.as_deref().unwrap_or("gameplay") {
+        "gameplay" => ReviewCameraPreset::Gameplay,
+        "overview" => ReviewCameraPreset::Overview,
+        "showcase" => ReviewCameraPreset::Showcase,
+        value => {
+            return Err(Box::new(StudioError(format!(
+                "studio.json reviewCamera must be gameplay, overview, or showcase; found {value:?}"
+            ))));
+        }
+    };
+    let Some(preview_world) = config.preview_world else {
+        return Ok((manifest_source, review_camera));
+    };
+    let mut manifest: Value = serde_json::from_str(&manifest_source).map_err(|error| {
+        Box::new(StudioError(format!(
+            "could not apply studio.json to the built manifest: {error}"
+        ))) as Box<dyn Error>
+    })?;
+    let exists = preview_world == "lobby"
+        || manifest
+            .get("worlds")
+            .and_then(Value::as_object)
+            .is_some_and(|worlds| worlds.contains_key(&preview_world));
+    if !exists {
+        return Err(Box::new(StudioError(format!(
+            "studio.json previewWorld {preview_world:?} does not exist in the project manifest"
+        ))));
+    }
+    let root = manifest
+        .as_object_mut()
+        .ok_or_else(|| Box::new(StudioError("manifest must be a JSON object".to_owned())))?;
+    let launch = root
+        .entry("launch")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| Box::new(StudioError("manifest.launch must be an object".to_owned())))?;
+    launch.insert("destinationWorld".to_owned(), Value::String(preview_world));
+    Ok((serde_json::to_string(&manifest)?, review_camera))
 }
 
 pub(crate) fn build_raw_game_package(game_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
@@ -984,4 +1054,34 @@ pub(crate) fn local_catalog_file(
             path.display()
         ))) as Box<dyn Error>
     })
+}
+
+#[cfg(test)]
+mod studio_project_config_tests {
+    use super::*;
+
+    #[test]
+    fn preview_world_changes_only_the_runtime_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-config-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("studio.json"),
+            r#"{"previewWorld":"reference","reviewCamera":"showcase"}"#,
+        )
+        .unwrap();
+        let authored = r#"{"launch":{"destinationWorld":"easy-room"},"worlds":{"easy-room":{},"reference":{}}}"#;
+        let (runtime, camera) = apply_studio_project_config(&root, authored.to_owned()).unwrap();
+        let runtime: Value = serde_json::from_str(&runtime).unwrap();
+        assert_eq!(
+            runtime.pointer("/launch/destinationWorld"),
+            Some(&Value::String("reference".to_owned()))
+        );
+        assert_eq!(camera, ReviewCameraPreset::Showcase);
+        assert!(authored.contains("easy-room"));
+        let _ = fs::remove_dir_all(root);
+    }
 }

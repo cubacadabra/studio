@@ -39,6 +39,19 @@ manifest.json
 src/main.luau
 ```
 
+Raw projects may also include creator-only `studio.json` preview preferences:
+
+```json
+{
+  "previewWorld": "reference-world",
+  "reviewCamera": "showcase"
+}
+```
+
+`previewWorld` must name a world in the authored manifest. Studio applies it to
+the temporary runtime manifest without changing the package's shipping launch
+destination. `reviewCamera` accepts `gameplay`, `overview`, or `showcase`.
+
 When `--path` points at a raw project, Studio calls the shared Rust
 `cubacadabra-builder` library in-process. The package is loaded from a
 temporary Studio-owned directory and removed when Studio exits. The native
