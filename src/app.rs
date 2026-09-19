@@ -460,9 +460,10 @@ impl StudioApp {
                 scene_world_id(&selected.id).is_none_or(|candidate| candidate == world)
             })
         {
-            self.client
-                .engine_mut()
-                .studio_move_player_near(selected.position);
+            self.client.engine_mut().studio_move_player_near(
+                selected.position,
+                scene_object_horizontal_radius(&selected),
+            );
         }
         if let Some(edit) = self
             .shell
@@ -1007,6 +1008,14 @@ impl StudioApp {
 
 fn snap_scene_value(value: f32) -> f32 {
     (value * 4.0).round() * 0.25
+}
+
+fn scene_object_horizontal_radius(geometry: &SceneObjectGeometry) -> f32 {
+    let Some(size) = geometry.size else {
+        return 2.25;
+    };
+    let scale = geometry.scale.unwrap_or([1.0; 3]);
+    0.5 * (size[0] * scale[0]).abs().max((size[2] * scale[2]).abs())
 }
 impl Drop for StudioApp {
     fn drop(&mut self) {
