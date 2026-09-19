@@ -234,6 +234,7 @@ impl StudioShell {
     pub(crate) fn scene_editor_hit_test(&self, point: Pos2) -> bool {
         self.workspace == Workspace::World
             && self.project_editable
+            && !self.playing
             && self
                 .scene_object_projections
                 .iter()

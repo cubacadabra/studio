@@ -158,7 +158,7 @@ impl StudioShell {
                             }
                         }
                     });
-                    if self.project_editable && selected_is_placeable {
+                    if self.project_editable && !self.playing && selected_is_placeable {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if selected_can_resize {
                                 if ui
@@ -221,12 +221,17 @@ impl StudioShell {
                         selected_can_resize,
                         self.scene_viewport_tool,
                     ) {
-                        (true, _, SceneViewportTool::Move) if self.project_editable => {
+                        (true, _, SceneViewportTool::Move)
+                            if self.project_editable && !self.playing =>
+                        {
                             "Drag the outline to move on X / Z"
                         }
-                        (true, true, SceneViewportTool::Resize) if self.project_editable => {
+                        (true, true, SceneViewportTool::Resize)
+                            if self.project_editable && !self.playing =>
+                        {
                             "Drag a corner to resize on X / Z"
                         }
+                        (true, _, _) if self.playing => "Stop Play to edit this object",
                         (true, _, _) => "Open a source project to edit this object",
                         _ => "Properties appear in the Inspector",
                     };
@@ -254,6 +259,7 @@ impl StudioShell {
             let selected = self.selected_scene == projection.id;
             let sense = if selected
                 && self.project_editable
+                && !self.playing
                 && self.scene_viewport_tool == SceneViewportTool::Move
             {
                 Sense::click_and_drag()
@@ -314,6 +320,7 @@ impl StudioShell {
             }
             if selected
                 && self.project_editable
+                && !self.playing
                 && self.scene_viewport_tool == SceneViewportTool::Move
             {
                 let drag_id = response.id.with("origin");
@@ -358,6 +365,7 @@ impl StudioShell {
 
             if selected
                 && self.project_editable
+                && !self.playing
                 && self.scene_viewport_tool == SceneViewportTool::Resize
                 && let (Some(screen_corners), Some(world_corners), Some(size)) = (
                     projection.screen_corners,

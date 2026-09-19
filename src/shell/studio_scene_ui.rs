@@ -8,7 +8,12 @@ impl StudioShell {
         panel_header(ui, Icon::World, "Scene", |ui| {
             if self.project_editable {
                 let world_id = scene_world_id(&self.selected_scene).map(str::to_owned);
-                scene_add_menu(ui, world_id, &mut self.scene_edit_requested);
+                scene_add_menu(
+                    ui,
+                    world_id,
+                    self.authoring_scene_source.is_some(),
+                    &mut self.scene_edit_requested,
+                );
             } else {
                 ui.label(
                     RichText::new("Read-only")
@@ -184,7 +189,7 @@ impl StudioShell {
         property_section(ui, "Transform", |ui| {
             let mut changed = false;
             ui.add_enabled_ui(
-                self.project_editable && !scene_node_locked(selected),
+                self.project_editable && !self.playing && !scene_node_locked(selected),
                 |ui| {
                     changed |= vector_editor(
                         ui,
@@ -214,6 +219,12 @@ impl StudioShell {
                     )
                     .size(TYPE.meta)
                     .color(palette(ui).muted),
+                );
+            } else if self.playing {
+                ui.label(
+                    RichText::new("Stop Play to edit the authoring scene.")
+                        .size(TYPE.meta)
+                        .color(palette(ui).muted),
                 );
             }
             if changed {
@@ -268,11 +279,11 @@ impl StudioShell {
             return;
         }
         property_section(ui, "Properties", |ui| {
-            for (label, value) in properties {
+            for (index, (label, value)) in properties.into_iter().enumerate() {
                 if self.project_editable
                     && let Some((key, kind)) = editable_scene_property(&label)
                 {
-                    self.scene_property_editor(ui, selected, &label, &value, key, kind);
+                    self.scene_property_editor(ui, selected, &label, &value, key, kind, index);
                 } else {
                     property_row(ui, &label, &value);
                 }
@@ -288,6 +299,7 @@ impl StudioShell {
         current: &str,
         key: &str,
         kind: ScenePropertyKind,
+        index: usize,
     ) {
         let field = property_field(ui, label);
         let mut text = self
@@ -297,7 +309,7 @@ impl StudioShell {
         let response = ui.put(
             field,
             egui::TextEdit::singleline(&mut text)
-                .id_salt(("scene-property", &selected.id, key))
+                .id_salt(("scene-property", &selected.id, key, index))
                 .horizontal_align(Align::RIGHT),
         );
         let commit = response.lost_focus() && text.trim() != current;
@@ -382,10 +394,16 @@ fn editable_scene_property(label: &str) -> Option<(&'static str, ScenePropertyKi
 fn scene_add_menu(
     ui: &mut egui::Ui,
     world_id: Option<String>,
+    component_scene: bool,
     request: &mut Option<SceneEditRequest>,
 ) {
     ui.menu_button("Add", |ui| {
         for kind in SceneObjectKind::ALL {
+            if component_scene
+                && !matches!(kind, SceneObjectKind::Sign | SceneObjectKind::Interaction)
+            {
+                continue;
+            }
             if ui.button(kind.label()).clicked() {
                 *request = Some(SceneEditRequest::AddObject {
                     world_id: world_id.clone(),

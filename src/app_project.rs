@@ -1,5 +1,7 @@
 use super::*;
-use cubacadabra_builder::{parse_authoring_scene, serialize_authoring_scene};
+use cubacadabra_builder::{
+    AuthoringNode, EditorMetadata, Transform, parse_authoring_scene, serialize_authoring_scene,
+};
 impl StudioApp {
     pub(crate) fn create_new_project(&mut self, title: &str, parent: &Path) {
         let result = game_creator::create_game(title, parent);
@@ -372,6 +374,89 @@ impl StudioApp {
         }
         if let Some(scene_source) = self.authored_scene_source.clone() {
             match &request {
+                SceneEditRequest::AddObject { kind, .. } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    let (parent_id, base_id, name, component_name, components, position) =
+                        match kind {
+                            SceneObjectKind::Sign => (
+                                "signs",
+                                "sign-new",
+                                "New Sign",
+                                "text",
+                                serde_json::json!({
+                                    "text": "New sign",
+                                    "maxWidth": 5,
+                                    "color": "paper"
+                                }),
+                                [0.0, 2.0, 0.0],
+                            ),
+                            SceneObjectKind::Interaction => (
+                                "interactions",
+                                "interaction-new",
+                                "New Interaction",
+                                "interaction",
+                                serde_json::json!({
+                                    "id": "interaction-new",
+                                    "kind": "zone",
+                                    "label": "New Interaction",
+                                    "radius": 3,
+                                    "color": "signal",
+                                    "visual": "checkpoint"
+                                }),
+                                [0.0, 1.0, 0.0],
+                            ),
+                            _ => {
+                                return Err(format!(
+                                    "{} cannot be added to a component scene yet",
+                                    kind.label()
+                                ));
+                            }
+                        };
+                    if scene.node(parent_id).is_none() {
+                        return Err(format!("component scene group {parent_id:?} was not found"));
+                    }
+                    let mut number = 1;
+                    let id = loop {
+                        let candidate = format!("{base_id}-{number}");
+                        if scene.node(&candidate).is_none() {
+                            break candidate;
+                        }
+                        number += 1;
+                    };
+                    let display_name = format!("{name} {number}");
+                    let mut component = components;
+                    if component_name == "interaction"
+                        && let Some(object) = component.as_object_mut()
+                    {
+                        object.insert("id".to_owned(), Value::String(id.clone()));
+                        object.insert("label".to_owned(), Value::String(display_name.clone()));
+                    }
+                    let mut component_map = BTreeMap::new();
+                    component_map.insert(component_name.to_owned(), component);
+                    scene.nodes.push(AuthoringNode {
+                        id: id.clone(),
+                        parent_id: Some(parent_id.to_owned()),
+                        name: display_name,
+                        transform: Transform {
+                            position,
+                            ..Transform::default()
+                        },
+                        components: component_map,
+                        editor: EditorMetadata::default(),
+                        source: None,
+                    });
+                    let updated = serialize_authoring_scene(&scene)?;
+                    self.authored_scene_source = Some(updated.clone());
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_source_scene(Some(&updated), true);
+                        shell.select_scene_node(&id);
+                        shell.set_notice(format!(
+                            "{} added — save, then Rebuild & Play",
+                            kind.label()
+                        ));
+                    }
+                    return Ok(());
+                }
                 SceneEditRequest::UpdateTransform {
                     target, position, ..
                 } => {

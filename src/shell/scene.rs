@@ -69,7 +69,7 @@ impl SceneNode {
     }
 
     fn collect_placeable_objects(&self, objects: &mut Vec<SceneObjectGeometry>) {
-        if (is_scene_object(&self.id) || is_authoring_node(self))
+        if (is_scene_object(&self.id) || is_authoring_placeable(self))
             && let Some(position) = vector_property(self, "Position")
         {
             objects.push(SceneObjectGeometry {
@@ -481,6 +481,10 @@ pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {
     node.properties
         .iter()
         .any(|(label, _)| label == "Authoring ID")
+}
+
+fn is_authoring_placeable(node: &SceneNode) -> bool {
+    is_authoring_node(node) && matches!(node.kind, "Mesh" | "Sign" | "Interaction")
 }
 
 pub(crate) fn scene_node_locked(node: &SceneNode) -> bool {
