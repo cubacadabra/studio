@@ -65,6 +65,7 @@ impl StudioShell {
         if self.selected_scene != previous_selection
             && let Some(selected) = self.scene_outline.root.find(&self.selected_scene)
         {
+            self.scene_focus_requested = true;
             self.notice = format!("Selected {}", selected.label);
         }
     }

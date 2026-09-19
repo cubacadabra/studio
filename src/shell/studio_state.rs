@@ -225,6 +225,15 @@ impl StudioShell {
         self.scene_outline.placeable_object_geometries()
     }
 
+    pub(crate) fn take_scene_focus_request(&mut self) -> Option<SceneObjectGeometry> {
+        if !std::mem::take(&mut self.scene_focus_requested) {
+            return None;
+        }
+        self.scene_object_geometries()
+            .into_iter()
+            .find(|geometry| geometry.id == self.selected_scene)
+    }
+
     pub(crate) fn set_scene_object_projections(&mut self, projections: Vec<SceneObjectProjection>) {
         self.scene_object_projections = projections;
     }
@@ -279,6 +288,7 @@ impl StudioShell {
             return false;
         }
         self.selected_scene = id.to_owned();
+        self.scene_focus_requested = true;
         let previous_expanded = self.expanded_scene.clone();
         self.expanded_scene.insert("game".to_owned());
         let mut path = Vec::new();

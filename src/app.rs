@@ -452,6 +452,18 @@ impl StudioApp {
                 }
             }
         }
+        if let Some(selected) = self
+            .shell
+            .as_mut()
+            .and_then(StudioShell::take_scene_focus_request)
+            && self.client.engine().active_world_id().is_none_or(|world| {
+                scene_world_id(&selected.id).is_none_or(|candidate| candidate == world)
+            })
+        {
+            self.client
+                .engine_mut()
+                .studio_move_player_near(selected.position);
+        }
         if let Some(edit) = self
             .shell
             .as_mut()

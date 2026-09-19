@@ -463,6 +463,7 @@ pub(crate) struct StudioShell {
     runtime_ui_nodes: Vec<cubacadabra_client::StudioUiNode>,
     expanded_scene: BTreeSet<String>,
     selected_scene: String,
+    scene_focus_requested: bool,
     scene_editor_target: String,
     scene_editor_position: [f32; 3],
     scene_editor_size: [f32; 3],
