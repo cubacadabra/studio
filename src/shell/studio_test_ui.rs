@@ -157,9 +157,8 @@ impl StudioShell {
                                 self.set_review_camera(preset);
                             }
                         }
-                    });
-                    if self.project_editable && !self.playing && selected_is_placeable {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if self.project_editable && !self.playing && selected_is_placeable {
+                            ui.add_space(8.0);
                             if selected_can_resize {
                                 if ui
                                     .selectable_label(
@@ -182,8 +181,8 @@ impl StudioShell {
                             {
                                 self.scene_viewport_tool = SceneViewportTool::Move;
                             }
-                        });
-                    }
+                        }
+                    });
                 });
                 self.runtime_viewport = Rect::from_min_max(
                     egui::pos2(available.min.x + 1.0, header.max.y),
