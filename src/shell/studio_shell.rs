@@ -96,6 +96,8 @@ impl StudioShell {
             search_query: String::new(),
             scene_search_query: String::new(),
             scene_search_matches: BTreeSet::new(),
+            scene_tree_rows: Vec::new(),
+            scene_tree_rows_dirty: true,
             morph_query: String::new(),
             morph_catalog: parse_catalog(include_str!(
                 "../../../rust/assets/characters/morph_catalog.json"

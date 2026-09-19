@@ -466,6 +466,8 @@ pub(crate) struct StudioShell {
     search_query: String,
     scene_search_query: String,
     scene_search_matches: BTreeSet<String>,
+    scene_tree_rows: Vec<SceneTreeRow>,
+    scene_tree_rows_dirty: bool,
     morph_query: String,
     morph_catalog: MorphCatalog,
     morph_artifacts: BTreeMap<MorphAssetId, crate::wardrobe::Artifact>,

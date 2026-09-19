@@ -812,11 +812,21 @@ impl StudioApp {
             } => {
                 let origin = world_point(origin_screen, origin_position[1])?;
                 let current = world_point(current_screen, origin_position[1])?;
-                let position = [
+                let world_position = [
                     snap_scene_value(origin_position[0] + current[0] - origin[0]),
                     origin_position[1],
                     snap_scene_value(origin_position[2] + current[2] - origin[2]),
                 ];
+                let position = self
+                    .shell
+                    .as_ref()
+                    .and_then(|shell| {
+                        shell
+                            .authoring_local_position_for_world(&target, world_position)
+                            .ok()
+                            .flatten()
+                    })
+                    .unwrap_or(world_position);
                 Some(SceneEditRequest::UpdateTransform {
                     target,
                     position,

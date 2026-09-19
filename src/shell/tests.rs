@@ -127,15 +127,43 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
+    let objects = outline.placeable_object_geometries();
+    assert_eq!(objects.len(), 15);
+    assert!(objects.iter().all(|object| {
+        !matches!(
+            object.id.as_str(),
+            "world-vegas-floor" | "imported-environment" | "signs" | "interactions"
+        )
+    }));
     assert_eq!(
-        outline
-            .placeable_object_geometries()
+        objects
             .into_iter()
             .find(|object| object.id == "sign-tables")
             .unwrap()
             .position,
         [-12.4, 11.0, 14.2]
     );
+}
+
+#[test]
+fn authoring_outline_keeps_multiple_roots_when_no_world_root_matches() {
+    let manifest = r#"{
+        "startWorld": "course",
+        "worlds": { "course": { "world": {} } }
+    }"#;
+    let scene = parse_authoring_scene(
+        r#"{
+            "formatVersion": 1,
+            "nodes": [
+                { "id": "first", "name": "First", "components": {} },
+                { "id": "second", "name": "Second", "components": {} }
+            ]
+        }"#,
+    )
+    .unwrap();
+    let outline = SceneOutline::parse_with_authoring_scene(manifest, &scene).unwrap();
+    assert!(outline.root.find("first").is_some());
+    assert!(outline.root.find("second").is_some());
 }
 
 #[test]
@@ -164,6 +192,7 @@ fn scene_search_indexes_a_large_lightweight_tree() {
         assets: Vec::new(),
         initial_selection: "game".to_owned(),
         initial_expanded: BTreeSet::from(["game".to_owned()]),
+        authoring_world_transforms: BTreeMap::new(),
     };
     let matches = outline.search_matches("Node 9999");
     assert!(matches.contains("game"));

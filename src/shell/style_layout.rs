@@ -172,31 +172,61 @@ pub(crate) fn property_field(ui: &mut egui::Ui, label: &str) -> Rect {
     Rect::from_min_max(row.min + egui::vec2(label_width, 0.0), row.max)
 }
 
-pub(crate) fn show_scene_node(
-    ui: &mut egui::Ui,
+#[derive(Clone)]
+pub(crate) struct SceneTreeRow {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) icon: Icon,
+    pub(crate) detail: Option<String>,
+    pub(crate) depth: usize,
+    pub(crate) has_children: bool,
+}
+
+pub(crate) fn flatten_scene_rows(
     node: &SceneNode,
     depth: usize,
-    expanded_nodes: &mut BTreeSet<String>,
-    selected: &mut String,
-    editable: bool,
-    edit_request: &mut Option<SceneEditRequest>,
+    expanded_nodes: &BTreeSet<String>,
     filter_matches: Option<&BTreeSet<String>>,
+    rows: &mut Vec<SceneTreeRow>,
 ) {
     if filter_matches.is_some_and(|matches| !matches.contains(&node.id)) {
         return;
     }
-    let expanded = expanded_nodes.contains(&node.id);
-    let has_children = !node.children.is_empty();
+    rows.push(SceneTreeRow {
+        id: node.id.clone(),
+        label: node.label.clone(),
+        icon: node.icon,
+        detail: node.detail.clone(),
+        depth,
+        has_children: !node.children.is_empty(),
+    });
+    if expanded_nodes.contains(&node.id) || filter_matches.is_some() {
+        for child in &node.children {
+            flatten_scene_rows(child, depth + 1, expanded_nodes, filter_matches, rows);
+        }
+    }
+}
+
+pub(crate) fn show_scene_row(
+    ui: &mut egui::Ui,
+    row: &SceneTreeRow,
+    expanded_nodes: &mut BTreeSet<String>,
+    selected: &mut String,
+    editable: bool,
+    edit_request: &mut Option<SceneEditRequest>,
+) {
+    let expanded = expanded_nodes.contains(&row.id);
+    let has_children = row.has_children;
     let colors = palette(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
-    let is_selected = *selected == node.id;
+    let is_selected = *selected == row.id;
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,
             true,
             is_selected,
-            &node.label,
+            &row.label,
         )
     });
     if is_selected || response.hovered() {
@@ -211,13 +241,13 @@ pub(crate) fn show_scene_node(
         );
     }
     paint_focus(ui, &response);
-    let x = rect.min.x + UI.inset + depth as f32 * 12.0;
+    let x = rect.min.x + UI.inset + row.depth as f32 * 12.0;
     let disclosure_rect =
         Rect::from_center_size(egui::pos2(x + 5.0, rect.center().y), Vec2::splat(14.0));
     let disclosure = has_children.then(|| {
         ui.interact(
             disclosure_rect,
-            ui.id().with(("scene-disclosure", &node.id)),
+            ui.id().with(("scene-disclosure", &row.id)),
             Sense::click(),
         )
     });
@@ -236,7 +266,7 @@ pub(crate) fn show_scene_node(
     paint_icon(
         ui.painter(),
         Rect::from_center_size(egui::pos2(x + 19.0, rect.center().y), Vec2::splat(UI.icon)),
-        node.icon,
+        row.icon,
         if is_selected {
             colors.text
         } else {
@@ -248,7 +278,7 @@ pub(crate) fn show_scene_node(
     } else {
         FontId::proportional(TYPE.primary)
     };
-    let detail_width = node.detail.as_ref().map_or(0.0, |detail| {
+    let detail_width = row.detail.as_ref().map_or(0.0, |detail| {
         ui.painter()
             .layout_no_wrap(
                 detail.clone(),
@@ -267,7 +297,7 @@ pub(crate) fn show_scene_node(
     } else {
         colors.secondary_text
     };
-    let mut label_job = LayoutJob::simple_singleline(node.label.clone(), label_font, label_color);
+    let mut label_job = LayoutJob::simple_singleline(row.label.clone(), label_font, label_color);
     label_job.wrap = TextWrapping::truncate_at_width((label_right - label_left).max(0.0));
     let label_galley = ui.painter().layout_job(label_job);
     ui.painter().galley(
@@ -275,7 +305,7 @@ pub(crate) fn show_scene_node(
         label_galley,
         label_color,
     );
-    if let Some(detail) = &node.detail {
+    if let Some(detail) = &row.detail {
         let detail_color = if is_selected {
             colors.text
         } else {
@@ -300,17 +330,17 @@ pub(crate) fn show_scene_node(
     }
     if disclosure.is_some_and(|response| response.clicked()) {
         if expanded {
-            expanded_nodes.remove(&node.id);
+            expanded_nodes.remove(&row.id);
         } else {
-            expanded_nodes.insert(node.id.clone());
+            expanded_nodes.insert(row.id.clone());
         }
     } else if response.clicked() {
-        *selected = node.id.clone();
+        *selected = row.id.clone();
         if has_children && response.double_clicked() {
             if expanded {
-                expanded_nodes.remove(&node.id);
+                expanded_nodes.remove(&row.id);
             } else {
-                expanded_nodes.insert(node.id.clone());
+                expanded_nodes.insert(row.id.clone());
             }
         }
     }
@@ -319,7 +349,7 @@ pub(crate) fn show_scene_node(
             ui.label(RichText::new("Read-only preview").color(palette(ui).muted));
             return;
         }
-        if let Some(world_id) = scene_world_id(&node.id).map(str::to_owned) {
+        if let Some(world_id) = scene_world_id(&row.id).map(str::to_owned) {
             ui.menu_button("Add", |ui| {
                 for kind in SceneObjectKind::ALL {
                     if ui.button(kind.label()).clicked() {
@@ -332,35 +362,21 @@ pub(crate) fn show_scene_node(
                 }
             });
         }
-        if is_scene_object(&node.id) {
+        if is_scene_object(&row.id) {
             if ui.button("Duplicate").clicked() {
                 *edit_request = Some(SceneEditRequest::DuplicateObject {
-                    target: node.id.clone(),
+                    target: row.id.clone(),
                 });
                 ui.close();
             }
             if ui.button("Delete").clicked() {
                 *edit_request = Some(SceneEditRequest::DeleteObject {
-                    target: node.id.clone(),
+                    target: row.id.clone(),
                 });
                 ui.close();
             }
         }
     });
-    if expanded || filter_matches.is_some() {
-        for child in &node.children {
-            show_scene_node(
-                ui,
-                child,
-                depth + 1,
-                expanded_nodes,
-                selected,
-                editable,
-                edit_request,
-                filter_matches,
-            );
-        }
-    }
 }
 
 pub(crate) fn asset_tile(

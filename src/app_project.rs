@@ -336,6 +336,31 @@ impl StudioApp {
         }
     }
 
+    fn commit_authoring_scene_transaction(
+        &mut self,
+        before: String,
+        after: String,
+        target: &str,
+        notice: &str,
+    ) {
+        if before == after {
+            return;
+        }
+        record_scene_history(
+            &mut self.scene_undo,
+            &mut self.scene_redo,
+            before,
+            after.clone(),
+            target,
+        );
+        self.apply_scene_source_snapshot(after, target, notice);
+    }
+
+    fn invalidate_scene_history(&mut self) {
+        self.scene_undo.clear();
+        self.scene_redo.clear();
+    }
+
     pub(crate) fn undo_scene_edit(&mut self) -> Result<(), String> {
         let entry = self
             .scene_undo
@@ -446,63 +471,73 @@ impl StudioApp {
                         source: None,
                     });
                     let updated = serialize_authoring_scene(&scene)?;
-                    self.authored_scene_source = Some(updated.clone());
-                    if let Some(shell) = &mut self.shell {
-                        shell.set_source_scene(Some(&updated), true);
-                        shell.select_scene_node(&id);
-                        shell.set_notice(format!(
-                            "{} added — save, then Rebuild & Play",
-                            kind.label()
-                        ));
-                    }
+                    self.commit_authoring_scene_transaction(
+                        scene_source,
+                        updated,
+                        &id,
+                        &format!("{} added — save, then Rebuild & Play", kind.label()),
+                    );
                     return Ok(());
                 }
                 SceneEditRequest::UpdateTransform {
                     target, position, ..
                 } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
-                    scene.set_position(target, *position)?;
-                    let updated = serialize_authoring_scene(&scene)?;
-                    if updated != scene_source {
-                        self.scene_undo.push(SceneHistoryEntry {
-                            before: scene_source,
-                            after: updated.clone(),
-                            target: target.clone(),
-                        });
-                        self.scene_redo.clear();
-                        self.apply_scene_source_snapshot(
+                    if scene.node(target).is_some() {
+                        scene.set_position(target, *position)?;
+                        let updated = serialize_authoring_scene(&scene)?;
+                        self.commit_authoring_scene_transaction(
+                            scene_source,
                             updated,
                             target,
                             "Position changed — save to keep it",
                         );
+                        return Ok(());
                     }
-                    return Ok(());
                 }
                 SceneEditRequest::UpdateSignText { target, text } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
-                    let node = scene
-                        .node_mut(target)
-                        .ok_or_else(|| format!("scene node {target} was not found"))?;
-                    if node.editor.locked {
-                        return Err(format!("scene node {target} is locked"));
+                    if let Some(node) = scene.node_mut(target) {
+                        if node.editor.locked {
+                            return Err(format!("scene node {target} is locked"));
+                        }
+                        let component = node
+                            .components
+                            .get_mut("text")
+                            .and_then(Value::as_object_mut)
+                            .ok_or_else(|| format!("scene node {target} has no text component"))?;
+                        component.insert("text".to_owned(), Value::String(text.clone()));
+                        let updated = serialize_authoring_scene(&scene)?;
+                        self.commit_authoring_scene_transaction(
+                            scene_source,
+                            updated,
+                            target,
+                            "Sign text changed — save to keep it",
+                        );
+                        return Ok(());
                     }
-                    let component = node
-                        .components
-                        .get_mut("text")
-                        .and_then(Value::as_object_mut)
-                        .ok_or_else(|| format!("scene node {target} has no text component"))?;
-                    component.insert("text".to_owned(), Value::String(text.clone()));
-                    let updated = serialize_authoring_scene(&scene)?;
-                    self.authored_scene_source = Some(updated.clone());
-                    if let Some(shell) = &mut self.shell {
-                        shell.set_source_scene(Some(&updated), true);
-                        shell.select_scene_node(target);
+                }
+                SceneEditRequest::UpdateProperty { target, key, value } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    if let Some(node) = scene.node_mut(target) {
+                        if node.editor.locked {
+                            return Err(format!("scene node {target} is locked"));
+                        }
+                        set_authoring_component_property(node, key, value.clone())?;
+                        let updated = serialize_authoring_scene(&scene)?;
+                        self.commit_authoring_scene_transaction(
+                            scene_source,
+                            updated,
+                            target,
+                            "Property changed — save to keep it",
+                        );
+                        return Ok(());
                     }
-                    return Ok(());
                 }
                 _ => {}
             }
         }
+        self.invalidate_scene_history();
         let mut manifest: Value = serde_json::from_str(&self.authored_manifest_source)
             .map_err(|error| format!("manifest is no longer valid JSON: {error}"))?;
         if let SceneEditRequest::UpdateSignText {
@@ -928,6 +963,10 @@ impl StudioApp {
             network,
         } = prepared;
 
+        if !preserve_editor || self.project_root != project_root {
+            self.invalidate_scene_history();
+        }
+
         // A newly-created engine starts its package generation at the same
         // value as the previous engine. The long-lived renderer therefore
         // cannot distinguish two consecutive ClientSession values by
@@ -1067,6 +1106,64 @@ impl StudioApp {
     }
 }
 
+fn record_scene_history(
+    undo: &mut Vec<SceneHistoryEntry>,
+    redo: &mut Vec<SceneHistoryEntry>,
+    before: String,
+    after: String,
+    target: &str,
+) {
+    undo.push(SceneHistoryEntry {
+        before,
+        after,
+        target: target.to_owned(),
+    });
+    redo.clear();
+}
+
+fn set_authoring_component_property(
+    node: &mut AuthoringNode,
+    key: &str,
+    value: Value,
+) -> Result<(), String> {
+    let matches = node
+        .components
+        .iter()
+        .filter_map(|(component, value)| {
+            value
+                .as_object()
+                .filter(|properties| properties.contains_key(key))
+                .map(|_| component.clone())
+        })
+        .collect::<Vec<_>>();
+    let component = match matches.as_slice() {
+        [component] => component.clone(),
+        [] => {
+            return Err(format!(
+                "scene node {} has no component property `{key}`",
+                node.id
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "scene node {} has ambiguous component property `{key}`",
+                node.id
+            ));
+        }
+    };
+    node.components
+        .get_mut(&component)
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            format!(
+                "scene node {} has an invalid {component} component",
+                node.id
+            )
+        })?
+        .insert(key.to_owned(), value);
+    Ok(())
+}
+
 fn active_manifest_world_id(manifest: &Value) -> String {
     manifest
         .pointer("/launch/destinationWorld")
@@ -1159,6 +1256,31 @@ fn default_scene_object(kind: SceneObjectKind, index: usize) -> Value {
 #[cfg(test)]
 mod scene_edit_tests {
     use super::*;
+
+    #[test]
+    fn scene_history_records_one_transaction_and_invalidates_redo() {
+        let mut undo = vec![SceneHistoryEntry {
+            before: "old".to_owned(),
+            after: "middle".to_owned(),
+            target: "node".to_owned(),
+        }];
+        let mut redo = vec![SceneHistoryEntry {
+            before: "middle".to_owned(),
+            after: "new".to_owned(),
+            target: "node".to_owned(),
+        }];
+        record_scene_history(
+            &mut undo,
+            &mut redo,
+            "middle".to_owned(),
+            "latest".to_owned(),
+            "node",
+        );
+        assert_eq!(undo.len(), 2);
+        assert!(redo.is_empty());
+        assert_eq!(undo[1].before, "middle");
+        assert_eq!(undo[1].after, "latest");
+    }
 
     #[test]
     fn every_insertable_scene_kind_has_a_valid_position_and_collection() {

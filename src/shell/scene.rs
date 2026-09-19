@@ -1,4 +1,5 @@
 use super::*;
+use cubacadabra_builder::AuthoringWorldTransform;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Workspace {
     #[default]
@@ -68,18 +69,25 @@ impl SceneNode {
         false
     }
 
-    fn collect_placeable_objects(&self, objects: &mut Vec<SceneObjectGeometry>) {
+    fn collect_placeable_objects(
+        &self,
+        objects: &mut Vec<SceneObjectGeometry>,
+        world_transforms: &BTreeMap<String, AuthoringWorldTransform>,
+    ) {
         if (is_scene_object(&self.id) || is_authoring_placeable(self))
             && let Some(position) = vector_property(self, "Position")
         {
             objects.push(SceneObjectGeometry {
                 id: self.id.clone(),
-                position,
+                position: world_transforms
+                    .get(&self.id)
+                    .map(|transform| transform.position)
+                    .unwrap_or(position),
                 size: vector_property(self, "Size"),
             });
         }
         for child in &self.children {
-            child.collect_placeable_objects(objects);
+            child.collect_placeable_objects(objects, world_transforms);
         }
     }
 }
@@ -90,6 +98,7 @@ pub(crate) struct SceneOutline {
     pub(crate) assets: Vec<ManifestAsset>,
     pub(crate) initial_selection: String,
     pub(crate) initial_expanded: BTreeSet<String>,
+    pub(crate) authoring_world_transforms: BTreeMap<String, AuthoringWorldTransform>,
 }
 
 pub(crate) struct ProjectLoadingState {
@@ -112,7 +121,8 @@ pub(crate) struct ManifestAsset {
 impl SceneOutline {
     pub(crate) fn placeable_object_geometries(&self) -> Vec<SceneObjectGeometry> {
         let mut objects = Vec::new();
-        self.root.collect_placeable_objects(&mut objects);
+        self.root
+            .collect_placeable_objects(&mut objects, &self.authoring_world_transforms);
         objects
     }
 
@@ -254,6 +264,7 @@ impl SceneOutline {
             assets,
             initial_selection,
             initial_expanded,
+            authoring_world_transforms: BTreeMap::new(),
         })
     }
 
@@ -264,6 +275,13 @@ impl SceneOutline {
         let mut outline = Self::parse(source).map_err(|error| error.to_string())?;
         scene.validate()?;
         let active_world = manifest_active_world(source);
+        if let Some(world_id) = scene.world_id.as_deref()
+            && world_id != active_world
+        {
+            return Err(format!(
+                "scene.json worldId {world_id:?} does not match active manifest world {active_world:?}"
+            ));
+        }
         let roots = scene
             .nodes
             .iter()
@@ -287,21 +305,31 @@ impl SceneOutline {
             .into_iter()
             .map(|node| authoring_scene_node(node, &children))
             .collect::<Vec<_>>();
+        let authoring_world_transforms = scene.world_transforms()?;
+        let manifest_world_id = format!("world/{active_world}");
+        let active_world_index = outline
+            .root
+            .children
+            .iter()
+            .position(|child| child.id == manifest_world_id);
+        let matching_root = authoring_roots.iter().find(|root| {
+            root.id == format!("world-{active_world}")
+                || root.label == humanize_identifier(&active_world)
+        });
         let mut replaced = false;
-        for child in &mut outline.root.children {
-            if child.id == format!("world/{active_world}") {
-                if let Some(world) = authoring_roots
+        if let Some(index) = active_world_index
+            && let Some(root) =
+                matching_root.or_else(|| (authoring_roots.len() == 1).then(|| &authoring_roots[0]))
+        {
+            let root_id = root.id.clone();
+            outline.root.children[index] = root.clone();
+            outline.root.children.extend(
+                authoring_roots
                     .iter()
-                    .find(|root| root.label == humanize_identifier(&active_world))
-                    .cloned()
-                {
-                    *child = world;
-                } else if authoring_roots.len() == 1 {
-                    *child = authoring_roots[0].clone();
-                }
-                replaced = true;
-                break;
-            }
+                    .filter(|root| root.id != root_id)
+                    .cloned(),
+            );
+            replaced = true;
         }
         if !replaced {
             outline.root.children.extend(authoring_roots);
@@ -320,6 +348,7 @@ impl SceneOutline {
                 outline.initial_expanded.insert(node.id.clone());
             }
         }
+        outline.authoring_world_transforms = authoring_world_transforms;
         Ok(outline)
     }
 
@@ -338,6 +367,7 @@ impl SceneOutline {
             initial_expanded: BTreeSet::from([root.id.clone()]),
             assets: Vec::new(),
             root,
+            authoring_world_transforms: BTreeMap::new(),
         }
     }
 
@@ -775,18 +805,16 @@ pub(crate) fn vector_editor(
                     .id_salt((label, axis))
                     .horizontal_align(Align::RIGHT),
             );
-            let mut axis_changed = false;
-            if response.changed()
+            if response.lost_focus()
                 && let Ok(value) = texts[axis].trim().parse::<f32>()
                 && value.is_finite()
                 && values[axis] != value
             {
                 values[axis] = value;
-                axis_changed = true;
+                changed = true;
             }
             if response.lost_focus() {
                 texts[axis] = format_scene_number(values[axis]);
-                changed |= axis_changed;
             }
         }
     });

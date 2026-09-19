@@ -156,6 +156,7 @@ impl StudioShell {
         self.scene_outline = outline;
         self.scene_search_query.clear();
         self.scene_search_matches.clear();
+        self.scene_tree_rows_dirty = true;
         self.project_dirty = dirty;
         if dirty {
             self.preview_stale = true;
@@ -173,6 +174,7 @@ impl StudioShell {
     pub(crate) fn set_runtime_ui_nodes(&mut self, nodes: &[cubacadabra_client::StudioUiNode]) {
         self.runtime_ui_nodes = nodes.to_vec();
         self.scene_outline.set_runtime_ui_nodes(nodes);
+        self.scene_tree_rows_dirty = true;
         if !nodes.is_empty() {
             self.expanded_scene.insert("game".to_owned());
             self.expanded_scene.insert("game/interface".to_owned());
@@ -241,15 +243,34 @@ impl StudioShell {
                 .any(|projection| projection.contains(point))
     }
 
+    pub(crate) fn authoring_local_position_for_world(
+        &self,
+        id: &str,
+        world_position: [f32; 3],
+    ) -> Result<Option<[f32; 3]>, String> {
+        let Some(source) = self.authoring_scene_source.as_deref() else {
+            return Ok(None);
+        };
+        let scene = parse_authoring_scene(source)?;
+        if scene.node(id).is_none() {
+            return Ok(None);
+        }
+        scene.local_position_for_world(id, world_position).map(Some)
+    }
+
     pub(crate) fn select_scene_node(&mut self, id: &str) -> bool {
         if self.scene_outline.root.find(id).is_none() {
             return false;
         }
         self.selected_scene = id.to_owned();
+        let previous_expanded = self.expanded_scene.clone();
         self.expanded_scene.insert("game".to_owned());
         let mut path = Vec::new();
         if self.scene_outline.root.collect_ancestor_ids(id, &mut path) {
             self.expanded_scene.extend(path);
+        }
+        if self.expanded_scene != previous_expanded {
+            self.scene_tree_rows_dirty = true;
         }
         true
     }

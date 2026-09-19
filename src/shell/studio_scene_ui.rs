@@ -28,27 +28,40 @@ impl StudioShell {
         if self.scene_search_query != self.search_query {
             self.scene_search_query = self.search_query.clone();
             self.scene_search_matches = self.scene_outline.search_matches(&self.search_query);
+            self.scene_tree_rows_dirty = true;
         }
+        if self.scene_tree_rows_dirty {
+            self.scene_tree_rows.clear();
+            flatten_scene_rows(
+                &self.scene_outline.root,
+                0,
+                &self.expanded_scene,
+                (!self.search_query.trim().is_empty()).then_some(&self.scene_search_matches),
+                &mut self.scene_tree_rows,
+            );
+            self.scene_tree_rows_dirty = false;
+        }
+        let expanded_before = self.expanded_scene.clone();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                Frame::NONE
-                    .inner_margin(Margin::symmetric(0, 4))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        show_scene_node(
-                            ui,
-                            &self.scene_outline.root,
-                            0,
-                            &mut self.expanded_scene,
-                            &mut self.selected_scene,
-                            self.project_editable,
-                            &mut self.scene_edit_requested,
-                            (!self.search_query.trim().is_empty())
-                                .then_some(&self.scene_search_matches),
-                        );
-                    });
+            .show_rows(ui, UI.row, self.scene_tree_rows.len(), |ui, row_range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.spacing_mut().interact_size.y = UI.row;
+                for index in row_range {
+                    let row = self.scene_tree_rows[index].clone();
+                    show_scene_row(
+                        ui,
+                        &row,
+                        &mut self.expanded_scene,
+                        &mut self.selected_scene,
+                        self.project_editable,
+                        &mut self.scene_edit_requested,
+                    );
+                }
             });
+        if self.expanded_scene != expanded_before {
+            self.scene_tree_rows_dirty = true;
+        }
         if self.selected_scene != previous_selection
             && let Some(selected) = self.scene_outline.root.find(&self.selected_scene)
         {
