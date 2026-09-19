@@ -120,7 +120,7 @@ impl StudioShell {
     pub(crate) fn block_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
-        self.scene_transform_editor(ui, selected, true);
+        self.scene_transform_editor(ui, selected, true, false);
         self.scene_manifest_properties(ui, selected, &["Position", "Size"]);
         if !self.project_editable {
             ui.label(
@@ -134,7 +134,7 @@ impl StudioShell {
     pub(crate) fn sign_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
-        self.scene_transform_editor(ui, selected, false);
+        self.scene_transform_editor(ui, selected, false, false);
 
         property_section(ui, "Content", |ui| {
             ui.label(
@@ -176,8 +176,9 @@ impl StudioShell {
     fn scene_object_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         self.sync_scene_editor(selected);
         let has_size = vector_property(selected, "Size").is_some();
-        self.scene_transform_editor(ui, selected, has_size);
-        self.scene_manifest_properties(ui, selected, &["Position", "Size"]);
+        let has_scale = is_authoring_node(selected);
+        self.scene_transform_editor(ui, selected, has_size && !has_scale, has_scale);
+        self.scene_manifest_properties(ui, selected, &["Position", "Scale"]);
     }
 
     fn sync_scene_editor(&mut self, selected: &SceneNode) {
@@ -187,8 +188,10 @@ impl StudioShell {
         self.scene_editor_target = selected.id.clone();
         self.scene_editor_position = vector_property(selected, "Position").unwrap_or([0.0; 3]);
         self.scene_editor_size = vector_property(selected, "Size").unwrap_or([1.0; 3]);
+        self.scene_editor_scale = vector_property(selected, "Scale").unwrap_or([1.0; 3]);
         self.scene_editor_position_text = scene_vector_text(self.scene_editor_position);
         self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
+        self.scene_editor_scale_text = scene_vector_text(self.scene_editor_scale);
         self.scene_editor_text = selected
             .properties
             .iter()
@@ -198,7 +201,13 @@ impl StudioShell {
         self.scene_editor_properties = selected.properties.iter().cloned().collect();
     }
 
-    fn scene_transform_editor(&mut self, ui: &mut egui::Ui, selected: &SceneNode, has_size: bool) {
+    fn scene_transform_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected: &SceneNode,
+        has_size: bool,
+        has_scale: bool,
+    ) {
         property_section(ui, "Transform", |ui| {
             let mut changed = false;
             ui.add_enabled_ui(
@@ -216,6 +225,14 @@ impl StudioShell {
                             "Size",
                             &mut self.scene_editor_size,
                             &mut self.scene_editor_size_text,
+                        );
+                    }
+                    if has_scale {
+                        changed |= vector_editor(
+                            ui,
+                            "Scale",
+                            &mut self.scene_editor_scale,
+                            &mut self.scene_editor_scale_text,
                         );
                     }
                 },
@@ -245,12 +262,17 @@ impl StudioShell {
                     self.scene_editor_size = self.scene_editor_size.map(|value| value.max(0.05));
                     self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
                 }
+                if has_scale {
+                    self.scene_editor_scale = self.scene_editor_scale.map(|value| value.max(0.05));
+                    self.scene_editor_scale_text = scene_vector_text(self.scene_editor_scale);
+                }
                 self.project_dirty = true;
                 self.project_error = None;
                 self.scene_edit_requested = Some(SceneEditRequest::UpdateTransform {
                     target: selected.id.clone(),
                     position: self.scene_editor_position,
                     size: has_size.then_some(self.scene_editor_size),
+                    scale: has_scale.then_some(self.scene_editor_scale),
                 });
                 self.notice = "Scene object changed — save to keep it".to_owned();
             }

@@ -480,11 +480,17 @@ impl StudioApp {
                     return Ok(());
                 }
                 SceneEditRequest::UpdateTransform {
-                    target, position, ..
+                    target,
+                    position,
+                    scale,
+                    ..
                 } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
                     if scene.node(target).is_some() {
                         scene.set_position(target, *position)?;
+                        if let Some(scale) = scale {
+                            scene.set_scale(target, *scale)?;
+                        }
                         let updated = serialize_authoring_scene(&scene)?;
                         self.commit_authoring_scene_transaction(
                             scene_source,
@@ -612,10 +618,14 @@ impl StudioApp {
                 target,
                 position,
                 size,
+                scale: None,
             } => (
                 target,
                 SceneEditOperation::UpdateTransform { position, size },
             ),
+            SceneEditRequest::UpdateTransform { scale: Some(_), .. } => {
+                return Err("non-uniform transform edits require an authoring scene".to_owned());
+            }
             SceneEditRequest::DuplicateObject { target } => (target, SceneEditOperation::Duplicate),
             SceneEditRequest::DeleteObject { target } => (target, SceneEditOperation::Delete),
             SceneEditRequest::UpdateSignText { .. } => {

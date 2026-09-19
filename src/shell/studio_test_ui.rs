@@ -399,14 +399,33 @@ impl StudioShell {
                         ui.data_mut(|data| {
                             data.insert_temp(
                                 drag_id,
-                                (projection.position, size, world_corners[(index + 2) % 4]),
+                                (
+                                    projection.position,
+                                    size,
+                                    world_corners[(index + 2) % 4],
+                                    projection.scale,
+                                    projection.base_size,
+                                ),
                             );
                         });
                     }
                     if handle_response.dragged()
                         && let Some(current_screen) = handle_response.interact_pointer_pos()
-                        && let Some((origin_position, origin_size, fixed_corner)) =
-                            ui.data(|data| data.get_temp::<([f32; 3], [f32; 3], [f32; 3])>(drag_id))
+                        && let Some((
+                            origin_position,
+                            origin_size,
+                            fixed_corner,
+                            origin_scale,
+                            base_size,
+                        )) = ui.data(|data| {
+                            data.get_temp::<(
+                                [f32; 3],
+                                [f32; 3],
+                                [f32; 3],
+                                Option<[f32; 3]>,
+                                Option<[f32; 3]>,
+                            )>(drag_id)
+                        })
                     {
                         self.scene_viewport_edit_requested =
                             Some(SceneViewportEditRequest::Resize {
@@ -415,13 +434,62 @@ impl StudioShell {
                                 fixed_corner,
                                 origin_position,
                                 origin_size,
+                                origin_scale,
+                                base_size,
                             });
                     }
                     if handle_response.drag_stopped() {
                         ui.data_mut(|data| {
-                            data.remove::<([f32; 3], [f32; 3], [f32; 3])>(drag_id);
+                            data.remove::<(
+                                [f32; 3],
+                                [f32; 3],
+                                [f32; 3],
+                                Option<[f32; 3]>,
+                                Option<[f32; 3]>,
+                            )>(drag_id);
                         });
                     }
+                }
+            }
+
+            if selected
+                && self.project_editable
+                && !self.playing
+                && self.scene_viewport_tool == SceneViewportTool::Resize
+                && let (Some(screen_corners), Some(base_size), Some(scale)) = (
+                    projection.screen_corners,
+                    projection.base_size,
+                    projection.scale,
+                )
+            {
+                let center = screen_corners[0].lerp(screen_corners[1], 0.5);
+                let handle = Rect::from_center_size(center, Vec2::splat(12.0));
+                let handle_response = ui
+                    .interact(
+                        handle,
+                        ui.id().with(("scene-object-height", &projection.id)),
+                        Sense::drag(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                let fill = if handle_response.hovered() || handle_response.dragged() {
+                    colors.accent
+                } else {
+                    colors.panel_raised
+                };
+                ui.painter()
+                    .circle(center, 6.0, fill, Stroke::new(1.0, colors.accent));
+                if handle_response.dragged()
+                    && let Some(current_screen) = handle_response.interact_pointer_pos()
+                {
+                    self.scene_viewport_edit_requested =
+                        Some(SceneViewportEditRequest::ResizeHeight {
+                            target: projection.id.clone(),
+                            origin_screen: center,
+                            current_screen,
+                            origin_position: projection.position,
+                            origin_scale: scale,
+                            base_size,
+                        });
                 }
             }
         }

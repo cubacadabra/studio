@@ -128,7 +128,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 15);
+    assert_eq!(objects.len(), 16);
     assert!(objects.iter().all(|object| {
         !matches!(
             object.id.as_str(),
@@ -142,6 +142,17 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .unwrap()
             .position,
         [-12.4, 11.0, 14.2]
+    );
+    let chair = outline
+        .root
+        .find("chair-roulette-player-3")
+        .expect("extracted chair should be editable");
+    assert_eq!(chair.label, "Chair — Roulette Player 3");
+    assert!(
+        chair
+            .properties
+            .iter()
+            .any(|(label, value)| { label == "Size" && value == "4.2, 4.4, 4.2" })
     );
 }
 

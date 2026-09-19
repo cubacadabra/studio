@@ -303,7 +303,7 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_str(&sources.manifest_source).expect("manifest");
         let world = &manifest["worlds"]["vegas-floor"];
-        assert_eq!(world["decorations"].as_array().unwrap().len(), 3);
+        assert_eq!(world["decorations"].as_array().unwrap().len(), 4);
         assert_eq!(world["signs"].as_array().unwrap().len(), 5);
         assert_eq!(world["interactions"].as_array().unwrap().len(), 7);
     }

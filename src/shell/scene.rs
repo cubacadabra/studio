@@ -84,6 +84,12 @@ impl SceneNode {
                     .map(|transform| transform.position)
                     .unwrap_or(position),
                 size: vector_property(self, "Size"),
+                scale: is_authoring_node(self).then(|| {
+                    world_transforms
+                        .get(&self.id)
+                        .map(|transform| transform.scale)
+                        .unwrap_or_else(|| vector_property(self, "Scale").unwrap_or([1.0; 3]))
+                }),
             });
         }
         for child in &self.children {
@@ -475,6 +481,15 @@ fn authoring_scene_node(
     if let Some(reason) = &node.editor.lock_reason {
         properties.push(("Lock reason".to_owned(), reason.clone()));
     }
+    if let Some(bounds) = node
+        .components
+        .get("render")
+        .and_then(Value::as_object)
+        .and_then(|render| render.get("bounds"))
+        .and_then(vector_value)
+    {
+        properties.push(("Size".to_owned(), format_vector(bounds)));
+    }
     if let Some(source) = &node.source {
         properties.push(("Source".to_owned(), source.format.clone()));
         if let Some(path) = &source.path {
@@ -530,6 +545,15 @@ fn format_vector(values: [f32; 3]) -> String {
         .map(|value| format_scene_number(value))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn vector_value(value: &Value) -> Option<[f32; 3]> {
+    let values = value.as_array()?;
+    Some([
+        values.first()?.as_f64()? as f32,
+        values.get(1)?.as_f64()? as f32,
+        values.get(2)?.as_f64()? as f32,
+    ])
 }
 
 fn format_component_property(component: &str, key: &str) -> String {

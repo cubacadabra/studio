@@ -755,31 +755,39 @@ impl StudioApp {
                 .filter_map(|geometry| {
                     let [x, y, z] = geometry.position;
                     let [center_x, center_y] = renderer.studio_project_world_point([x, y, z])?;
+                    let transform_scale = geometry.scale.unwrap_or([1.0; 3]);
+                    let visual_size = geometry.size.map(|size| {
+                        [
+                            size[0] * transform_scale[0],
+                            size[1] * transform_scale[1],
+                            size[2] * transform_scale[2],
+                        ]
+                    });
                     let (world_corners, screen_corners) =
-                        geometry
-                            .size
-                            .map_or((None, None), |[width, height, depth]| {
-                                let top = y + height * 0.5;
-                                let corners = [
-                                    [x - width * 0.5, top, z - depth * 0.5],
-                                    [x + width * 0.5, top, z - depth * 0.5],
-                                    [x + width * 0.5, top, z + depth * 0.5],
-                                    [x - width * 0.5, top, z + depth * 0.5],
-                                ];
-                                let projected = corners
-                                    .map(|point| renderer.studio_project_world_point(point))
-                                    .into_iter()
-                                    .collect::<Option<Vec<_>>>()
-                                    .and_then(|points| points.try_into().ok())
-                                    .map(|points: [[f32; 2]; 4]| {
-                                        points.map(|[x, y]| egui::pos2(x / scale, y / scale))
-                                    });
-                                (Some(corners), projected)
-                            });
+                        visual_size.map_or((None, None), |[width, height, depth]| {
+                            let top = y + height * 0.5;
+                            let corners = [
+                                [x - width * 0.5, top, z - depth * 0.5],
+                                [x + width * 0.5, top, z - depth * 0.5],
+                                [x + width * 0.5, top, z + depth * 0.5],
+                                [x - width * 0.5, top, z + depth * 0.5],
+                            ];
+                            let projected = corners
+                                .map(|point| renderer.studio_project_world_point(point))
+                                .into_iter()
+                                .collect::<Option<Vec<_>>>()
+                                .and_then(|points| points.try_into().ok())
+                                .map(|points: [[f32; 2]; 4]| {
+                                    points.map(|[x, y]| egui::pos2(x / scale, y / scale))
+                                });
+                            (Some(corners), projected)
+                        });
                     Some(SceneObjectProjection {
                         id: geometry.id,
                         position: geometry.position,
-                        size: geometry.size,
+                        size: visual_size,
+                        scale: geometry.scale,
+                        base_size: geometry.size,
                         center_screen: egui::pos2(center_x / scale, center_y / scale),
                         world_corners,
                         screen_corners,
@@ -831,6 +839,7 @@ impl StudioApp {
                     target,
                     position,
                     size,
+                    scale: None,
                 })
             }
             SceneViewportEditRequest::Resize {
@@ -839,6 +848,8 @@ impl StudioApp {
                 fixed_corner,
                 origin_position,
                 origin_size,
+                origin_scale,
+                base_size,
             } => {
                 let mut moving = world_point(current_screen, fixed_corner[1])?;
                 moving[0] = snap_scene_value(moving[0]);
@@ -859,6 +870,22 @@ impl StudioApp {
                 if (moving[2] - fixed_corner[2]).abs() < 0.25 {
                     moving[2] = fixed_corner[2] + 0.25 * z_direction;
                 }
+                let size = [
+                    (moving[0] - fixed_corner[0]).abs(),
+                    origin_size[1],
+                    (moving[2] - fixed_corner[2]).abs(),
+                ];
+                let (size, scale) = match (origin_scale, base_size) {
+                    (Some(origin_scale), Some(base_size)) => (
+                        None,
+                        Some([
+                            (size[0] / base_size[0]).max(0.05),
+                            origin_scale[1],
+                            (size[2] / base_size[2]).max(0.05),
+                        ]),
+                    ),
+                    _ => (Some(size), None),
+                };
                 Some(SceneEditRequest::UpdateTransform {
                     target,
                     position: [
@@ -866,11 +893,31 @@ impl StudioApp {
                         origin_position[1],
                         (moving[2] + fixed_corner[2]) * 0.5,
                     ],
-                    size: Some([
-                        (moving[0] - fixed_corner[0]).abs(),
-                        origin_size[1],
-                        (moving[2] - fixed_corner[2]).abs(),
-                    ]),
+                    size,
+                    scale,
+                })
+            }
+            SceneViewportEditRequest::ResizeHeight {
+                target,
+                origin_screen,
+                current_screen,
+                origin_position,
+                origin_scale,
+                base_size,
+            } => {
+                let delta = origin_screen.y - current_screen.y;
+                let original_height = base_size[1] * origin_scale[1];
+                let height = (original_height + delta * 0.05).max(0.25);
+                let scale_y = (height / base_size[1]).max(0.05);
+                Some(SceneEditRequest::UpdateTransform {
+                    target,
+                    position: [
+                        origin_position[0],
+                        origin_position[1] + (height - original_height) * 0.5,
+                        origin_position[2],
+                    ],
+                    size: None,
+                    scale: Some([origin_scale[0], scale_y, origin_scale[2]]),
                 })
             }
         }

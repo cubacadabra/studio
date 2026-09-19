@@ -256,6 +256,7 @@ pub(crate) enum SceneEditRequest {
         target: String,
         position: [f32; 3],
         size: Option<[f32; 3]>,
+        scale: Option<[f32; 3]>,
     },
     UpdateSignText {
         target: String,
@@ -333,6 +334,7 @@ pub(crate) struct SceneObjectGeometry {
     pub(crate) id: String,
     pub(crate) position: [f32; 3],
     pub(crate) size: Option<[f32; 3]>,
+    pub(crate) scale: Option<[f32; 3]>,
 }
 
 #[derive(Clone, Debug)]
@@ -340,6 +342,8 @@ pub(crate) struct SceneObjectProjection {
     pub(crate) id: String,
     pub(crate) position: [f32; 3],
     pub(crate) size: Option<[f32; 3]>,
+    pub(crate) scale: Option<[f32; 3]>,
+    pub(crate) base_size: Option<[f32; 3]>,
     pub(crate) center_screen: Pos2,
     pub(crate) world_corners: Option<[[f32; 3]; 4]>,
     pub(crate) screen_corners: Option<[Pos2; 4]>,
@@ -394,6 +398,16 @@ pub(crate) enum SceneViewportEditRequest {
         fixed_corner: [f32; 3],
         origin_position: [f32; 3],
         origin_size: [f32; 3],
+        origin_scale: Option<[f32; 3]>,
+        base_size: Option<[f32; 3]>,
+    },
+    ResizeHeight {
+        target: String,
+        origin_screen: Pos2,
+        current_screen: Pos2,
+        origin_position: [f32; 3],
+        origin_scale: [f32; 3],
+        base_size: [f32; 3],
     },
 }
 
@@ -440,8 +454,10 @@ pub(crate) struct StudioShell {
     scene_editor_target: String,
     scene_editor_position: [f32; 3],
     scene_editor_size: [f32; 3],
+    scene_editor_scale: [f32; 3],
     scene_editor_position_text: [String; 3],
     scene_editor_size_text: [String; 3],
+    scene_editor_scale_text: [String; 3],
     scene_editor_text: String,
     scene_editor_properties: BTreeMap<String, String>,
     scene_viewport_tool: SceneViewportTool,
