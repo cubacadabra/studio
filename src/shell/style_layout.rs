@@ -180,7 +180,11 @@ pub(crate) fn show_scene_node(
     selected: &mut String,
     editable: bool,
     edit_request: &mut Option<SceneEditRequest>,
+    filter_matches: Option<&BTreeSet<String>>,
 ) {
+    if filter_matches.is_some_and(|matches| !matches.contains(&node.id)) {
+        return;
+    }
     let expanded = expanded_nodes.contains(&node.id);
     let has_children = !node.children.is_empty();
     let colors = palette(ui);
@@ -343,7 +347,7 @@ pub(crate) fn show_scene_node(
             }
         }
     });
-    if expanded {
+    if expanded || filter_matches.is_some() {
         for child in &node.children {
             show_scene_node(
                 ui,
@@ -353,6 +357,7 @@ pub(crate) fn show_scene_node(
                 selected,
                 editable,
                 edit_request,
+                filter_matches,
             );
         }
     }

@@ -55,8 +55,21 @@ impl SceneNode {
         self.children.iter().find_map(|child| child.find(id))
     }
 
+    pub(crate) fn collect_ancestor_ids(&self, target: &str, path: &mut Vec<String>) -> bool {
+        if self.id == target {
+            return true;
+        }
+        for child in &self.children {
+            if child.collect_ancestor_ids(target, path) {
+                path.push(self.id.clone());
+                return true;
+            }
+        }
+        false
+    }
+
     fn collect_placeable_objects(&self, objects: &mut Vec<SceneObjectGeometry>) {
-        if is_scene_object(&self.id)
+        if (is_scene_object(&self.id) || is_authoring_node(self))
             && let Some(position) = vector_property(self, "Position")
         {
             objects.push(SceneObjectGeometry {
@@ -101,6 +114,30 @@ impl SceneOutline {
         let mut objects = Vec::new();
         self.root.collect_placeable_objects(&mut objects);
         objects
+    }
+
+    pub(crate) fn search_matches(&self, query: &str) -> BTreeSet<String> {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return BTreeSet::new();
+        }
+        fn visit(node: &SceneNode, query: &str, matches: &mut BTreeSet<String>) -> bool {
+            let direct = node.label.to_ascii_lowercase().contains(query)
+                || node.id.to_ascii_lowercase().contains(query)
+                || node.kind.to_ascii_lowercase().contains(query);
+            let descendant = node
+                .children
+                .iter()
+                .map(|child| visit(child, query, matches))
+                .any(|matched| matched);
+            if direct || descendant {
+                matches.insert(node.id.clone());
+            }
+            direct || descendant
+        }
+        let mut matches = BTreeSet::new();
+        visit(&self.root, &query, &mut matches);
+        matches
     }
 
     pub(crate) fn parse(source: &str) -> Result<Self, serde_json::Error> {
@@ -220,6 +257,72 @@ impl SceneOutline {
         })
     }
 
+    pub(crate) fn parse_with_authoring_scene(
+        source: &str,
+        scene: &AuthoringScene,
+    ) -> Result<Self, String> {
+        let mut outline = Self::parse(source).map_err(|error| error.to_string())?;
+        scene.validate()?;
+        let active_world = manifest_active_world(source);
+        let roots = scene
+            .nodes
+            .iter()
+            .filter(|node| node.parent_id.is_none())
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return Err("scene.json must contain at least one root node".to_owned());
+        }
+        let children = scene
+            .nodes
+            .iter()
+            .filter_map(|node| node.parent_id.as_deref().map(|parent| (parent, node)))
+            .fold(
+                BTreeMap::<&str, Vec<&AuthoringNode>>::new(),
+                |mut children, (parent, node)| {
+                    children.entry(parent).or_default().push(node);
+                    children
+                },
+            );
+        let authoring_roots = roots
+            .into_iter()
+            .map(|node| authoring_scene_node(node, &children))
+            .collect::<Vec<_>>();
+        let mut replaced = false;
+        for child in &mut outline.root.children {
+            if child.id == format!("world/{active_world}") {
+                if let Some(world) = authoring_roots
+                    .iter()
+                    .find(|root| root.label == humanize_identifier(&active_world))
+                    .cloned()
+                {
+                    *child = world;
+                } else if authoring_roots.len() == 1 {
+                    *child = authoring_roots[0].clone();
+                }
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            outline.root.children.extend(authoring_roots);
+        }
+        outline.initial_selection = outline
+            .root
+            .children
+            .iter()
+            .find(|child| child.id == format!("world/{active_world}") || is_authoring_node(child))
+            .map(|child| child.id.clone())
+            .unwrap_or_else(|| outline.root.id.clone());
+        outline.initial_expanded =
+            BTreeSet::from([outline.root.id.clone(), outline.initial_selection.clone()]);
+        for node in &scene.nodes {
+            if children.contains_key(node.id.as_str()) {
+                outline.initial_expanded.insert(node.id.clone());
+            }
+        }
+        Ok(outline)
+    }
+
     pub(crate) fn empty() -> Self {
         let root = SceneNode {
             id: "game".to_owned(),
@@ -284,6 +387,124 @@ impl SceneOutline {
             properties: Vec::new(),
             children,
         });
+    }
+}
+
+fn manifest_active_world(source: &str) -> String {
+    serde_json::from_str::<Value>(source)
+        .ok()
+        .and_then(|manifest| {
+            manifest
+                .pointer("/launch/destinationWorld")
+                .and_then(Value::as_str)
+                .or_else(|| manifest.get("startWorld").and_then(Value::as_str))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "lobby".to_owned())
+}
+
+fn authoring_scene_node(
+    node: &AuthoringNode,
+    children: &BTreeMap<&str, Vec<&AuthoringNode>>,
+) -> SceneNode {
+    let (kind, icon) = if node.components.contains_key("render") {
+        ("Mesh", Icon::Object)
+    } else if node.components.contains_key("text") {
+        ("Sign", Icon::Object)
+    } else if node.components.contains_key("interaction") {
+        ("Interaction", Icon::Object)
+    } else {
+        ("Group", Icon::Folder)
+    };
+    let mut properties = vec![
+        ("Authoring ID".to_owned(), node.id.clone()),
+        ("ID".to_owned(), node.id.clone()),
+        ("Kind".to_owned(), kind.to_owned()),
+        (
+            "Parent".to_owned(),
+            node.parent_id.clone().unwrap_or_else(|| "—".to_owned()),
+        ),
+        (
+            "Position".to_owned(),
+            format_vector(node.transform.position),
+        ),
+        (
+            "Rotation".to_owned(),
+            format_vector(node.transform.rotation),
+        ),
+        ("Scale".to_owned(), format_vector(node.transform.scale)),
+        (
+            "Visible".to_owned(),
+            if node.editor.visible { "Yes" } else { "No" }.to_owned(),
+        ),
+        (
+            "Locked".to_owned(),
+            if node.editor.locked { "Yes" } else { "No" }.to_owned(),
+        ),
+    ];
+    if let Some(reason) = &node.editor.lock_reason {
+        properties.push(("Lock reason".to_owned(), reason.clone()));
+    }
+    if let Some(source) = &node.source {
+        properties.push(("Source".to_owned(), source.format.clone()));
+        if let Some(path) = &source.path {
+            properties.push(("Source path".to_owned(), path.clone()));
+        }
+    }
+    for (component, value) in &node.components {
+        if let Some(object) = value.as_object() {
+            for (key, value) in object {
+                if let Some(value) = compact_value(value) {
+                    properties.push((format_component_property(component, key), value));
+                }
+            }
+        }
+    }
+    let children = children
+        .get(node.id.as_str())
+        .into_iter()
+        .flatten()
+        .map(|child| authoring_scene_node(child, children))
+        .collect::<Vec<_>>();
+    SceneNode {
+        id: node.id.clone(),
+        label: node.name.clone(),
+        kind,
+        icon,
+        detail: node.editor.locked.then(|| "Locked".to_owned()),
+        properties,
+        children,
+    }
+}
+
+pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {
+    node.properties
+        .iter()
+        .any(|(label, _)| label == "Authoring ID")
+}
+
+pub(crate) fn scene_node_locked(node: &SceneNode) -> bool {
+    node.properties
+        .iter()
+        .find(|(label, _)| label == "Locked")
+        .is_some_and(|(_, value)| value == "Yes")
+}
+
+fn format_vector(values: [f32; 3]) -> String {
+    values
+        .into_iter()
+        .map(|value| format_scene_number(value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_component_property(component: &str, key: &str) -> String {
+    let label = humanize_identifier(key);
+    match component {
+        "render" => format!("Render {label}"),
+        "text" => label,
+        "interaction" => label,
+        _ => format!("{component} {label}"),
     }
 }
 
@@ -550,16 +771,18 @@ pub(crate) fn vector_editor(
                     .id_salt((label, axis))
                     .horizontal_align(Align::RIGHT),
             );
+            let mut axis_changed = false;
             if response.changed()
                 && let Ok(value) = texts[axis].trim().parse::<f32>()
                 && value.is_finite()
                 && values[axis] != value
             {
                 values[axis] = value;
-                changed = true;
+                axis_changed = true;
             }
             if response.lost_focus() {
                 texts[axis] = format_scene_number(values[axis]);
+                changed |= axis_changed;
             }
         }
     });

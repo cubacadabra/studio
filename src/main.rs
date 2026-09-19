@@ -119,6 +119,7 @@ struct GameSources {
     project_root: PathBuf,
     root: PathBuf,
     authored_manifest_source: String,
+    authored_scene_source: Option<String>,
     manifest_source: String,
     script_source: String,
     review_camera: crate::shell::ReviewCameraPreset,
@@ -158,6 +159,13 @@ struct CodexFileChange {
     relative_path: PathBuf,
     before: Option<Vec<u8>>,
     after: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
+struct SceneHistoryEntry {
+    before: String,
+    after: String,
+    target: String,
 }
 
 struct LocalMorphCatalog {
@@ -200,6 +208,7 @@ struct StudioApp {
     project_root: PathBuf,
     game_root: PathBuf,
     authored_manifest_source: String,
+    authored_scene_source: Option<String>,
     manifest_source: String,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
@@ -219,6 +228,8 @@ struct StudioApp {
     renderer_uses_base_package_generation: bool,
     codex_checkpoint: Option<ProjectFileSnapshot>,
     codex_changes: Option<Vec<CodexFileChange>>,
+    scene_undo: Vec<SceneHistoryEntry>,
+    scene_redo: Vec<SceneHistoryEntry>,
     local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,
@@ -282,6 +293,19 @@ mod tests {
         assert_eq!(client.game_id(), "first-game");
         assert!(sources.script_source.contains("begin module: round.luau"));
         assert!(!sources.script_source.contains("@include"));
+    }
+
+    #[test]
+    fn vegas_raw_project_loads_scene_source_through_the_normal_builder_path() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/vegas-101");
+        let sources = load_game_sources(Some(path)).expect("Vegas raw game project");
+        assert!(sources.authored_scene_source.is_some());
+        let manifest: serde_json::Value =
+            serde_json::from_str(&sources.manifest_source).expect("manifest");
+        let world = &manifest["worlds"]["vegas-floor"];
+        assert_eq!(world["decorations"].as_array().unwrap().len(), 3);
+        assert_eq!(world["signs"].as_array().unwrap().len(), 5);
+        assert_eq!(world["interactions"].as_array().unwrap().len(), 7);
     }
 
     #[test]

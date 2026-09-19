@@ -107,6 +107,71 @@ fn scene_outline_exposes_every_placeable_object_to_viewport_tools() {
 }
 
 #[test]
+fn authoring_scene_uses_stable_component_nodes_for_vegas() {
+    let manifest = include_str!("../../../examples/vegas-101/manifest.json");
+    let scene = parse_authoring_scene(include_str!("../../../examples/vegas-101/scene.json"))
+        .expect("Vegas authoring scene");
+    let outline =
+        SceneOutline::parse_with_authoring_scene(manifest, &scene).expect("authoring outline");
+    assert_eq!(outline.root.find("sign-tables").unwrap().label, "TABLES");
+    assert_eq!(
+        outline.root.find("interaction-plinko").unwrap().kind,
+        "Interaction"
+    );
+    assert!(
+        outline
+            .root
+            .find("vegas-map")
+            .unwrap()
+            .properties
+            .iter()
+            .any(|(label, value)| label == "Locked" && value == "Yes")
+    );
+    assert_eq!(
+        outline
+            .placeable_object_geometries()
+            .into_iter()
+            .find(|object| object.id == "sign-tables")
+            .unwrap()
+            .position,
+        [-12.4, 11.0, 14.2]
+    );
+}
+
+#[test]
+fn scene_search_indexes_a_large_lightweight_tree() {
+    let root = SceneNode {
+        id: "game".to_owned(),
+        label: "Game".to_owned(),
+        kind: "Game",
+        icon: Icon::World,
+        detail: None,
+        properties: Vec::new(),
+        children: (0..10_000)
+            .map(|index| SceneNode {
+                id: format!("node-{index}"),
+                label: format!("Node {index}"),
+                kind: "Group",
+                icon: Icon::Folder,
+                detail: None,
+                properties: Vec::new(),
+                children: Vec::new(),
+            })
+            .collect(),
+    };
+    let outline = SceneOutline {
+        root,
+        assets: Vec::new(),
+        initial_selection: "game".to_owned(),
+        initial_expanded: BTreeSet::from(["game".to_owned()]),
+    };
+    let matches = outline.search_matches("Node 9999");
+    assert!(matches.contains("game"));
+    assert!(matches.contains("node-9999"));
+    assert!(!matches.contains("node-9998"));
+}
+
+#[test]
 fn scene_outline_surfaces_runtime_game_ui_without_exposing_source_files() {
     let mut outline = SceneOutline::parse(
         r#"{

@@ -18,6 +18,12 @@ impl StudioShell {
                 .on_hover_text("Open a raw source project to edit the scene");
             }
         });
+        search_field(ui, &mut self.search_query, ui.available_width());
+        ui.add_space(4.0);
+        if self.scene_search_query != self.search_query {
+            self.scene_search_query = self.search_query.clone();
+            self.scene_search_matches = self.scene_outline.search_matches(&self.search_query);
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -33,6 +39,8 @@ impl StudioShell {
                             &mut self.selected_scene,
                             self.project_editable,
                             &mut self.scene_edit_requested,
+                            (!self.search_query.trim().is_empty())
+                                .then_some(&self.scene_search_matches),
                         );
                     });
             });
@@ -59,7 +67,7 @@ impl StudioShell {
             } else if selected.kind == "Sign" {
                 self.sign_inspector(ui, &selected);
             } else if self.project_editable
-                && is_scene_object(&selected.id)
+                && (is_scene_object(&selected.id) || is_authoring_node(&selected))
                 && vector_property(&selected, "Position").is_some()
             {
                 self.scene_object_inspector(ui, &selected);
@@ -175,22 +183,39 @@ impl StudioShell {
     fn scene_transform_editor(&mut self, ui: &mut egui::Ui, selected: &SceneNode, has_size: bool) {
         property_section(ui, "Transform", |ui| {
             let mut changed = false;
-            ui.add_enabled_ui(self.project_editable, |ui| {
-                changed |= vector_editor(
-                    ui,
-                    "Position",
-                    &mut self.scene_editor_position,
-                    &mut self.scene_editor_position_text,
-                );
-                if has_size {
+            ui.add_enabled_ui(
+                self.project_editable && !scene_node_locked(selected),
+                |ui| {
                     changed |= vector_editor(
                         ui,
-                        "Size",
-                        &mut self.scene_editor_size,
-                        &mut self.scene_editor_size_text,
+                        "Position",
+                        &mut self.scene_editor_position,
+                        &mut self.scene_editor_position_text,
                     );
-                }
-            });
+                    if has_size {
+                        changed |= vector_editor(
+                            ui,
+                            "Size",
+                            &mut self.scene_editor_size,
+                            &mut self.scene_editor_size_text,
+                        );
+                    }
+                },
+            );
+            if scene_node_locked(selected) {
+                ui.label(
+                    RichText::new(
+                        selected
+                            .properties
+                            .iter()
+                            .find(|(label, _)| label == "Lock reason")
+                            .map(|(_, reason)| reason.as_str())
+                            .unwrap_or("This imported node is read-only."),
+                    )
+                    .size(TYPE.meta)
+                    .color(palette(ui).muted),
+                );
+            }
             if changed {
                 if has_size {
                     self.scene_editor_size = self.scene_editor_size.map(|value| value.max(0.05));

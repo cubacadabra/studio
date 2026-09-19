@@ -1,4 +1,5 @@
 use super::*;
+use cubacadabra_builder::{parse_authoring_scene, serialize_authoring_scene};
 impl StudioApp {
     pub(crate) fn create_new_project(&mut self, title: &str, parent: &Path) {
         let result = game_creator::create_game(title, parent);
@@ -180,6 +181,16 @@ impl StudioApp {
             }
             return false;
         }
+        if let Some((_, scene_source)) = source_files
+            .iter()
+            .find(|(relative_path, _)| relative_path == Path::new("scene.json"))
+            && let Err(error) = parse_authoring_scene(scene_source)
+        {
+            if let Some(shell) = &mut self.shell {
+                shell.set_project_error(format!("Cannot save scene.json: {error}"));
+            }
+            return false;
+        }
         let mut saved = Ok(());
         for (relative_path, source) in &source_files {
             if let Err(message) =
@@ -190,6 +201,8 @@ impl StudioApp {
             }
             if relative_path == Path::new("manifest.json") {
                 self.authored_manifest_source = source.clone();
+            } else if relative_path == Path::new("scene.json") {
+                self.authored_scene_source = Some(source.clone());
             }
         }
         match saved {
@@ -198,6 +211,7 @@ impl StudioApp {
                     let preview_stale = shell.preview_is_stale();
                     shell.mark_source_files_saved();
                     shell.set_source_manifest(&self.authored_manifest_source, false);
+                    shell.set_source_scene(self.authored_scene_source.as_deref(), false);
                     shell.set_notice(if preview_stale {
                         "Project saved — Rebuild & Play to preview it".to_owned()
                     } else {
@@ -300,6 +314,52 @@ impl StudioApp {
                 }
             }
         }
+        let scene_path = self.project_root.join("scene.json");
+        if scene_path.is_file()
+            && let Ok(source) = fs::read_to_string(&scene_path)
+        {
+            self.authored_scene_source = Some(source.clone());
+            if let Some(shell) = &mut self.shell {
+                shell.set_source_scene(Some(&source), false);
+            }
+        }
+    }
+
+    fn apply_scene_source_snapshot(&mut self, source: String, target: &str, notice: &str) {
+        self.authored_scene_source = Some(source.clone());
+        if let Some(shell) = &mut self.shell {
+            shell.set_source_scene(Some(&source), true);
+            shell.select_scene_node(target);
+            shell.set_notice(notice.to_owned());
+        }
+    }
+
+    pub(crate) fn undo_scene_edit(&mut self) -> Result<(), String> {
+        let entry = self
+            .scene_undo
+            .pop()
+            .ok_or_else(|| "Nothing to undo".to_owned())?;
+        self.scene_redo.push(entry.clone());
+        self.apply_scene_source_snapshot(
+            entry.before,
+            &entry.target,
+            "Position restored — save to keep it",
+        );
+        Ok(())
+    }
+
+    pub(crate) fn redo_scene_edit(&mut self) -> Result<(), String> {
+        let entry = self
+            .scene_redo
+            .pop()
+            .ok_or_else(|| "Nothing to redo".to_owned())?;
+        self.scene_undo.push(entry.clone());
+        self.apply_scene_source_snapshot(
+            entry.after,
+            &entry.target,
+            "Position reapplied — save to keep it",
+        );
+        Ok(())
     }
 
     pub(crate) fn apply_scene_edit(&mut self, request: SceneEditRequest) -> Result<(), String> {
@@ -309,6 +369,54 @@ impl StudioApp {
             .is_some_and(StudioShell::project_is_editable)
         {
             return Err("Open a raw source project to edit scene objects.".to_owned());
+        }
+        if let Some(scene_source) = self.authored_scene_source.clone() {
+            match &request {
+                SceneEditRequest::UpdateTransform {
+                    target, position, ..
+                } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    scene.set_position(target, *position)?;
+                    let updated = serialize_authoring_scene(&scene)?;
+                    if updated != scene_source {
+                        self.scene_undo.push(SceneHistoryEntry {
+                            before: scene_source,
+                            after: updated.clone(),
+                            target: target.clone(),
+                        });
+                        self.scene_redo.clear();
+                        self.apply_scene_source_snapshot(
+                            updated,
+                            target,
+                            "Position changed — save to keep it",
+                        );
+                    }
+                    return Ok(());
+                }
+                SceneEditRequest::UpdateSignText { target, text } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    let node = scene
+                        .node_mut(target)
+                        .ok_or_else(|| format!("scene node {target} was not found"))?;
+                    if node.editor.locked {
+                        return Err(format!("scene node {target} is locked"));
+                    }
+                    let component = node
+                        .components
+                        .get_mut("text")
+                        .and_then(Value::as_object_mut)
+                        .ok_or_else(|| format!("scene node {target} has no text component"))?;
+                    component.insert("text".to_owned(), Value::String(text.clone()));
+                    let updated = serialize_authoring_scene(&scene)?;
+                    self.authored_scene_source = Some(updated.clone());
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_source_scene(Some(&updated), true);
+                        shell.select_scene_node(target);
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
         let mut manifest: Value = serde_json::from_str(&self.authored_manifest_source)
             .map_err(|error| format!("manifest is no longer valid JSON: {error}"))?;
@@ -720,6 +828,7 @@ impl StudioApp {
                             project_root,
                             root,
                             authored_manifest_source,
+                            authored_scene_source,
                             manifest_source,
                             script_source,
                             review_camera,
@@ -783,6 +892,7 @@ impl StudioApp {
         self.project_root = project_root;
         self.game_root = root;
         self.authored_manifest_source = authored_manifest_source;
+        self.authored_scene_source = authored_scene_source;
         self.manifest_source = manifest_source;
         self.standalone_preview = standalone_preview;
         self.temporary_package = temporary_package;
@@ -813,9 +923,10 @@ impl StudioApp {
                 shell.set_project_editable(
                     !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
                 );
-                shell.set_source_manifest(&self.authored_manifest_source, false);
-                shell.set_source_assets(load_source_assets(&self.project_root));
                 shell.set_source_files(load_source_files(&self.project_root));
+                shell.set_source_manifest(&self.authored_manifest_source, false);
+                shell.set_source_scene(self.authored_scene_source.as_deref(), false);
+                shell.set_source_assets(load_source_assets(&self.project_root));
                 shell.set_source_directories(load_source_directories(&self.project_root));
                 shell.finish_project_loading();
                 shell.set_notice("Preview rebuilt and playing".to_owned());
@@ -846,9 +957,10 @@ impl StudioApp {
         shell.set_project_editable(
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
         );
-        shell.set_source_manifest(&self.authored_manifest_source, false);
-        shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_files(load_source_files(&self.project_root));
+        shell.set_source_manifest(&self.authored_manifest_source, false);
+        shell.set_source_scene(self.authored_scene_source.as_deref(), false);
+        shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_directories(load_source_directories(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
         if let Err(message) = self.codex.set_project_root(&self.project_root) {

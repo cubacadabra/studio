@@ -85,7 +85,7 @@ impl StudioShell {
     }
 
     pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) -> bool {
-        let Ok(mut outline) = SceneOutline::parse(source) else {
+        let Ok(mut outline) = self.parse_scene_outline(source) else {
             return false;
         };
         outline.set_runtime_ui_nodes(&self.runtime_ui_nodes);
@@ -101,6 +101,8 @@ impl StudioShell {
             .then(|| self.selected_scene.clone())
             .unwrap_or_else(|| outline.initial_selection.clone());
         self.scene_outline = outline;
+        self.scene_search_query.clear();
+        self.scene_search_matches.clear();
         self.selected_scene = selected;
         self.project_dirty = dirty;
         if dirty {
@@ -112,6 +114,59 @@ impl StudioShell {
             self.source_files
                 .insert(PathBuf::from("manifest.json"), source.to_owned());
         }
+        true
+    }
+
+    fn parse_scene_outline(&self, manifest_source: &str) -> Result<SceneOutline, String> {
+        match self.authoring_scene_source.as_deref() {
+            Some(source) => {
+                let scene = parse_authoring_scene(source)?;
+                SceneOutline::parse_with_authoring_scene(manifest_source, &scene)
+            }
+            None => SceneOutline::parse(manifest_source).map_err(|error| error.to_string()),
+        }
+    }
+
+    pub(crate) fn set_source_scene(&mut self, source: Option<&str>, dirty: bool) -> bool {
+        let previous_selection = self.selected_scene.clone();
+        let previous_expanded = self.expanded_scene.clone();
+        self.authoring_scene_source = source.map(str::to_owned);
+        let manifest_source = self
+            .source_files
+            .get(std::path::Path::new("manifest.json"))
+            .cloned();
+        let Some(manifest_source) = manifest_source else {
+            return false;
+        };
+        let Ok(mut outline) = self.parse_scene_outline(&manifest_source) else {
+            return false;
+        };
+        outline.set_runtime_ui_nodes(&self.runtime_ui_nodes);
+        self.selected_scene = outline
+            .root
+            .find(&previous_selection)
+            .map(|node| node.id.clone())
+            .unwrap_or_else(|| outline.initial_selection.clone());
+        self.expanded_scene = previous_expanded
+            .into_iter()
+            .filter(|id| outline.root.find(id).is_some())
+            .collect();
+        self.expanded_scene
+            .extend(outline.initial_expanded.iter().cloned());
+        self.scene_outline = outline;
+        self.scene_search_query.clear();
+        self.scene_search_matches.clear();
+        self.project_dirty = dirty;
+        if dirty {
+            self.preview_stale = true;
+        }
+        if let Some(source) = source {
+            self.source_files
+                .insert(PathBuf::from("scene.json"), source.to_owned());
+        } else {
+            self.source_files.remove(std::path::Path::new("scene.json"));
+        }
+        self.scene_editor_target.clear();
         true
     }
 
@@ -191,16 +246,23 @@ impl StudioShell {
         }
         self.selected_scene = id.to_owned();
         self.expanded_scene.insert("game".to_owned());
-        let mut ancestor = id;
-        while let Some((parent, _)) = ancestor.rsplit_once('/') {
-            self.expanded_scene.insert(parent.to_owned());
-            ancestor = parent;
+        let mut path = Vec::new();
+        if self.scene_outline.root.collect_ancestor_ids(id, &mut path) {
+            self.expanded_scene.extend(path);
         }
         true
     }
 
     pub(crate) fn take_save_request(&mut self) -> bool {
         std::mem::take(&mut self.save_requested)
+    }
+
+    pub(crate) fn take_undo_request(&mut self) -> bool {
+        std::mem::take(&mut self.undo_requested)
+    }
+
+    pub(crate) fn take_redo_request(&mut self) -> bool {
+        std::mem::take(&mut self.redo_requested)
     }
 
     pub(crate) fn request_close(&mut self) {

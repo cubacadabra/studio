@@ -7,6 +7,7 @@ use crate::{
     },
     project::{SourceAsset, SourceAssetKind},
 };
+use cubacadabra_builder::{AuthoringNode, AuthoringScene, parse_authoring_scene};
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
@@ -147,6 +148,8 @@ pub(crate) enum StudioCommand {
     NewProject,
     OpenProject,
     Save,
+    Undo,
+    Redo,
     #[allow(dead_code)]
     CloseWindow,
     Copy,
@@ -430,6 +433,7 @@ pub(crate) struct StudioShell {
     review_camera_reset: bool,
     runtime_viewport: Rect,
     scene_outline: SceneOutline,
+    authoring_scene_source: Option<String>,
     runtime_ui_nodes: Vec<cubacadabra_client::StudioUiNode>,
     expanded_scene: BTreeSet<String>,
     selected_scene: String,
@@ -453,11 +457,15 @@ pub(crate) struct StudioShell {
     preview_stale: bool,
     project_error: Option<String>,
     scene_edit_requested: Option<SceneEditRequest>,
+    undo_requested: bool,
+    redo_requested: bool,
     save_requested: bool,
     rebuild_and_play_requested: bool,
     restart_requested: bool,
     notice: String,
     search_query: String,
+    scene_search_query: String,
+    scene_search_matches: BTreeSet<String>,
     morph_query: String,
     morph_catalog: MorphCatalog,
     morph_artifacts: BTreeMap<MorphAssetId, crate::wardrobe::Artifact>,

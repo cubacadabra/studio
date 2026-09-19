@@ -23,6 +23,8 @@ const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 const NEW_PROJECT_TAG: isize = 1;
 const OPEN_PROJECT_TAG: isize = 2;
 const SAVE_TAG: isize = 3;
+const UNDO_TAG: isize = 4;
+const REDO_TAG: isize = 5;
 const COPY_TAG: isize = 8;
 
 define_class!(
@@ -363,18 +365,20 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
 fn install_edit_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: &AnyObject) {
     let menu = NSMenu::new(main_thread);
     menu.setTitle(ns_string!("Edit"));
-    menu.addItem(&standard_menu_item(
+    menu.addItem(&studio_menu_item(
         main_thread,
+        target,
         ns_string!("Undo"),
-        sel!(undo:),
         ns_string!("z"),
+        UNDO_TAG,
         None,
     ));
-    menu.addItem(&standard_menu_item(
+    menu.addItem(&studio_menu_item(
         main_thread,
+        target,
         ns_string!("Redo"),
-        sel!(redo:),
         ns_string!("z"),
+        REDO_TAG,
         Some(NSEventModifierFlags::Command | NSEventModifierFlags::Shift),
     ));
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
@@ -507,6 +511,8 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         NEW_PROJECT_TAG => Some(StudioCommand::NewProject),
         OPEN_PROJECT_TAG => Some(StudioCommand::OpenProject),
         SAVE_TAG => Some(StudioCommand::Save),
+        UNDO_TAG => Some(StudioCommand::Undo),
+        REDO_TAG => Some(StudioCommand::Redo),
         COPY_TAG => Some(StudioCommand::Copy),
         _ => None,
     }

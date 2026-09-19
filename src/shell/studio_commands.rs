@@ -39,6 +39,8 @@ impl StudioShell {
                     self.notice = "This preview is read-only".to_owned();
                 }
             }
+            StudioCommand::Undo => self.undo_requested = true,
+            StudioCommand::Redo => self.redo_requested = true,
             StudioCommand::CloseWindow => self.request_close(),
             StudioCommand::Copy => {
                 self.state.egui_input_mut().events.push(egui::Event::Copy);

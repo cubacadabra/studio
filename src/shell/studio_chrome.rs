@@ -34,11 +34,14 @@ impl StudioShell {
                         });
                         ui.menu_button(RichText::new("Edit").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
-                            ui.label(
-                                RichText::new("Undo and redo are not available yet")
-                                    .size(TYPE.meta)
-                                    .color(palette(ui).muted),
-                            );
+                            if menu_entry(ui, Icon::Undo, "Undo", "Ctrl+Z", true).clicked() {
+                                self.execute_command(StudioCommand::Undo);
+                                ui.close();
+                            }
+                            if menu_entry(ui, Icon::Redo, "Redo", "Ctrl+Shift+Z", true).clicked() {
+                                self.execute_command(StudioCommand::Redo);
+                                ui.close();
+                            }
                         });
                         ui.menu_button(RichText::new("Window").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);

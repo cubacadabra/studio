@@ -7,6 +7,7 @@ impl StudioApp {
         let sources = load_game_sources(game_root)?;
         let initial_review_camera = sources.review_camera;
         let authored_manifest_source = sources.authored_manifest_source;
+        let authored_scene_source = sources.authored_scene_source;
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
@@ -57,6 +58,7 @@ impl StudioApp {
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             world_models: load_world_models(&game_root, &manifest_source)?,
             authored_manifest_source,
+            authored_scene_source,
             manifest_source,
             game_root,
             standalone_preview,
@@ -75,6 +77,8 @@ impl StudioApp {
             renderer_uses_base_package_generation: true,
             codex_checkpoint: None,
             codex_changes: None,
+            scene_undo: Vec::new(),
+            scene_redo: Vec::new(),
             local_morph_catalog,
             pressed_keys: HashSet::new(),
             jump_queued: false,
@@ -447,6 +451,24 @@ impl StudioApp {
                 }
             }
         }
+        let undo_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_undo_request);
+        if undo_requested && let Err(message) = self.undo_scene_edit() {
+            if let Some(shell) = &mut self.shell {
+                shell.set_notice(message);
+            }
+        }
+        let redo_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_redo_request);
+        if redo_requested && let Err(message) = self.redo_scene_edit() {
+            if let Some(shell) = &mut self.shell {
+                shell.set_notice(message);
+            }
+        }
         let save_requested = self
             .shell
             .as_mut()
@@ -726,7 +748,9 @@ impl StudioApp {
             geometries
                 .into_iter()
                 .filter(|geometry| {
-                    active_world.is_none_or(|world| scene_world_id(&geometry.id) == Some(world))
+                    active_world.is_none_or(|world| {
+                        scene_world_id(&geometry.id).is_none_or(|candidate| candidate == world)
+                    })
                 })
                 .filter_map(|geometry| {
                     let [x, y, z] = geometry.position;

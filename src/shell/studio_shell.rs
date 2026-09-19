@@ -60,6 +60,7 @@ impl StudioShell {
             review_camera_reset: false,
             runtime_viewport: Rect::NOTHING,
             scene_outline,
+            authoring_scene_source: None,
             runtime_ui_nodes: Vec::new(),
             expanded_scene,
             selected_scene,
@@ -86,11 +87,15 @@ impl StudioShell {
             preview_stale: false,
             project_error: None,
             scene_edit_requested: None,
+            undo_requested: false,
+            redo_requested: false,
             save_requested: false,
             rebuild_and_play_requested: false,
             restart_requested: false,
             notice: "Ready".to_owned(),
             search_query: String::new(),
+            scene_search_query: String::new(),
+            scene_search_matches: BTreeSet::new(),
             morph_query: String::new(),
             morph_catalog: parse_catalog(include_str!(
                 "../../../rust/assets/characters/morph_catalog.json"

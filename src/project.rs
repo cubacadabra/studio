@@ -209,6 +209,7 @@ pub(crate) fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSource
             project_root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
             root: PathBuf::from(STANDALONE_PREVIEW_ROOT),
             authored_manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
+            authored_scene_source: None,
             manifest_source: STANDALONE_PREVIEW_MANIFEST.to_owned(),
             script_source: STANDALONE_PREVIEW_SCRIPT.to_owned(),
             review_camera: ReviewCameraPreset::Gameplay,
@@ -217,6 +218,11 @@ pub(crate) fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSource
         });
     };
     let authored_manifest_source = read_utf8_file(&game_root.join("manifest.json"), "manifest")?;
+    let authored_scene_source = game_root
+        .join("scene.json")
+        .is_file()
+        .then(|| read_utf8_file(&game_root.join("scene.json"), "scene"))
+        .transpose()?;
     let (package_root, temporary_package) = if game_root.join("game.luau").is_file() {
         (game_root.clone(), None)
     } else if game_root.join("src/main.luau").is_file() {
@@ -236,6 +242,7 @@ pub(crate) fn load_game_sources(game_root: Option<PathBuf>) -> Result<GameSource
         project_root: game_root,
         root: package_root.clone(),
         authored_manifest_source,
+        authored_scene_source,
         manifest_source,
         script_source: read_utf8_file(&package_root.join("game.luau"), "script")?,
         review_camera,
