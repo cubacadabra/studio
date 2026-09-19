@@ -123,6 +123,7 @@ pub(crate) struct ProjectLoadingState {
 pub(crate) struct ManifestAsset {
     pub(crate) name: String,
     pub(crate) kind: &'static str,
+    pub(crate) bounds: Option<[f32; 3]>,
 }
 
 impl SceneOutline {
@@ -308,9 +309,15 @@ impl SceneOutline {
                     children
                 },
             );
+        let asset_bounds = outline
+            .assets
+            .iter()
+            .filter(|asset| asset.kind == "MODEL")
+            .filter_map(|asset| asset.bounds.map(|bounds| (asset.name.clone(), bounds)))
+            .collect::<BTreeMap<_, _>>();
         let authoring_roots = roots
             .into_iter()
-            .map(|node| authoring_scene_node(node, &children))
+            .map(|node| authoring_scene_node(node, &children, &asset_bounds))
             .collect::<Vec<_>>();
         let authoring_world_transforms = scene.world_transforms()?;
         let manifest_world_id = format!("world/{active_world}");
@@ -443,6 +450,7 @@ fn manifest_active_world(source: &str) -> String {
 fn authoring_scene_node(
     node: &AuthoringNode,
     children: &BTreeMap<&str, Vec<&AuthoringNode>>,
+    asset_bounds: &BTreeMap<String, [f32; 3]>,
 ) -> SceneNode {
     let (kind, icon) = if node.components.contains_key("render") {
         ("Mesh", Icon::Object)
@@ -482,19 +490,35 @@ fn authoring_scene_node(
     if let Some(reason) = &node.editor.lock_reason {
         properties.push(("Lock reason".to_owned(), reason.clone()));
     }
+    let mesh_asset_bounds = node
+        .components
+        .get("render")
+        .and_then(Value::as_object)
+        .and_then(|render| render.get("mesh"))
+        .and_then(Value::as_str)
+        .and_then(|mesh| asset_bounds.get(mesh).copied());
     if let Some(bounds) = node
         .components
         .get("render")
         .and_then(Value::as_object)
         .and_then(|render| render.get("bounds"))
         .and_then(vector_value)
+        .or(mesh_asset_bounds)
     {
         properties.push(("Size".to_owned(), format_vector(bounds)));
     }
     if let Some(source) = &node.source {
         properties.push(("Source".to_owned(), source.format.clone()));
+        if let Some(class) = &source.class {
+            properties.push(("Source class".to_owned(), class.clone()));
+        }
         if let Some(path) = &source.path {
             properties.push(("Source path".to_owned(), path.clone()));
+        }
+        for (key, value) in &source.properties {
+            if let Some(value) = compact_value(value) {
+                properties.push((humanize_identifier(key), value));
+            }
         }
     }
     for (component, value) in &node.components {
@@ -510,7 +534,7 @@ fn authoring_scene_node(
         .get(node.id.as_str())
         .into_iter()
         .flatten()
-        .map(|child| authoring_scene_node(child, children))
+        .map(|child| authoring_scene_node(child, children, asset_bounds))
         .collect::<Vec<_>>();
     SceneNode {
         id: node.id.clone(),
@@ -884,12 +908,16 @@ fn manifest_assets(manifest: &Value) -> Vec<ManifestAsset> {
                 "characters" | "morphs" => "CHARACTER",
                 _ => "ASSET",
             };
-            for name in definitions.keys() {
+            for (name, definition) in definitions {
                 assets.insert(
                     (kind.to_owned(), name.clone()),
                     ManifestAsset {
                         name: name.clone(),
                         kind,
+                        bounds: (kind == "MODEL")
+                            .then(|| definition.get("bounds"))
+                            .flatten()
+                            .and_then(vector_value),
                     },
                 );
             }
@@ -910,6 +938,7 @@ fn manifest_assets(manifest: &Value) -> Vec<ManifestAsset> {
                     ManifestAsset {
                         name: name.clone(),
                         kind: "MATERIAL",
+                        bounds: None,
                     },
                 );
             }

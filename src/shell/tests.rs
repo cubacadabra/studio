@@ -152,7 +152,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
         chair
             .properties
             .iter()
-            .any(|(label, value)| { label == "Size" && value == "4.2, 4.4, 4.2" })
+            .any(|(label, value)| { label == "Size" && value == "4.127, 4.306, 4.181" })
     );
 }
 
