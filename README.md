@@ -108,6 +108,17 @@ CUBA_STUDIO_PROBE_DIR=/tmp/maze-review CUBA_STUDIO_PROBE_REVIEW=1 \
   cargo run -- --path ../examples/maze-101
 ```
 
+For a fixed source-reference comparison, also provide the target screenshot.
+The probe copies it to `target.png`, captures the authored Gameplay camera as
+`current.png`, and writes a size-normalized amplified absolute `diff.png`:
+
+```sh
+CUBA_STUDIO_PROBE_DIR=/tmp/maze-world-2 \
+  CUBA_STUDIO_PROBE_WORLD=maze-world \
+  CUBA_STUDIO_PROBE_REFERENCE=../other-examples/maze-world/screenshots/maze-world-2.png \
+  cargo run -- --path ../examples/maze-101
+```
+
 The review probe captures Gameplay before switching to Showcase and exercises
 the native input handlers for stopped orbit/pan,
 zoom, and preset reset, asserting that the gameplay camera stays unchanged.

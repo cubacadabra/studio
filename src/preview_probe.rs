@@ -11,12 +11,23 @@ pub(crate) struct PreviewProbe {
     gameplay_camera: [f32; 3],
     projected: Option<[f32; 2]>,
     initial: Option<[f32; 2]>,
+    reference: bool,
 }
 
 impl PreviewProbe {
     pub(crate) fn from_env() -> Option<Self> {
         let directory = PathBuf::from(env::var_os("CUBA_STUDIO_PROBE_DIR")?);
         fs::create_dir_all(&directory).expect("create preview probe directory");
+        let reference = env::var_os("CUBA_STUDIO_PROBE_REFERENCE")
+            .map(PathBuf::from)
+            .map(|source| {
+                assert!(source.is_file(), "probe reference {}", source.display());
+                fs::copy(&source, directory.join("target.png")).unwrap_or_else(|error| {
+                    panic!("copy probe reference {}: {error}", source.display())
+                });
+                true
+            })
+            .unwrap_or(false);
         Some(Self {
             directory,
             frame: 0,
@@ -25,6 +36,7 @@ impl PreviewProbe {
             gameplay_camera: [0.0; 3],
             projected: None,
             initial: None,
+            reference,
         })
     }
 
@@ -123,8 +135,20 @@ impl PreviewProbe {
 
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
         let name = match (self.review, self.frame) {
-            (false, 120) => "gameplay",
-            (true, 50) => "gameplay",
+            (false, 120) => {
+                if self.reference {
+                    "current"
+                } else {
+                    "gameplay"
+                }
+            }
+            (true, 50) => {
+                if self.reference {
+                    "current"
+                } else {
+                    "gameplay"
+                }
+            }
             (true, 80) => "showcase",
             (true, 90) => "orbit",
             (true, 100) => "pan",
@@ -212,8 +236,47 @@ impl Readback {
             .unwrap()
             .save(path)
             .unwrap();
+        if path.file_name().is_some_and(|name| name == "current.png") {
+            write_reference_diff(path);
+        }
         eprintln!("preview capture: {}", path.display());
         drop(mapped);
         self.buffer.unmap();
     }
+}
+
+fn write_reference_diff(current_path: &Path) {
+    let target_path = current_path.with_file_name("target.png");
+    let target = image::open(&target_path)
+        .unwrap_or_else(|error| panic!("read reference {}: {error}", target_path.display()))
+        .into_rgba8();
+    let current = image::open(current_path)
+        .unwrap_or_else(|error| panic!("read current {}: {error}", current_path.display()))
+        .into_rgba8();
+    let target = image::imageops::resize(
+        &target,
+        current.width(),
+        current.height(),
+        image::imageops::FilterType::Triangle,
+    );
+    let mut diff = RgbaImage::new(current.width(), current.height());
+    for ((target, current), output) in target.pixels().zip(current.pixels()).zip(diff.pixels_mut())
+    {
+        let delta = [
+            target[0].abs_diff(current[0]),
+            target[1].abs_diff(current[1]),
+            target[2].abs_diff(current[2]),
+        ];
+        // Amplify small shifts just enough for an at-a-glance visual review.
+        *output = image::Rgba([
+            delta[0].saturating_mul(2),
+            delta[1].saturating_mul(2),
+            delta[2].saturating_mul(2),
+            255,
+        ]);
+    }
+    let path = current_path.with_file_name("diff.png");
+    diff.save(&path)
+        .unwrap_or_else(|error| panic!("write reference diff {}: {error}", path.display()));
+    eprintln!("preview reference diff: {}", path.display());
 }
