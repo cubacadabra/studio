@@ -335,6 +335,7 @@ pub(crate) struct SceneObjectGeometry {
     pub(crate) position: [f32; 3],
     pub(crate) size: Option<[f32; 3]>,
     pub(crate) scale: Option<[f32; 3]>,
+    pub(crate) editable: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -344,6 +345,7 @@ pub(crate) struct SceneObjectProjection {
     pub(crate) size: Option<[f32; 3]>,
     pub(crate) scale: Option<[f32; 3]>,
     pub(crate) base_size: Option<[f32; 3]>,
+    pub(crate) editable: bool,
     pub(crate) center_screen: Pos2,
     pub(crate) world_corners: Option<[[f32; 3]; 4]>,
     pub(crate) screen_corners: Option<[Pos2; 4]>,
@@ -383,9 +385,17 @@ fn point_in_scene_quad(point: Pos2, corners: [Pos2; 4]) -> bool {
     true
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SceneViewportEditPhase {
+    Begin,
+    Update,
+    Commit,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum SceneViewportEditRequest {
     Move {
+        phase: SceneViewportEditPhase,
         target: String,
         origin_screen: Pos2,
         current_screen: Pos2,
@@ -393,6 +403,7 @@ pub(crate) enum SceneViewportEditRequest {
         size: Option<[f32; 3]>,
     },
     Resize {
+        phase: SceneViewportEditPhase,
         target: String,
         current_screen: Pos2,
         fixed_corner: [f32; 3],
@@ -402,6 +413,7 @@ pub(crate) enum SceneViewportEditRequest {
         base_size: Option<[f32; 3]>,
     },
     ResizeHeight {
+        phase: SceneViewportEditPhase,
         target: String,
         origin_screen: Pos2,
         current_screen: Pos2,

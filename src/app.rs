@@ -79,6 +79,8 @@ impl StudioApp {
             codex_changes: None,
             scene_undo: Vec::new(),
             scene_redo: Vec::new(),
+            scene_drag_snapshot: None,
+            scene_drag_cancelled_target: None,
             local_morph_catalog,
             pressed_keys: HashSet::new(),
             jump_queued: false,
@@ -428,16 +430,26 @@ impl StudioApp {
         if undo_codex_requested {
             self.undo_codex_changes();
         }
-        if let Some(edit) = self
+        if let Some(request) = self
             .shell
             .as_mut()
             .and_then(StudioShell::take_scene_viewport_edit_request)
-            .and_then(|request| self.resolve_scene_viewport_edit(request))
         {
-            if let Err(message) = self.apply_scene_edit(edit)
-                && let Some(shell) = &mut self.shell
-            {
-                shell.set_project_error(message);
+            match self.resolve_scene_viewport_edit(request) {
+                Ok(Some((edit, phase))) => {
+                    let result = self.apply_scene_viewport_edit(edit, phase);
+                    if let Err(message) = result
+                        && let Some(shell) = &mut self.shell
+                    {
+                        shell.set_project_error(message);
+                    }
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_project_error(message);
+                    }
+                }
             }
         }
         if let Some(edit) = self
@@ -788,6 +800,7 @@ impl StudioApp {
                         size: visual_size,
                         scale: geometry.scale,
                         base_size: geometry.size,
+                        editable: geometry.editable,
                         center_screen: egui::pos2(center_x / scale, center_y / scale),
                         world_corners,
                         screen_corners,
@@ -803,46 +816,57 @@ impl StudioApp {
     fn resolve_scene_viewport_edit(
         &self,
         request: SceneViewportEditRequest,
-    ) -> Option<SceneEditRequest> {
-        let renderer = self.renderer.as_ref()?;
-        let scale = self.window.as_ref()?.scale_factor() as f32;
+    ) -> Result<Option<(SceneEditRequest, SceneViewportEditPhase)>, String> {
+        let Some(renderer) = self.renderer.as_ref() else {
+            return Ok(None);
+        };
+        let Some(window) = self.window.as_ref() else {
+            return Ok(None);
+        };
+        let scale = window.scale_factor() as f32;
         let world_point = |point: egui::Pos2, plane_y: f32| {
             renderer
                 .studio_world_point_on_horizontal_plane([point.x * scale, point.y * scale], plane_y)
         };
         match request {
             SceneViewportEditRequest::Move {
+                phase,
                 target,
                 origin_screen,
                 current_screen,
                 origin_position,
                 size,
             } => {
-                let origin = world_point(origin_screen, origin_position[1])?;
-                let current = world_point(current_screen, origin_position[1])?;
+                let Some(origin) = world_point(origin_screen, origin_position[1]) else {
+                    return Ok(None);
+                };
+                let Some(current) = world_point(current_screen, origin_position[1]) else {
+                    return Ok(None);
+                };
                 let world_position = [
                     snap_scene_value(origin_position[0] + current[0] - origin[0]),
                     origin_position[1],
                     snap_scene_value(origin_position[2] + current[2] - origin[2]),
                 ];
-                let position = self
-                    .shell
-                    .as_ref()
-                    .and_then(|shell| {
-                        shell
-                            .authoring_local_position_for_world(&target, world_position)
-                            .ok()
-                            .flatten()
-                    })
-                    .unwrap_or(world_position);
-                Some(SceneEditRequest::UpdateTransform {
-                    target,
-                    position,
-                    size,
-                    scale: None,
-                })
+                let position = if let Some(shell) = &self.shell {
+                    shell
+                        .authoring_local_position_for_world(&target, world_position)?
+                        .unwrap_or(world_position)
+                } else {
+                    world_position
+                };
+                Ok(Some((
+                    SceneEditRequest::UpdateTransform {
+                        target,
+                        position,
+                        size,
+                        scale: None,
+                    },
+                    phase,
+                )))
             }
             SceneViewportEditRequest::Resize {
+                phase,
                 target,
                 current_screen,
                 fixed_corner,
@@ -851,7 +875,9 @@ impl StudioApp {
                 origin_scale,
                 base_size,
             } => {
-                let mut moving = world_point(current_screen, fixed_corner[1])?;
+                let Some(mut moving) = world_point(current_screen, fixed_corner[1]) else {
+                    return Ok(None);
+                };
                 moving[0] = snap_scene_value(moving[0]);
                 moving[2] = snap_scene_value(moving[2]);
                 let x_direction = if fixed_corner[0] <= origin_position[0] {
@@ -875,29 +901,45 @@ impl StudioApp {
                     origin_size[1],
                     (moving[2] - fixed_corner[2]).abs(),
                 ];
-                let (size, scale) = match (origin_scale, base_size) {
-                    (Some(origin_scale), Some(base_size)) => (
-                        None,
-                        Some([
-                            (size[0] / base_size[0]).max(0.05),
-                            origin_scale[1],
-                            (size[2] / base_size[2]).max(0.05),
-                        ]),
-                    ),
-                    _ => (Some(size), None),
+                let desired_scale = match (origin_scale, base_size) {
+                    (Some(origin_scale), Some(base_size)) => Some([
+                        (size[0] / base_size[0]).max(0.05),
+                        origin_scale[1],
+                        (size[2] / base_size[2]).max(0.05),
+                    ]),
+                    _ => None,
                 };
-                Some(SceneEditRequest::UpdateTransform {
-                    target,
-                    position: [
-                        (moving[0] + fixed_corner[0]) * 0.5,
-                        origin_position[1],
-                        (moving[2] + fixed_corner[2]) * 0.5,
-                    ],
-                    size,
-                    scale,
-                })
+                let world_position = [
+                    (moving[0] + fixed_corner[0]) * 0.5,
+                    origin_position[1],
+                    (moving[2] + fixed_corner[2]) * 0.5,
+                ];
+                let (position, scale) = if let Some(desired_scale) = desired_scale {
+                    if let Some(shell) = &self.shell {
+                        let (position, scale) = shell.authoring_local_transform_for_world(
+                            &target,
+                            world_position,
+                            desired_scale,
+                        )?;
+                        (position, Some(scale))
+                    } else {
+                        (world_position, Some(desired_scale))
+                    }
+                } else {
+                    (world_position, None)
+                };
+                Ok(Some((
+                    SceneEditRequest::UpdateTransform {
+                        target,
+                        position,
+                        size: desired_scale.is_none().then_some(size),
+                        scale,
+                    },
+                    phase,
+                )))
             }
             SceneViewportEditRequest::ResizeHeight {
+                phase,
                 target,
                 origin_screen,
                 current_screen,
@@ -909,16 +951,31 @@ impl StudioApp {
                 let original_height = base_size[1] * origin_scale[1];
                 let height = (original_height + delta * 0.05).max(0.25);
                 let scale_y = (height / base_size[1]).max(0.05);
-                Some(SceneEditRequest::UpdateTransform {
-                    target,
-                    position: [
-                        origin_position[0],
-                        origin_position[1] + (height - original_height) * 0.5,
-                        origin_position[2],
-                    ],
-                    size: None,
-                    scale: Some([origin_scale[0], scale_y, origin_scale[2]]),
-                })
+                let world_position = [
+                    origin_position[0],
+                    origin_position[1] + (height - original_height) * 0.5,
+                    origin_position[2],
+                ];
+                let desired_scale = [origin_scale[0], scale_y, origin_scale[2]];
+                let (position, scale) = if let Some(shell) = &self.shell {
+                    let (position, scale) = shell.authoring_local_transform_for_world(
+                        &target,
+                        world_position,
+                        desired_scale,
+                    )?;
+                    (position, Some(scale))
+                } else {
+                    (world_position, Some(desired_scale))
+                };
+                Ok(Some((
+                    SceneEditRequest::UpdateTransform {
+                        target,
+                        position,
+                        size: None,
+                        scale,
+                    },
+                    phase,
+                )))
             }
         }
     }

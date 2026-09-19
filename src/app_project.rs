@@ -346,6 +346,10 @@ impl StudioApp {
         if before == after {
             return;
         }
+        if self.scene_drag_snapshot.is_some() {
+            self.apply_scene_source_snapshot(after, target, notice);
+            return;
+        }
         record_scene_history(
             &mut self.scene_undo,
             &mut self.scene_redo,
@@ -356,9 +360,76 @@ impl StudioApp {
         self.apply_scene_source_snapshot(after, target, notice);
     }
 
+    pub(crate) fn apply_scene_viewport_edit(
+        &mut self,
+        edit: SceneEditRequest,
+        phase: SceneViewportEditPhase,
+    ) -> Result<(), String> {
+        let target = match &edit {
+            SceneEditRequest::UpdateTransform { target, .. } => target.clone(),
+            _ => return Err("viewport edits must update a transform".to_owned()),
+        };
+        if phase != SceneViewportEditPhase::Begin
+            && self
+                .scene_drag_cancelled_target
+                .as_deref()
+                .is_some_and(|cancelled| cancelled == target)
+        {
+            if phase == SceneViewportEditPhase::Commit {
+                self.scene_drag_cancelled_target = None;
+            }
+            return Ok(());
+        }
+        if phase == SceneViewportEditPhase::Begin {
+            self.scene_drag_cancelled_target = None;
+        }
+        if self.scene_drag_snapshot.is_none() {
+            self.scene_drag_snapshot = Some(SceneDragSnapshot {
+                scene_before: self.authored_scene_source.clone(),
+                target: target.clone(),
+            });
+        }
+        if phase == SceneViewportEditPhase::Begin {
+            return Ok(());
+        }
+        self.apply_scene_edit(edit)?;
+        if phase == SceneViewportEditPhase::Commit {
+            if let Some(snapshot) = self.scene_drag_snapshot.take()
+                && let (Some(before), Some(after)) =
+                    (snapshot.scene_before, self.authored_scene_source.clone())
+                && before != after
+            {
+                record_scene_history(
+                    &mut self.scene_undo,
+                    &mut self.scene_redo,
+                    before,
+                    after,
+                    &snapshot.target,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn cancel_scene_viewport_edit(&mut self) {
+        let Some(snapshot) = self.scene_drag_snapshot.take() else {
+            return;
+        };
+        self.scene_drag_cancelled_target = Some(snapshot.target.clone());
+        if let Some(before) = snapshot.scene_before {
+            self.apply_scene_source_snapshot(
+                before,
+                &snapshot.target,
+                "Transform cancelled — source restored",
+            );
+        }
+    }
+
     fn invalidate_scene_history(&mut self) {
         self.scene_undo.clear();
         self.scene_redo.clear();
+        self.scene_drag_snapshot = None;
+        self.scene_drag_cancelled_target = None;
     }
 
     pub(crate) fn undo_scene_edit(&mut self) -> Result<(), String> {

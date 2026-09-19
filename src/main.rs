@@ -51,7 +51,7 @@ use options::*;
 use project::*;
 use shell::{
     PreparedShell, SceneEditRequest, SceneObjectKind, SceneObjectProjection,
-    SceneViewportEditRequest, StudioShell, scene_world_id,
+    SceneViewportEditPhase, SceneViewportEditRequest, StudioShell, scene_world_id,
 };
 #[cfg(target_os = "macos")]
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
@@ -168,6 +168,12 @@ struct SceneHistoryEntry {
     target: String,
 }
 
+#[derive(Clone, Debug)]
+struct SceneDragSnapshot {
+    scene_before: Option<String>,
+    target: String,
+}
+
 struct LocalMorphCatalog {
     catalog: cubacadabra_morphs::MorphCatalog,
     packs: BTreeMap<cubacadabra_morphs::MorphAssetId, Vec<u8>>,
@@ -230,6 +236,8 @@ struct StudioApp {
     codex_changes: Option<Vec<CodexFileChange>>,
     scene_undo: Vec<SceneHistoryEntry>,
     scene_redo: Vec<SceneHistoryEntry>,
+    scene_drag_snapshot: Option<SceneDragSnapshot>,
+    scene_drag_cancelled_target: Option<String>,
     local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
     jump_queued: bool,

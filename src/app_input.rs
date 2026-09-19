@@ -66,6 +66,9 @@ impl StudioApp {
         };
         match event.state {
             ElementState::Pressed => {
+                if code == KeyCode::Escape && !event.repeat {
+                    self.cancel_scene_viewport_edit();
+                }
                 if code == KeyCode::Space && !event.repeat {
                     self.jump_queued = true;
                 }

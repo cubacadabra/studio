@@ -240,7 +240,7 @@ impl StudioShell {
             && self
                 .scene_object_projections
                 .iter()
-                .any(|projection| projection.contains(point))
+                .any(|projection| projection.editable && projection.contains(point))
     }
 
     pub(crate) fn authoring_local_position_for_world(
@@ -256,6 +256,22 @@ impl StudioShell {
             return Ok(None);
         }
         scene.local_position_for_world(id, world_position).map(Some)
+    }
+
+    pub(crate) fn authoring_local_transform_for_world(
+        &self,
+        id: &str,
+        world_position: [f32; 3],
+        world_scale: [f32; 3],
+    ) -> Result<([f32; 3], [f32; 3]), String> {
+        let Some(source) = self.authoring_scene_source.as_deref() else {
+            return Ok((world_position, world_scale));
+        };
+        let scene = parse_authoring_scene(source)?;
+        if scene.node(id).is_none() {
+            return Ok((world_position, world_scale));
+        }
+        scene.local_transform_for_world(id, world_position, world_scale)
     }
 
     pub(crate) fn select_scene_node(&mut self, id: &str) -> bool {

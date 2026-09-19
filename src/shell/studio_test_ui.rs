@@ -259,6 +259,7 @@ impl StudioShell {
             let sense = if selected
                 && self.project_editable
                 && !self.playing
+                && projection.editable
                 && self.scene_viewport_tool == SceneViewportTool::Move
             {
                 Sense::click_and_drag()
@@ -320,6 +321,7 @@ impl StudioShell {
             if selected
                 && self.project_editable
                 && !self.playing
+                && projection.editable
                 && self.scene_viewport_tool == SceneViewportTool::Move
             {
                 let drag_id = response.id.with("origin");
@@ -327,6 +329,16 @@ impl StudioShell {
                     ui.data_mut(|data| {
                         data.insert_temp(drag_id, (projection.position, projection.size));
                     });
+                    if let Some(current_screen) = response.interact_pointer_pos() {
+                        self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
+                            phase: SceneViewportEditPhase::Begin,
+                            target: projection.id.clone(),
+                            origin_screen: current_screen,
+                            current_screen,
+                            origin_position: projection.position,
+                            size: projection.size,
+                        });
+                    }
                 }
                 if response.dragged()
                     && let Some(current_screen) = response.interact_pointer_pos()
@@ -334,6 +346,7 @@ impl StudioShell {
                         ui.data(|data| data.get_temp::<([f32; 3], Option<[f32; 3]>)>(drag_id))
                 {
                     self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
+                        phase: SceneViewportEditPhase::Update,
                         target: projection.id.clone(),
                         origin_screen: current_screen - response.drag_delta(),
                         current_screen,
@@ -342,6 +355,19 @@ impl StudioShell {
                     });
                 }
                 if response.drag_stopped() {
+                    if let Some(current_screen) = response.interact_pointer_pos()
+                        && let Some((origin_position, size)) =
+                            ui.data(|data| data.get_temp::<([f32; 3], Option<[f32; 3]>)>(drag_id))
+                    {
+                        self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
+                            phase: SceneViewportEditPhase::Commit,
+                            target: projection.id.clone(),
+                            origin_screen: current_screen - response.drag_delta(),
+                            current_screen,
+                            origin_position,
+                            size,
+                        });
+                    }
                     ui.data_mut(|data| data.remove::<([f32; 3], Option<[f32; 3]>)>(drag_id));
                 }
             }
@@ -365,6 +391,7 @@ impl StudioShell {
             if selected
                 && self.project_editable
                 && !self.playing
+                && projection.editable
                 && self.scene_viewport_tool == SceneViewportTool::Resize
                 && let (Some(screen_corners), Some(world_corners), Some(size)) = (
                     projection.screen_corners,
@@ -408,6 +435,17 @@ impl StudioShell {
                                 ),
                             );
                         });
+                        self.scene_viewport_edit_requested =
+                            Some(SceneViewportEditRequest::Resize {
+                                phase: SceneViewportEditPhase::Begin,
+                                target: projection.id.clone(),
+                                current_screen: center,
+                                fixed_corner: world_corners[(index + 2) % 4],
+                                origin_position: projection.position,
+                                origin_size: size,
+                                origin_scale: projection.scale,
+                                base_size: projection.base_size,
+                            });
                     }
                     if handle_response.dragged()
                         && let Some(current_screen) = handle_response.interact_pointer_pos()
@@ -429,6 +467,7 @@ impl StudioShell {
                     {
                         self.scene_viewport_edit_requested =
                             Some(SceneViewportEditRequest::Resize {
+                                phase: SceneViewportEditPhase::Update,
                                 target: projection.id.clone(),
                                 current_screen,
                                 fixed_corner,
@@ -439,6 +478,35 @@ impl StudioShell {
                             });
                     }
                     if handle_response.drag_stopped() {
+                        if let Some(current_screen) = handle_response.interact_pointer_pos()
+                            && let Some((
+                                origin_position,
+                                origin_size,
+                                fixed_corner,
+                                origin_scale,
+                                base_size,
+                            )) = ui.data(|data| {
+                                data.get_temp::<(
+                                    [f32; 3],
+                                    [f32; 3],
+                                    [f32; 3],
+                                    Option<[f32; 3]>,
+                                    Option<[f32; 3]>,
+                                )>(drag_id)
+                            })
+                        {
+                            self.scene_viewport_edit_requested =
+                                Some(SceneViewportEditRequest::Resize {
+                                    phase: SceneViewportEditPhase::Commit,
+                                    target: projection.id.clone(),
+                                    current_screen,
+                                    fixed_corner,
+                                    origin_position,
+                                    origin_size,
+                                    origin_scale,
+                                    base_size,
+                                });
+                        }
                         ui.data_mut(|data| {
                             data.remove::<(
                                 [f32; 3],
@@ -455,6 +523,7 @@ impl StudioShell {
             if selected
                 && self.project_editable
                 && !self.playing
+                && projection.editable
                 && self.scene_viewport_tool == SceneViewportTool::Resize
                 && let (Some(screen_corners), Some(base_size), Some(scale)) = (
                     projection.screen_corners,
@@ -483,6 +552,33 @@ impl StudioShell {
                 {
                     self.scene_viewport_edit_requested =
                         Some(SceneViewportEditRequest::ResizeHeight {
+                            phase: SceneViewportEditPhase::Update,
+                            target: projection.id.clone(),
+                            origin_screen: center,
+                            current_screen,
+                            origin_position: projection.position,
+                            origin_scale: scale,
+                            base_size,
+                        });
+                }
+                if handle_response.drag_started() {
+                    self.scene_viewport_edit_requested =
+                        Some(SceneViewportEditRequest::ResizeHeight {
+                            phase: SceneViewportEditPhase::Begin,
+                            target: projection.id.clone(),
+                            origin_screen: center,
+                            current_screen: center,
+                            origin_position: projection.position,
+                            origin_scale: scale,
+                            base_size,
+                        });
+                }
+                if handle_response.drag_stopped()
+                    && let Some(current_screen) = handle_response.interact_pointer_pos()
+                {
+                    self.scene_viewport_edit_requested =
+                        Some(SceneViewportEditRequest::ResizeHeight {
+                            phase: SceneViewportEditPhase::Commit,
                             target: projection.id.clone(),
                             origin_screen: center,
                             current_screen,

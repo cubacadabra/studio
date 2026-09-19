@@ -90,6 +90,7 @@ impl SceneNode {
                         .map(|transform| transform.scale)
                         .unwrap_or_else(|| vector_property(self, "Scale").unwrap_or([1.0; 3]))
                 }),
+                editable: !scene_node_locked(self),
             });
         }
         for child in &self.children {
