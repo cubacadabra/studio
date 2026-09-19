@@ -44,6 +44,10 @@ impl PreviewProbe {
                 app.client.engine_mut().start_world_by_id(world),
                 "probe world {world}"
             );
+            app.shell
+                .as_mut()
+                .unwrap()
+                .select_scene_node(&format!("world/{world}"));
         }
         if !self.review {
             return;
@@ -120,6 +124,7 @@ impl PreviewProbe {
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
         let name = match (self.review, self.frame) {
             (false, 120) => "gameplay",
+            (true, 50) => "gameplay",
             (true, 80) => "showcase",
             (true, 90) => "orbit",
             (true, 100) => "pan",

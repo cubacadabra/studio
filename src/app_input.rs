@@ -173,6 +173,14 @@ impl StudioApp {
                         .as_ref()
                         .is_some_and(|shell| local_x >= shell.runtime_viewport().width() * 0.5);
                 match button {
+                    MouseButton::Left if self.review_navigation_active() => {
+                        // Game HUDs may claim the entire left viewport for a
+                        // joystick. Review drags belong to the editor camera,
+                        // including while the simulation is stopped.
+                        self.pointer_active = true;
+                        self.camera_pointer_active = false;
+                        self.ui_pointer_active = false;
+                    }
                     MouseButton::Left if morph_preview && camera_side => {
                         self.camera_pointer_active = true;
                         self.pointer_active = false;

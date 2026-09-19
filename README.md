@@ -104,11 +104,12 @@ CUBA_STUDIO_PROBE_DIR=/tmp/maze-gameplay \
   cargo run -- --path ../examples/maze-101
 
 CUBA_STUDIO_PROBE_DIR=/tmp/maze-review CUBA_STUDIO_PROBE_REVIEW=1 \
-  CUBA_STUDIO_PROBE_WORLD=maze-world-reference \
+  CUBA_STUDIO_PROBE_WORLD=maze-world \
   cargo run -- --path ../examples/maze-101
 ```
 
-The review probe exercises the native input handlers for stopped orbit/pan,
+The review probe captures Gameplay before switching to Showcase and exercises
+the native input handlers for stopped orbit/pan,
 zoom, and preset reset, asserting that the gameplay camera stays unchanged.
 It does not test OS event delivery, physical trackpad gestures, or presentation
 to the window surface. The probe and texture readback support are omitted from
