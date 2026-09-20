@@ -162,13 +162,50 @@ pub(crate) fn authoring_scene_node(
     }
     SceneNode {
         id: node.id.clone(),
-        label: node.name.clone(),
+        label: imported_model_display_name(node, children_by_parent),
         kind,
         icon,
         detail: node.editor.locked.then(|| "Locked".to_owned()),
         properties,
         children,
     }
+}
+
+fn imported_model_display_name(
+    node: &AuthoringNode,
+    children_by_parent: &BTreeMap<&str, Vec<&AuthoringNode>>,
+) -> String {
+    if node
+        .source
+        .as_ref()
+        .and_then(|source| source.class.as_deref())
+        != Some("Model")
+    {
+        return node.name.clone();
+    }
+    let Some(siblings) = node
+        .parent_id
+        .as_deref()
+        .and_then(|parent| children_by_parent.get(parent))
+    else {
+        return node.name.clone();
+    };
+    let mut matching = siblings.iter().filter(|sibling| {
+        sibling.name == node.name
+            && sibling
+                .source
+                .as_ref()
+                .and_then(|source| source.class.as_deref())
+                == Some("Model")
+    });
+    let duplicate_count = matching.clone().count();
+    if duplicate_count < 2 {
+        return node.name.clone();
+    }
+    let ordinal = matching
+        .position(|sibling| sibling.id == node.id)
+        .map_or(1, |index| index + 1);
+    format!("{} {ordinal}", node.name)
 }
 
 fn is_imported_source_root(node: &AuthoringNode) -> bool {

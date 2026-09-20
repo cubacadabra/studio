@@ -1,4 +1,5 @@
 use super::*;
+use cubacadabra_scene::{AuthoringNode, AuthoringScene, EditorMetadata, SourceMetadata, Transform};
 
 #[test]
 fn world_is_the_default_workspace() {
@@ -151,7 +152,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 400);
+    assert_eq!(objects.len(), 2124);
     assert_eq!(
         objects
             .iter()
@@ -164,7 +165,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .filter(|object| object.id.starts_with("imported-part-"))
             .count(),
-        140
+        1864
     );
     assert!(objects.iter().all(|object| {
         !matches!(
@@ -197,6 +198,62 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .any(|(label, value)| { label == "Size" && value == "4.127, 4.306, 4.181" })
     );
+}
+
+#[test]
+fn duplicate_imported_model_names_get_presentation_ordinals() {
+    let scene = AuthoringScene {
+        format_version: 1,
+        world_id: Some("world".to_owned()),
+        nodes: vec![
+            AuthoringNode {
+                id: "world".to_owned(),
+                parent_id: None,
+                name: "World".to_owned(),
+                transform: Transform::default(),
+                components: BTreeMap::new(),
+                editor: EditorMetadata::default(),
+                source: None,
+            },
+            AuthoringNode {
+                id: "plinko-a".to_owned(),
+                parent_id: Some("world".to_owned()),
+                name: "Plinko".to_owned(),
+                transform: Transform::default(),
+                components: BTreeMap::new(),
+                editor: EditorMetadata::default(),
+                source: Some(SourceMetadata {
+                    format: "roblox".to_owned(),
+                    class: Some("Model".to_owned()),
+                    path: Some("Workspace/PlinkoA".to_owned()),
+                    properties: BTreeMap::new(),
+                }),
+            },
+            AuthoringNode {
+                id: "plinko-b".to_owned(),
+                parent_id: Some("world".to_owned()),
+                name: "Plinko".to_owned(),
+                transform: Transform::default(),
+                components: BTreeMap::new(),
+                editor: EditorMetadata::default(),
+                source: Some(SourceMetadata {
+                    format: "roblox".to_owned(),
+                    class: Some("Model".to_owned()),
+                    path: Some("Workspace/PlinkoB".to_owned()),
+                    properties: BTreeMap::new(),
+                }),
+            },
+        ],
+    };
+    let outline = SceneOutline::parse_with_authoring_scene(
+        r#"{"startWorld":"world","worlds":{"world":{}}}"#,
+        &scene,
+    )
+    .expect("duplicate imported models should render in the outline");
+    assert_eq!(outline.root.find("plinko-a").unwrap().label, "Plinko 1");
+    assert_eq!(outline.root.find("plinko-b").unwrap().label, "Plinko 2");
+    assert_eq!(scene.nodes[1].name, "Plinko");
+    assert_eq!(scene.nodes[2].name, "Plinko");
 }
 
 #[test]
