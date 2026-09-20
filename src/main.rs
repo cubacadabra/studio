@@ -18,6 +18,8 @@ mod app_input;
 mod app_morph_runtime;
 mod app_morphs;
 mod app_project;
+mod app_project_load;
+mod app_scene_migration;
 mod assets;
 mod codex;
 mod game_creator;
