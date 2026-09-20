@@ -831,11 +831,33 @@ impl StudioApp {
         self.start_project_load_with_mode(self.project_root.clone(), true, codex_rebuild);
     }
 
+    pub(crate) fn start_project_reload_stopped(&mut self) {
+        if self.standalone_preview {
+            if let Some(shell) = &mut self.shell {
+                shell.set_project_error(
+                    "The standalone morph preview cannot be rebuilt.".to_owned(),
+                );
+            }
+            return;
+        }
+        self.start_project_load_with_play_mode(self.project_root.clone(), true, false, false);
+    }
+
     pub(crate) fn start_project_load_with_mode(
         &mut self,
         project: PathBuf,
         preserve_editor: bool,
         codex_rebuild: bool,
+    ) {
+        self.start_project_load_with_play_mode(project, preserve_editor, codex_rebuild, true);
+    }
+
+    fn start_project_load_with_play_mode(
+        &mut self,
+        project: PathBuf,
+        preserve_editor: bool,
+        codex_rebuild: bool,
+        play_after_rebuild: bool,
     ) {
         if self.pending_project_load.is_some()
             || self.background_project_ready.is_some()
@@ -871,6 +893,7 @@ impl StudioApp {
                     project,
                     preserve_editor,
                     codex_rebuild,
+                    play_after_rebuild,
                     receiver,
                 });
             }
@@ -916,17 +939,30 @@ impl StudioApp {
             }
         }
         if let Some(result) = finished {
-            let (project, preserve_editor, codex_rebuild) = self
+            let (project, preserve_editor, codex_rebuild, play_after_rebuild) = self
                 .pending_project_load
                 .take()
-                .map(|load| (load.project, load.preserve_editor, load.codex_rebuild))
+                .map(|load| {
+                    (
+                        load.project,
+                        load.preserve_editor,
+                        load.codex_rebuild,
+                        load.play_after_rebuild,
+                    )
+                })
                 .unwrap_or_default();
-            self.background_project_ready = Some((project, preserve_editor, codex_rebuild, result));
+            self.background_project_ready = Some((
+                project,
+                preserve_editor,
+                codex_rebuild,
+                play_after_rebuild,
+                result,
+            ));
         }
     }
 
     pub(crate) fn prepare_ready_project_runtime(&mut self) {
-        let Some((project, preserve_editor, codex_rebuild, result)) =
+        let Some((project, preserve_editor, codex_rebuild, play_after_rebuild, result)) =
             self.background_project_ready.take()
         else {
             return;
@@ -959,22 +995,33 @@ impl StudioApp {
         {
             shell.set_project_loading_progress(0.93);
         }
-        self.prepared_project_ready = Some((project, preserve_editor, codex_rebuild, result));
+        self.prepared_project_ready = Some((
+            project,
+            preserve_editor,
+            codex_rebuild,
+            play_after_rebuild,
+            result,
+        ));
     }
 
     pub(crate) fn commit_ready_project_load(&mut self) {
-        let Some((project, preserve_editor, codex_rebuild, result)) =
+        let Some((project, preserve_editor, codex_rebuild, play_after_rebuild, result)) =
             self.prepared_project_ready.take()
         else {
             return;
         };
-        let result =
-            result.and_then(|prepared| self.commit_project_load(prepared, preserve_editor));
+        let result = result.and_then(|prepared| {
+            self.commit_project_load(prepared, preserve_editor, play_after_rebuild)
+        });
         match result {
             Ok(()) => {
                 if let Some(shell) = &mut self.shell {
                     shell.set_notice(if preserve_editor {
-                        "Preview rebuilt and playing".to_owned()
+                        if play_after_rebuild {
+                            "Preview rebuilt and playing".to_owned()
+                        } else {
+                            "Preview applied — continue editing or press Play".to_owned()
+                        }
                     } else {
                         format!("Opened {}", project.display())
                     });
@@ -1020,6 +1067,7 @@ impl StudioApp {
         &mut self,
         prepared: PreparedProjectLoad,
         preserve_editor: bool,
+        play_after_rebuild: bool,
     ) -> Result<(), String> {
         let PreparedProjectLoad {
             background:
@@ -1133,8 +1181,12 @@ impl StudioApp {
                 shell.set_source_scene(self.authored_scene_source.as_deref(), false);
                 shell.set_source_assets(load_source_assets(&self.project_root));
                 shell.set_source_directories(load_source_directories(&self.project_root));
-                shell.finish_project_loading();
-                shell.set_notice("Preview rebuilt and playing".to_owned());
+                shell.finish_project_loading(play_after_rebuild);
+                shell.set_notice(if play_after_rebuild {
+                    "Preview rebuilt and playing".to_owned()
+                } else {
+                    "Preview applied — continue editing or press Play".to_owned()
+                });
             }
             if let Some(local_catalog) = self.local_morph_catalog.take() {
                 self.install_local_morphs(local_catalog)?;
@@ -1285,10 +1337,11 @@ fn ensure_scene_collection<'a>(
 
 fn default_scene_object(kind: SceneObjectKind, index: usize) -> Value {
     let number = index + 1;
+    let x = index as f32 * 5.0;
     match kind {
         SceneObjectKind::Block => serde_json::json!({
             "id": format!("block-{number}"),
-            "position": [0, 1, 0],
+            "position": [x, 1, 0],
             "size": [4, 1, 4],
             "color": "signal"
         }),
@@ -1380,6 +1433,10 @@ mod scene_edit_tests {
         assert_eq!(world["interactions"][0]["kind"], "zone");
         assert_eq!(world["hazards"][0]["kind"], "damage");
         assert_eq!(world["safeZones"][0]["radius"], 5);
+        assert_ne!(
+            default_scene_object(SceneObjectKind::Block, 0)["position"],
+            default_scene_object(SceneObjectKind::Block, 1)["position"]
+        );
     }
 }
 

@@ -106,7 +106,7 @@ impl StudioShell {
                             let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
                             if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
                                 if self.playing {
-                                    self.playing = false;
+                                    self.set_playing(false);
                                     self.notice = "Play session stopped".to_owned();
                                 } else if self.project_dirty || self.preview_stale {
                                     self.request_rebuild_and_play();

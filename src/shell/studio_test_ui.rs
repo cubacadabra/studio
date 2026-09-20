@@ -181,6 +181,14 @@ impl StudioShell {
                             {
                                 self.scene_viewport_tool = SceneViewportTool::Move;
                             }
+                            if self.preview_is_stale()
+                                && ui
+                                    .button("Done")
+                                    .on_hover_text("Save and apply the edited scene while staying in the builder")
+                                    .clicked()
+                            {
+                                self.request_rebuild_preview();
+                            }
                         }
                     });
                 });
@@ -304,6 +312,14 @@ impl StudioShell {
                     for index in 0..4 {
                         ui.painter()
                             .line_segment([corners[index], corners[(index + 1) % 4]], stroke);
+                    }
+                    if let Some(bottom) = projection.bottom_screen_corners {
+                        for index in 0..4 {
+                            ui.painter()
+                                .line_segment([corners[index], bottom[index]], stroke);
+                            ui.painter()
+                                .line_segment([bottom[index], bottom[(index + 1) % 4]], stroke);
+                        }
                     }
                 } else {
                     ui.painter()
@@ -698,5 +714,24 @@ mod tests {
             scene_move_drag_origin(&projection, egui::pos2(35.0, 35.0), egui::vec2(5.0, 5.0)),
             None
         );
+    }
+
+    #[test]
+    fn move_hit_test_includes_visible_cube_sides() {
+        let mut projection = projection([
+            egui::pos2(10.0, 10.0),
+            egui::pos2(30.0, 10.0),
+            egui::pos2(30.0, 30.0),
+            egui::pos2(10.0, 30.0),
+        ]);
+        projection.bottom_screen_corners = Some([
+            egui::pos2(10.0, 40.0),
+            egui::pos2(30.0, 40.0),
+            egui::pos2(30.0, 60.0),
+            egui::pos2(10.0, 60.0),
+        ]);
+
+        assert!(projection.contains(egui::pos2(20.0, 35.0)));
+        assert!(projection.bounds().contains(egui::pos2(20.0, 35.0)));
     }
 }

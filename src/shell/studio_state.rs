@@ -21,6 +21,10 @@ impl StudioShell {
 
     pub(crate) fn set_playing(&mut self, playing: bool) {
         self.playing = playing;
+        if !playing && self.review_camera == ReviewCameraPreset::Gameplay {
+            self.review_camera = ReviewCameraPreset::Showcase;
+            self.review_camera_reset = true;
+        }
     }
 
     pub(crate) fn is_morphs_workspace(&self) -> bool {
@@ -84,6 +88,10 @@ impl StudioShell {
         self.preview_stale
     }
 
+    pub(crate) fn take_rebuild_preview_request(&mut self) -> bool {
+        std::mem::take(&mut self.rebuild_preview_requested)
+    }
+
     pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) -> bool {
         let Ok(mut outline) = self.parse_scene_outline(source) else {
             return false;
@@ -101,6 +109,7 @@ impl StudioShell {
             .then(|| self.selected_scene.clone())
             .unwrap_or_else(|| outline.initial_selection.clone());
         self.scene_outline = outline;
+        self.scene_tree_rows_dirty = true;
         self.scene_search_query.clear();
         self.scene_search_matches.clear();
         self.selected_scene = selected;
@@ -191,11 +200,11 @@ impl StudioShell {
         self.notice = message;
     }
 
-    pub(crate) fn finish_project_loading(&mut self) {
+    pub(crate) fn finish_project_loading(&mut self, play_after_rebuild: bool) {
         self.project_loading = None;
         self.project_error = None;
         self.preview_stale = false;
-        self.playing = true;
+        self.set_playing(play_after_rebuild);
     }
 
     pub(crate) fn begin_game_rebuild(&mut self) {
@@ -380,6 +389,12 @@ impl StudioShell {
         self.workspace = Workspace::World;
         self.rebuild_and_play_requested = true;
         self.notice = "Saving and rebuilding preview…".to_owned();
+    }
+
+    pub(crate) fn request_rebuild_preview(&mut self) {
+        self.workspace = Workspace::World;
+        self.rebuild_preview_requested = true;
+        self.notice = "Saving and applying preview…".to_owned();
     }
 
     pub(crate) fn take_restart_request(&mut self) -> bool {

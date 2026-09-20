@@ -356,15 +356,40 @@ impl SceneObjectProjection {
     pub(crate) fn bounds(&self) -> Rect {
         self.screen_corners.map_or_else(
             || Rect::from_center_size(self.center_screen, Vec2::splat(20.0)),
-            |corners| Rect::from_points(&corners).expand(4.0),
+            |top| {
+                let mut bounds = Rect::from_points(&top);
+                if let Some(bottom) = self.bottom_screen_corners {
+                    bounds = bounds.union(Rect::from_points(&bottom));
+                }
+                bounds.expand(4.0)
+            },
         )
     }
 
     pub(crate) fn contains(&self, point: Pos2) -> bool {
-        self.screen_corners.map_or_else(
-            || self.center_screen.distance(point) <= 10.0,
-            |corners| point_in_scene_quad(point, corners),
-        )
+        let Some(top) = self.screen_corners else {
+            return self.center_screen.distance(point) <= 10.0;
+        };
+        if point_in_scene_quad(point, top) {
+            return true;
+        }
+        let Some(bottom) = self.bottom_screen_corners else {
+            return false;
+        };
+        if point_in_scene_quad(point, bottom) {
+            return true;
+        }
+        (0..4).any(|index| {
+            point_in_scene_quad(
+                point,
+                [
+                    top[index],
+                    top[(index + 1) % 4],
+                    bottom[(index + 1) % 4],
+                    bottom[index],
+                ],
+            )
+        })
     }
 }
 
@@ -491,6 +516,7 @@ pub(crate) struct StudioShell {
     redo_requested: bool,
     save_requested: bool,
     rebuild_and_play_requested: bool,
+    rebuild_preview_requested: bool,
     restart_requested: bool,
     notice: String,
     search_query: String,

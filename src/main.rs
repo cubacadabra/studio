@@ -149,6 +149,7 @@ struct PendingProjectLoad {
     project: PathBuf,
     preserve_editor: bool,
     codex_rebuild: bool,
+    play_after_rebuild: bool,
     receiver: mpsc::Receiver<ProjectLoadEvent>,
 }
 
@@ -229,8 +230,20 @@ struct StudioApp {
     shell: Option<StudioShell>,
     runtime_ui_revision: u64,
     pending_project_load: Option<PendingProjectLoad>,
-    background_project_ready: Option<(PathBuf, bool, bool, Result<BackgroundProjectLoad, String>)>,
-    prepared_project_ready: Option<(PathBuf, bool, bool, Result<PreparedProjectLoad, String>)>,
+    background_project_ready: Option<(
+        PathBuf,
+        bool,
+        bool,
+        bool,
+        Result<BackgroundProjectLoad, String>,
+    )>,
+    prepared_project_ready: Option<(
+        PathBuf,
+        bool,
+        bool,
+        bool,
+        Result<PreparedProjectLoad, String>,
+    )>,
     renderer_uses_base_package_generation: bool,
     codex_checkpoint: Option<ProjectFileSnapshot>,
     codex_changes: Option<Vec<CodexFileChange>>,

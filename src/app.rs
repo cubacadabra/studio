@@ -519,6 +519,15 @@ impl StudioApp {
                 self.start_project_reload();
             }
         }
+        let rebuild_preview_requested = self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_rebuild_preview_request);
+        if rebuild_preview_requested {
+            if self.save_project_source() {
+                self.start_project_reload_stopped();
+            }
+        }
         let restart_requested = self
             .shell
             .as_mut()
