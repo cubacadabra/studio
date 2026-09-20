@@ -139,7 +139,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 262);
+    assert_eq!(objects.len(), 420);
     assert_eq!(
         objects
             .iter()
@@ -152,7 +152,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .filter(|object| object.id.starts_with("imported-part-"))
             .count(),
-        5
+        160
     );
     assert!(objects.iter().all(|object| {
         !matches!(
