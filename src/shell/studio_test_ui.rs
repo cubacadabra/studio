@@ -325,30 +325,36 @@ impl StudioShell {
                 && self.scene_viewport_tool == SceneViewportTool::Move
             {
                 let drag_id = response.id.with("origin");
-                if response.drag_started() && pointer_over_shape {
+                if response.drag_started()
+                    && let Some(current_screen) = response.interact_pointer_pos()
+                    && let Some(total_drag_delta) = response.total_drag_delta()
+                    && let Some(origin_screen) =
+                        scene_move_drag_origin(&projection, current_screen, total_drag_delta)
+                {
                     ui.data_mut(|data| {
-                        data.insert_temp(drag_id, (projection.position, projection.size));
+                        data.insert_temp(
+                            drag_id,
+                            (origin_screen, projection.position, projection.size),
+                        );
                     });
-                    if let Some(current_screen) = response.interact_pointer_pos() {
-                        self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
-                            phase: SceneViewportEditPhase::Begin,
-                            target: projection.id.clone(),
-                            origin_screen: current_screen,
-                            current_screen,
-                            origin_position: projection.position,
-                            size: projection.size,
-                        });
-                    }
+                    self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
+                        phase: SceneViewportEditPhase::Begin,
+                        target: projection.id.clone(),
+                        origin_screen,
+                        current_screen,
+                        origin_position: projection.position,
+                        size: projection.size,
+                    });
                 }
                 if response.dragged()
                     && let Some(current_screen) = response.interact_pointer_pos()
-                    && let Some((origin_position, size)) =
-                        ui.data(|data| data.get_temp::<([f32; 3], Option<[f32; 3]>)>(drag_id))
+                    && let Some((origin_screen, origin_position, size)) =
+                        ui.data(|data| data.get_temp::<(Pos2, [f32; 3], Option<[f32; 3]>)>(drag_id))
                 {
                     self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
                         phase: SceneViewportEditPhase::Update,
                         target: projection.id.clone(),
-                        origin_screen: current_screen - response.drag_delta(),
+                        origin_screen,
                         current_screen,
                         origin_position,
                         size,
@@ -356,19 +362,20 @@ impl StudioShell {
                 }
                 if response.drag_stopped() {
                     if let Some(current_screen) = response.interact_pointer_pos()
-                        && let Some((origin_position, size)) =
-                            ui.data(|data| data.get_temp::<([f32; 3], Option<[f32; 3]>)>(drag_id))
+                        && let Some((origin_screen, origin_position, size)) = ui.data(|data| {
+                            data.get_temp::<(Pos2, [f32; 3], Option<[f32; 3]>)>(drag_id)
+                        })
                     {
                         self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
                             phase: SceneViewportEditPhase::Commit,
                             target: projection.id.clone(),
-                            origin_screen: current_screen - response.drag_delta(),
+                            origin_screen,
                             current_screen,
                             origin_position,
                             size,
                         });
                     }
-                    ui.data_mut(|data| data.remove::<([f32; 3], Option<[f32; 3]>)>(drag_id));
+                    ui.data_mut(|data| data.remove::<(Pos2, [f32; 3], Option<[f32; 3]>)>(drag_id));
                 }
             }
             response.clone().context_menu(|ui| {
@@ -589,5 +596,52 @@ impl StudioShell {
                 }
             }
         }
+    }
+}
+
+fn scene_move_drag_origin(
+    projection: &SceneObjectProjection,
+    current_screen: Pos2,
+    total_drag_delta: Vec2,
+) -> Option<Pos2> {
+    let origin_screen = current_screen - total_drag_delta;
+    projection.contains(origin_screen).then_some(origin_screen)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projection(corners: [Pos2; 4]) -> SceneObjectProjection {
+        SceneObjectProjection {
+            id: "block".to_owned(),
+            position: [0.0, 1.0, 0.0],
+            size: Some([4.0, 1.0, 4.0]),
+            scale: None,
+            base_size: Some([4.0, 1.0, 4.0]),
+            editable: true,
+            center_screen: egui::pos2(15.0, 15.0),
+            world_corners: None,
+            screen_corners: Some(corners),
+        }
+    }
+
+    #[test]
+    fn move_drag_uses_total_delta_to_hit_test_the_press_origin() {
+        let projection = projection([
+            egui::pos2(10.0, 10.0),
+            egui::pos2(20.0, 10.0),
+            egui::pos2(20.0, 20.0),
+            egui::pos2(10.0, 20.0),
+        ]);
+
+        assert_eq!(
+            scene_move_drag_origin(&projection, egui::pos2(35.0, 35.0), egui::vec2(20.0, 20.0)),
+            Some(egui::pos2(15.0, 15.0))
+        );
+        assert_eq!(
+            scene_move_drag_origin(&projection, egui::pos2(35.0, 35.0), egui::vec2(5.0, 5.0)),
+            None
+        );
     }
 }
