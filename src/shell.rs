@@ -349,6 +349,7 @@ pub(crate) struct SceneObjectProjection {
     pub(crate) center_screen: Pos2,
     pub(crate) world_corners: Option<[[f32; 3]; 4]>,
     pub(crate) screen_corners: Option<[Pos2; 4]>,
+    pub(crate) bottom_screen_corners: Option<[Pos2; 4]>,
 }
 
 impl SceneObjectProjection {

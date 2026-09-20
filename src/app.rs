@@ -788,16 +788,23 @@ impl StudioApp {
                             size[2] * transform_scale[2],
                         ]
                     });
-                    let (world_corners, screen_corners) =
-                        visual_size.map_or((None, None), |[width, height, depth]| {
+                    let (world_corners, screen_corners, bottom_screen_corners) = visual_size
+                        .map_or((None, None, None), |[width, height, depth]| {
                             let top = y + height * 0.5;
-                            let corners = [
+                            let top_corners = [
                                 [x - width * 0.5, top, z - depth * 0.5],
                                 [x + width * 0.5, top, z - depth * 0.5],
                                 [x + width * 0.5, top, z + depth * 0.5],
                                 [x - width * 0.5, top, z + depth * 0.5],
                             ];
-                            let projected = corners
+                            let bottom = y - height * 0.5;
+                            let bottom_corners = [
+                                [x - width * 0.5, bottom, z - depth * 0.5],
+                                [x + width * 0.5, bottom, z - depth * 0.5],
+                                [x + width * 0.5, bottom, z + depth * 0.5],
+                                [x - width * 0.5, bottom, z + depth * 0.5],
+                            ];
+                            let projected = top_corners
                                 .map(|point| renderer.studio_project_world_point(point))
                                 .into_iter()
                                 .collect::<Option<Vec<_>>>()
@@ -805,7 +812,15 @@ impl StudioApp {
                                 .map(|points: [[f32; 2]; 4]| {
                                     points.map(|[x, y]| egui::pos2(x / scale, y / scale))
                                 });
-                            (Some(corners), projected)
+                            let projected_bottom = bottom_corners
+                                .map(|point| renderer.studio_project_world_point(point))
+                                .into_iter()
+                                .collect::<Option<Vec<_>>>()
+                                .and_then(|points| points.try_into().ok())
+                                .map(|points: [[f32; 2]; 4]| {
+                                    points.map(|[x, y]| egui::pos2(x / scale, y / scale))
+                                });
+                            (Some(top_corners), projected, projected_bottom)
                         });
                     Some(SceneObjectProjection {
                         id: geometry.id,
@@ -817,6 +832,7 @@ impl StudioApp {
                         center_screen: egui::pos2(center_x / scale, center_y / scale),
                         world_corners,
                         screen_corners,
+                        bottom_screen_corners,
                     })
                 })
                 .collect()

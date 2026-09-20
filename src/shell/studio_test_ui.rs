@@ -284,6 +284,14 @@ impl StudioShell {
                 .to_owned();
             }
             if selected || (response.hovered() && pointer_over_shape) {
+                if selected
+                    && self.preview_is_stale()
+                    && !self.playing
+                    && let (Some(top), Some(bottom)) =
+                        (projection.screen_corners, projection.bottom_screen_corners)
+                {
+                    paint_scene_preview_cube(ui.painter(), top, bottom, colors.accent);
+                }
                 let stroke = Stroke::new(
                     if selected { 2.0 } else { 1.0 },
                     if selected {
@@ -627,6 +635,33 @@ fn scene_move_drag_origin(
     projection.contains(origin_screen).then_some(origin_screen)
 }
 
+fn paint_scene_preview_cube(
+    painter: &egui::Painter,
+    top: [Pos2; 4],
+    bottom: [Pos2; 4],
+    color: Color32,
+) {
+    let side = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 34);
+    let top_fill = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 52);
+    for index in [2, 1, 0, 3] {
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                top[index],
+                top[(index + 1) % 4],
+                bottom[(index + 1) % 4],
+                bottom[index],
+            ],
+            side,
+            Stroke::NONE,
+        ));
+    }
+    painter.add(egui::Shape::convex_polygon(
+        top.to_vec(),
+        top_fill,
+        Stroke::new(1.0, color),
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,6 +677,7 @@ mod tests {
             center_screen: egui::pos2(15.0, 15.0),
             world_corners: None,
             screen_corners: Some(corners),
+            bottom_screen_corners: None,
         }
     }
 
