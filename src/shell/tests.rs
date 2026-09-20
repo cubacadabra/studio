@@ -128,7 +128,14 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 13);
+    assert_eq!(objects.len(), 257);
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|object| object.id.starts_with("vegas-chair-"))
+            .count(),
+        245
+    );
     assert!(objects.iter().all(|object| {
         !matches!(
             object.id.as_str(),
@@ -137,17 +144,23 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
     }));
     assert_eq!(
         objects
-            .into_iter()
+            .iter()
             .find(|object| object.id == "sign-tables")
             .unwrap()
             .position,
         [-12.4, 11.0, 14.2]
     );
+    let chair_id = objects
+        .iter()
+        .find(|object| object.id.starts_with("vegas-chair-"))
+        .expect("promoted chair should be editable")
+        .id
+        .clone();
     let chair = outline
         .root
-        .find("chair-roulette-player-3")
-        .expect("extracted chair should be editable");
-    assert_eq!(chair.label, "Chair — Roulette Player 3");
+        .find(&chair_id)
+        .expect("promoted chair should exist in the outline");
+    assert!(chair.label.starts_with("Vegas Chair "));
     assert!(
         chair
             .properties

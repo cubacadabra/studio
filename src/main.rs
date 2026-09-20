@@ -359,7 +359,18 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_str(&sources.manifest_source).expect("manifest");
         let world = &manifest["worlds"]["vegas-floor"];
-        assert_eq!(world["decorations"].as_array().unwrap().len(), 4);
+        assert_eq!(world["decorations"].as_array().unwrap().len(), 248);
+        assert_eq!(
+            world["decorations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|decoration| decoration["asset"]
+                    .as_str()
+                    .is_some_and(|asset| asset.starts_with("vegas-chair")))
+                .count(),
+            245
+        );
         let chair = world["decorations"]
             .as_array()
             .unwrap()
