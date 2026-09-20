@@ -42,6 +42,10 @@ impl StudioShell {
                                 self.execute_command(StudioCommand::Redo);
                                 ui.close();
                             }
+                            if menu_entry(ui, Icon::Copy, "Duplicate", "Ctrl+D", true).clicked() {
+                                self.execute_command(StudioCommand::Duplicate);
+                                ui.close();
+                            }
                         });
                         ui.menu_button(RichText::new("Window").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
@@ -121,23 +125,6 @@ impl StudioShell {
                                     .clicked()
                             {
                                 self.execute_command(StudioCommand::Save);
-                            }
-                            if self.project_editable
-                                && toolbar_button(
-                                    ui,
-                                    Icon::Play,
-                                    "Rebuild & Play",
-                                    self.preview_stale,
-                                )
-                                .clicked()
-                            {
-                                self.request_rebuild_and_play();
-                            }
-                            if self.project_editable
-                                && toolbar_button(ui, Icon::Play, "Restart", false).clicked()
-                            {
-                                self.restart_requested = true;
-                                self.notice = "Restarting preview…".to_owned();
                             }
                             let project_width = (ui.available_width() - 17.0).min(180.0);
                             if project_width >= 72.0 {

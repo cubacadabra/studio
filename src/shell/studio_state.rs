@@ -31,14 +31,33 @@ impl StudioShell {
         self.workspace == Workspace::Morphs
     }
 
+    pub(crate) fn editor_shortcuts_active(&self) -> bool {
+        self.workspace == Workspace::World
+            && self.project_editable
+            && !self.playing
+            && self.project_loading.is_none()
+    }
+
     pub(crate) fn review_camera(&self) -> ReviewCameraPreset {
         self.review_camera
+    }
+
+    pub(crate) fn active_review_camera(&self) -> ReviewCameraPreset {
+        if self.playing {
+            ReviewCameraPreset::Gameplay
+        } else {
+            self.review_camera
+        }
     }
 
     pub(crate) fn set_review_camera(&mut self, preset: ReviewCameraPreset) {
         self.review_camera = preset;
         self.review_camera_reset = true;
         self.notice = format!("{} review camera", preset.label());
+    }
+
+    pub(crate) fn restore_review_camera(&mut self, preset: ReviewCameraPreset) {
+        self.review_camera = preset;
     }
 
     pub(crate) fn take_review_camera_reset(&mut self) -> bool {
@@ -86,10 +105,6 @@ impl StudioShell {
 
     pub(crate) fn preview_is_stale(&self) -> bool {
         self.preview_stale
-    }
-
-    pub(crate) fn take_rebuild_preview_request(&mut self) -> bool {
-        std::mem::take(&mut self.rebuild_preview_requested)
     }
 
     pub(crate) fn set_source_manifest(&mut self, source: &str, dirty: bool) -> bool {
@@ -243,6 +258,25 @@ impl StudioShell {
             .find(|geometry| geometry.id == self.selected_scene)
     }
 
+    pub(crate) fn request_scene_focus(&mut self) -> bool {
+        if self
+            .scene_object_geometries()
+            .iter()
+            .any(|geometry| geometry.id == self.selected_scene)
+        {
+            self.scene_focus_requested = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn selected_scene_object_geometry(&self) -> Option<SceneObjectGeometry> {
+        self.scene_object_geometries()
+            .into_iter()
+            .find(|geometry| geometry.id == self.selected_scene && geometry.editable)
+    }
+
     pub(crate) fn set_scene_object_projections(&mut self, projections: Vec<SceneObjectProjection>) {
         self.scene_object_projections = projections;
     }
@@ -297,7 +331,6 @@ impl StudioShell {
             return false;
         }
         self.selected_scene = id.to_owned();
-        self.scene_focus_requested = true;
         let previous_expanded = self.expanded_scene.clone();
         self.expanded_scene.insert("game".to_owned());
         let mut path = Vec::new();
@@ -310,21 +343,18 @@ impl StudioShell {
         true
     }
 
-    pub(crate) fn finish_scene_object_edit(&mut self) -> bool {
-        let Some(selected) = self.scene_outline.root.find(&self.selected_scene) else {
-            return false;
-        };
+    pub(crate) fn deselect_scene_object(&mut self) -> bool {
         if !self
-            .scene_object_projections
+            .scene_object_geometries()
             .iter()
-            .any(|projection| projection.id == selected.id)
+            .any(|geometry| geometry.id == self.selected_scene)
         {
             return false;
         }
-        let label = selected.label.clone();
         let overview = self.scene_outline.initial_selection.clone();
         self.select_scene_node(&overview);
-        self.notice = format!("{label} placed — add another block or select an object to edit it");
+        self.scene_focus_requested = false;
+        self.notice = "Selection cleared".to_owned();
         true
     }
 
@@ -392,12 +422,6 @@ impl StudioShell {
         self.workspace = Workspace::World;
         self.rebuild_and_play_requested = true;
         self.notice = "Saving and rebuilding preview…".to_owned();
-    }
-
-    pub(crate) fn request_rebuild_preview(&mut self) {
-        self.workspace = Workspace::World;
-        self.rebuild_preview_requested = true;
-        self.notice = "Saving and applying preview…".to_owned();
     }
 
     pub(crate) fn take_restart_request(&mut self) -> bool {

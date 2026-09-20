@@ -166,28 +166,24 @@ impl StudioShell {
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        for preset in ReviewCameraPreset::ALL.into_iter().rev() {
-                            if ui
-                                .selectable_label(self.review_camera == preset, preset.label())
-                                .on_hover_text(match preset {
-                                    ReviewCameraPreset::Gameplay => "Player camera: drag to orbit, scroll to zoom",
-                                    _ => "Drag to orbit · right/middle drag to pan · scroll/pinch to zoom · click preset again to frame the world",
-                                })
-                                .clicked()
-                            {
-                                self.set_review_camera(preset);
-                            }
-                        }
-                        if self.project_editable && self.preview_is_stale() {
-                            ui.add_space(8.0);
-                            if ui
-                                .button("Apply")
-                                .on_hover_text(
-                                    "Save and apply all scene changes while staying in the builder",
-                                )
-                                .clicked()
-                            {
-                                self.request_rebuild_preview();
+                        if self.playing {
+                            ui.label(
+                                RichText::new("Gameplay camera")
+                                    .size(TYPE.secondary)
+                                    .color(colors.secondary_text),
+                            );
+                        } else {
+                            for preset in [
+                                ReviewCameraPreset::Overview,
+                                ReviewCameraPreset::Showcase,
+                            ] {
+                                if ui
+                                    .selectable_label(self.review_camera == preset, preset.label())
+                                    .on_hover_text("Right-drag to orbit · middle-drag to pan · scroll/pinch to zoom · click again to frame the world")
+                                    .clicked()
+                                {
+                                    self.set_review_camera(preset);
+                                }
                             }
                         }
                     });
@@ -227,9 +223,9 @@ impl StudioShell {
                     );
                     let hint = match (selected_can_resize, self.project_editable, self.playing) {
                         (true, true, false) => {
-                            "Drag to move · handles resize or raise · click empty space when done"
+                            "Drag to move · arrows nudge 0.25 · handles resize or lift"
                         }
-                        (false, true, false) => "Drag to move · click empty space when done",
+                        (false, true, false) => "Drag to move · arrows nudge 0.25",
                         (_, _, true) => "Stop Play to edit this object",
                         _ => "Open a source project to edit this object",
                     };
@@ -264,7 +260,7 @@ impl StudioShell {
                             })
                 });
                 if clicked_empty {
-                    self.finish_scene_object_edit();
+                    self.deselect_scene_object();
                 }
                 ui.allocate_rect(self.runtime_viewport, Sense::hover());
             });
@@ -313,6 +309,9 @@ impl StudioShell {
                     "Object selected — drag it to move"
                 }
                 .to_owned();
+            }
+            if response.double_clicked() && pointer_over_shape {
+                self.request_scene_focus();
             }
             if self.preview_is_stale()
                 && !self.playing

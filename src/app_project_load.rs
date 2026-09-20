@@ -56,18 +56,6 @@ impl StudioApp {
         self.start_project_load_with_mode(self.project_root.clone(), true, codex_rebuild);
     }
 
-    pub(crate) fn start_project_reload_stopped(&mut self) {
-        if self.standalone_preview {
-            if let Some(shell) = &mut self.shell {
-                shell.set_project_error(
-                    "The standalone morph preview cannot be rebuilt.".to_owned(),
-                );
-            }
-            return;
-        }
-        self.start_project_load_with_play_mode(self.project_root.clone(), true, false, false);
-    }
-
     pub(crate) fn start_project_load_with_mode(
         &mut self,
         project: PathBuf,
@@ -294,6 +282,9 @@ impl StudioApp {
         preserve_editor: bool,
         play_after_rebuild: bool,
     ) -> Result<(), String> {
+        let preserved_review_camera = preserve_editor
+            .then(|| self.shell.as_ref().map(StudioShell::review_camera))
+            .flatten();
         let PreparedProjectLoad {
             background:
                 BackgroundProjectLoad {
@@ -397,7 +388,7 @@ impl StudioApp {
         }
         if preserve_editor {
             if let Some(shell) = &mut self.shell {
-                shell.set_review_camera(review_camera);
+                shell.restore_review_camera(preserved_review_camera.unwrap_or(review_camera));
                 shell.set_project_editable(
                     !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
                 );
@@ -439,6 +430,9 @@ impl StudioApp {
         shell.set_project_editable(
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
         );
+        if shell.project_is_editable() {
+            shell.set_playing(false);
+        }
         shell.set_source_files(load_source_files(&self.project_root));
         shell.set_source_manifest(&self.authored_manifest_source, false);
         shell.set_source_scene(self.authored_scene_source.as_deref(), false);

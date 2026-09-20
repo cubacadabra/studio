@@ -478,8 +478,7 @@ impl StudioShell {
                                     Some(SceneEditRequest::UseImageAsFloor {
                                         asset_path: path.clone(),
                                     });
-                                self.notice =
-                                    "Floor changed — save, then Rebuild & Play".to_owned();
+                                self.notice = "Floor changed — press Play to preview it".to_owned();
                             }
                             ui.label(
                                 RichText::new(

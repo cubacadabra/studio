@@ -61,6 +61,9 @@ impl PreviewProbe {
                 .unwrap()
                 .select_scene_node(&format!("world/{world}"));
         }
+        if self.frame == 2 && self.review {
+            app.shell.as_mut().unwrap().set_playing(true);
+        }
         if !self.review {
             return;
         }
@@ -79,11 +82,11 @@ impl PreviewProbe {
                     .unwrap()
                     .studio_project_world_point([12.0, 0.0, 20.0]);
                 self.projected = self.initial;
-                drag(app, MouseButton::Left, 70.0, 30.0);
+                drag(app, MouseButton::Right, 70.0, 30.0);
             }
             91 => {
                 self.check_changed(app, "orbit");
-                drag(app, MouseButton::Right, 60.0, -25.0);
+                drag(app, MouseButton::Middle, 60.0, -25.0);
             }
             101 => {
                 self.check_changed(app, "pan");

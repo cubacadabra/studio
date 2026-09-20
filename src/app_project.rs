@@ -213,7 +213,7 @@ impl StudioApp {
                     shell.set_source_manifest(&self.authored_manifest_source, false);
                     shell.set_source_scene(self.authored_scene_source.as_deref(), false);
                     shell.set_notice(if preview_stale {
-                        "Project saved — Rebuild & Play to preview it".to_owned()
+                        "Project saved — press Play to rebuild the preview".to_owned()
                     } else {
                         "Project saved".to_owned()
                     });

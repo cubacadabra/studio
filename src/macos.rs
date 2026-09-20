@@ -25,6 +25,7 @@ const OPEN_PROJECT_TAG: isize = 2;
 const SAVE_TAG: isize = 3;
 const UNDO_TAG: isize = 4;
 const REDO_TAG: isize = 5;
+const DUPLICATE_TAG: isize = 6;
 const COPY_TAG: isize = 8;
 
 define_class!(
@@ -381,6 +382,14 @@ fn install_edit_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
         REDO_TAG,
         Some(NSEventModifierFlags::Command | NSEventModifierFlags::Shift),
     ));
+    menu.addItem(&studio_menu_item(
+        main_thread,
+        target,
+        ns_string!("Duplicate"),
+        ns_string!("d"),
+        DUPLICATE_TAG,
+        None,
+    ));
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
     menu.addItem(&standard_menu_item(
         main_thread,
@@ -513,6 +522,7 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         SAVE_TAG => Some(StudioCommand::Save),
         UNDO_TAG => Some(StudioCommand::Undo),
         REDO_TAG => Some(StudioCommand::Redo),
+        DUPLICATE_TAG => Some(StudioCommand::Duplicate),
         COPY_TAG => Some(StudioCommand::Copy),
         _ => None,
     }

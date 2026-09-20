@@ -1,5 +1,4 @@
 use super::*;
-use crate::app_scene_viewport::scene_object_horizontal_radius;
 impl StudioApp {
     pub(crate) fn load(
         game_root: Option<PathBuf>,
@@ -84,6 +83,7 @@ impl StudioApp {
             scene_drag_cancelled_target: None,
             local_morph_catalog,
             pressed_keys: HashSet::new(),
+            modifiers: ModifiersState::default(),
             jump_queued: false,
             mobile_sprint: false,
             morph_loadout: default_morph_loadout(),
@@ -159,6 +159,9 @@ impl StudioApp {
         shell.set_project_editable(
             !self.standalone_preview && self.project_root.join("src/main.luau").is_file(),
         );
+        if shell.project_is_editable() {
+            shell.set_playing(false);
+        }
         shell.set_source_manifest(&self.authored_manifest_source, false);
         shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_files(load_source_files(&self.project_root));
@@ -210,7 +213,7 @@ impl StudioApp {
             renderer.set_studio_camera_preset(
                 self.shell
                     .as_ref()
-                    .map(StudioShell::review_camera)
+                    .map(StudioShell::active_review_camera)
                     .unwrap_or(crate::shell::ReviewCameraPreset::Gameplay)
                     .renderer_value(),
             );
@@ -461,10 +464,19 @@ impl StudioApp {
                 scene_world_id(&selected.id).is_none_or(|candidate| candidate == world)
             })
         {
-            self.client.engine_mut().studio_move_player_near(
-                selected.position,
-                scene_object_horizontal_radius(&selected),
-            );
+            if let Some(renderer) = &mut self.renderer {
+                let radius = selected
+                    .size
+                    .map(|size| {
+                        let scale = selected.scale.unwrap_or([1.0; 3]);
+                        (size[0] * scale[0])
+                            .hypot(size[1] * scale[1])
+                            .hypot(size[2] * scale[2])
+                            * 0.5
+                    })
+                    .unwrap_or(1.0);
+                renderer.focus_studio_camera(selected.position, radius);
+            }
         }
         if let Some(edit) = self
             .shell
@@ -520,15 +532,6 @@ impl StudioApp {
                 self.start_project_reload();
             }
         }
-        let rebuild_preview_requested = self
-            .shell
-            .as_mut()
-            .is_some_and(StudioShell::take_rebuild_preview_request);
-        if rebuild_preview_requested {
-            if self.save_project_source() {
-                self.start_project_reload_stopped();
-            }
-        }
         let restart_requested = self
             .shell
             .as_mut()
@@ -542,8 +545,7 @@ impl StudioApp {
                 if let Some(shell) = &mut self.shell {
                     shell.set_playing(false);
                     shell.set_notice(
-                        "Unsaved scene changes — use Rebuild & Play to save and restart."
-                            .to_owned(),
+                        "Unsaved scene changes — press Play to save and restart.".to_owned(),
                     );
                 }
             } else {
@@ -716,6 +718,7 @@ impl StudioApp {
         }
 
         if let Some(renderer) = &mut self.renderer {
+            renderer.set_studio_edit_mode(!playing && !morph_preview);
             renderer.set_avatar_preview_mode(
                 self.shell
                     .as_ref()

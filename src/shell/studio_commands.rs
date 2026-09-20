@@ -41,6 +41,16 @@ impl StudioShell {
             }
             StudioCommand::Undo => self.undo_requested = true,
             StudioCommand::Redo => self.redo_requested = true,
+            StudioCommand::Duplicate => {
+                if self.editor_shortcuts_active()
+                    && let Some(selected) = self.selected_scene_object_geometry()
+                {
+                    self.scene_edit_requested = Some(SceneEditRequest::DuplicateObject {
+                        target: selected.id,
+                    });
+                    self.notice = "Duplicating selection…".to_owned();
+                }
+            }
             StudioCommand::CloseWindow => self.request_close(),
             StudioCommand::Copy => {
                 self.state.egui_input_mut().events.push(egui::Event::Copy);

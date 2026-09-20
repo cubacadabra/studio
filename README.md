@@ -79,23 +79,19 @@ Controls:
 
 - `World`, `Files`, and `Morphs`: switch the available workspaces
 - `ChatGPT · <plan>`: open the in-window Codex chat for the current project
-- `Play` / `Stop`: start or stop the current preview; starting again resets it
-- `Rebuild & Play`: save the source scene, rebuild the current project, and start
-  a fresh preview
+- `Play` / `Stop`: save and rebuild stale source, enter the gameplay preview,
+  or return to the preserved Build-mode camera
 - `+ Block`: stop playback, add a block in the nearest open space, and select it
 - drag a selected block to move it across the ground; drag its corner and top
   handles to resize it, or its raised handle to move it up and down
-- click empty viewport space or press `Escape` to finish editing an object;
-  `Duplicate` places a selected copy beside it, and `Apply` saves and refreshes
-  the preview when the arrangement is ready
-- `Restart`: reset the current project without reopening the editor
-- `WASD` or arrow keys: move
-- `Shift`: sprint
-- `Space`: jump
-- drag with the left mouse button: orbit the camera
-- mouse wheel: zoom
-- `Overview` / `Showcase`: inspect the world with left-drag orbit,
-  right- or middle-drag pan, and wheel/pinch zoom, including while stopped
+- click empty viewport space or press `Escape` to clear selection
+- arrow keys: nudge the Build-mode selection by 0.25 along the visible camera's
+  ground-plane axes
+- `Duplicate`, Command-D, or Ctrl-D: place a selected copy beside the original
+- `F` or double-click: focus the editor camera on the selected object
+- in Play mode, `WASD` or arrow keys move, `Shift` sprints, and `Space` jumps
+- `Overview` / `Showcase`: inspect the stopped world with right-drag orbit,
+  middle-drag pan, and wheel/pinch zoom
 - click the current review preset again to reframe the world
 - `Close Window`: close Studio, with a save/discard prompt for dirty projects
 

@@ -156,6 +156,7 @@ pub(crate) enum StudioCommand {
     Save,
     Undo,
     Redo,
+    Duplicate,
     #[allow(dead_code)]
     CloseWindow,
     Copy,
@@ -257,8 +258,6 @@ pub(crate) enum ReviewCameraPreset {
 }
 
 impl ReviewCameraPreset {
-    pub(crate) const ALL: [Self; 3] = [Self::Gameplay, Self::Overview, Self::Showcase];
-
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Gameplay => "Gameplay",
@@ -315,7 +314,6 @@ pub(crate) struct StudioShell {
     redo_requested: bool,
     save_requested: bool,
     rebuild_and_play_requested: bool,
-    rebuild_preview_requested: bool,
     restart_requested: bool,
     notice: String,
     search_query: String,

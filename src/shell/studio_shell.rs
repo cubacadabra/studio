@@ -93,7 +93,6 @@ impl StudioShell {
             redo_requested: false,
             save_requested: false,
             rebuild_and_play_requested: false,
-            rebuild_preview_requested: false,
             restart_requested: false,
             notice: "Ready".to_owned(),
             search_query: String::new(),

@@ -311,7 +311,7 @@ impl StudioApp {
                     let notice = if *kind == SceneObjectKind::Block {
                         "Block added — drag to move, use the handles to resize".to_owned()
                     } else {
-                        format!("{} added — save, then Rebuild & Play", kind.label())
+                        format!("{} added — press Play to preview it", kind.label())
                     };
                     self.commit_authoring_scene_transaction(scene_source, updated, &id, &notice);
                     if *kind == SceneObjectKind::Block
@@ -502,7 +502,7 @@ impl StudioApp {
             if let Some(shell) = &mut self.shell {
                 shell.set_source_manifest(&source, true);
                 shell.set_notice(format!(
-                    "Floor changed in {world_id} — save, then Rebuild & Play"
+                    "Floor changed in {world_id} — press Play to preview it"
                 ));
             }
             return Ok(());
@@ -530,10 +530,7 @@ impl StudioApp {
                         "Block added — drag to move, use the handles to resize".to_owned(),
                     );
                 } else {
-                    shell.set_notice(format!(
-                        "{} added — save, then Rebuild & Play",
-                        kind.label()
-                    ));
+                    shell.set_notice(format!("{} added — press Play to preview it", kind.label()));
                 }
             }
             return Ok(());

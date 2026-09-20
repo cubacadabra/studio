@@ -82,15 +82,19 @@ impl ApplicationHandler for StudioApp {
                 }
                 self.request_redraw();
             }
-            WindowEvent::KeyboardInput { event, .. }
-                if matches!(
-                    event.physical_key,
-                    PhysicalKey::Code(code)
-                        if should_forward_gameplay_key(playing, shell_consumed, code)
-                ) =>
-            {
-                self.handle_key(&event, event_loop)
+            WindowEvent::KeyboardInput { event, .. } => {
+                let editor_handled = self.handle_editor_key(&event, shell_consumed);
+                if !editor_handled
+                    && matches!(
+                        event.physical_key,
+                        PhysicalKey::Code(code)
+                            if should_forward_gameplay_key(playing, shell_consumed, code)
+                    )
+                {
+                    self.handle_key(&event, event_loop);
+                }
             }
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.handle_cursor_move(position.x, position.y)
             }
@@ -115,6 +119,7 @@ impl ApplicationHandler for StudioApp {
             }
             WindowEvent::Focused(false) => {
                 self.pressed_keys.clear();
+                self.modifiers = ModifiersState::default();
                 self.clear_pointer_controls();
             }
             _ => {}

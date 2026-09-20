@@ -1,9 +1,10 @@
 use super::*;
+use crate::app_scene_viewport::snap_scene_value;
 impl StudioApp {
     pub(crate) fn review_navigation_active(&self) -> bool {
         self.shell.as_ref().is_some_and(|shell| {
             !shell.is_morphs_workspace()
-                && shell.review_camera() != crate::shell::ReviewCameraPreset::Gameplay
+                && shell.active_review_camera() != crate::shell::ReviewCameraPreset::Gameplay
                 && !shell.is_project_loading()
         })
     }
@@ -60,6 +61,95 @@ impl StudioApp {
         }
     }
 
+    pub(crate) fn handle_editor_key(&mut self, event: &KeyEvent, shell_consumed: bool) -> bool {
+        if shell_consumed || event.state != ElementState::Pressed {
+            return false;
+        }
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return false;
+        };
+        if !self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::editor_shortcuts_active)
+        {
+            return false;
+        }
+        match code {
+            KeyCode::Escape if !event.repeat => {
+                self.cancel_scene_viewport_edit();
+                if let Some(shell) = &mut self.shell {
+                    shell.deselect_scene_object();
+                }
+                true
+            }
+            KeyCode::KeyF if !event.repeat => {
+                if let Some(shell) = &mut self.shell {
+                    shell.request_scene_focus();
+                }
+                true
+            }
+            KeyCode::KeyD
+                if !event.repeat
+                    && (self.modifiers.super_key() || self.modifiers.control_key()) =>
+            {
+                if let Some(shell) = &mut self.shell {
+                    shell.execute_command(crate::shell::StudioCommand::Duplicate);
+                }
+                true
+            }
+            KeyCode::ArrowLeft => self.nudge_selected_scene_object(-1.0, 0.0),
+            KeyCode::ArrowRight => self.nudge_selected_scene_object(1.0, 0.0),
+            KeyCode::ArrowUp => self.nudge_selected_scene_object(0.0, 1.0),
+            KeyCode::ArrowDown => self.nudge_selected_scene_object(0.0, -1.0),
+            _ => false,
+        }
+    }
+
+    fn nudge_selected_scene_object(&mut self, screen_right: f32, screen_away: f32) -> bool {
+        let Some(selected) = self
+            .shell
+            .as_ref()
+            .and_then(StudioShell::selected_scene_object_geometry)
+        else {
+            return false;
+        };
+        let Some(renderer) = self.renderer.as_ref() else {
+            return false;
+        };
+        let (right, away) = renderer.studio_camera_ground_axes();
+        let world_position = [
+            snap_scene_value(
+                selected.position[0] + (right[0] * screen_right + away[0] * screen_away) * 0.25,
+            ),
+            selected.position[1],
+            snap_scene_value(
+                selected.position[2] + (right[1] * screen_right + away[1] * screen_away) * 0.25,
+            ),
+        ];
+        let position = match self.shell.as_ref().map_or(Ok(None), |shell| {
+            shell.authoring_local_position_for_world(&selected.id, world_position)
+        }) {
+            Ok(Some(position)) => position,
+            Ok(None) => world_position,
+            Err(message) => {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_project_error(message);
+                }
+                return true;
+            }
+        };
+        if let Err(message) = self.apply_scene_edit(SceneEditRequest::SetTransform {
+            target: selected.id,
+            position,
+            scale: None,
+        }) && let Some(shell) = &mut self.shell
+        {
+            shell.set_project_error(message);
+        }
+        true
+    }
+
     pub(crate) fn handle_key(&mut self, event: &KeyEvent, _event_loop: &ActiveEventLoop) {
         let PhysicalKey::Code(code) = event.physical_key else {
             return;
@@ -69,7 +159,7 @@ impl StudioApp {
                 if code == KeyCode::Escape && !event.repeat {
                     self.cancel_scene_viewport_edit();
                     if let Some(shell) = &mut self.shell {
-                        shell.finish_scene_object_edit();
+                        shell.deselect_scene_object();
                     }
                 }
                 if code == KeyCode::Space && !event.repeat {
@@ -134,12 +224,20 @@ impl StudioApp {
         let Some((x, y)) = self.pointer_position else {
             return;
         };
-        if self.review_navigation_active()
-            && matches!(button, MouseButton::Right | MouseButton::Middle)
-        {
-            self.pan_pointer_active =
-                state == ElementState::Pressed && self.runtime_pointer(x, y, true).is_some();
-            return;
+        if self.review_navigation_active() {
+            match button {
+                MouseButton::Right => {
+                    self.camera_pointer_active = state == ElementState::Pressed
+                        && self.runtime_pointer(x, y, true).is_some();
+                    return;
+                }
+                MouseButton::Middle => {
+                    self.pan_pointer_active = state == ElementState::Pressed
+                        && self.runtime_pointer(x, y, true).is_some();
+                    return;
+                }
+                _ => {}
+            }
         }
         if state == ElementState::Released
             && matches!(button, MouseButton::Right | MouseButton::Middle)
@@ -180,10 +278,9 @@ impl StudioApp {
                         .is_some_and(|shell| local_x >= shell.runtime_viewport().width() * 0.5);
                 match button {
                     MouseButton::Left if self.review_navigation_active() => {
-                        // Game HUDs may claim the entire left viewport for a
-                        // joystick. Review drags belong to the editor camera,
-                        // including while the simulation is stopped.
-                        self.pointer_active = true;
+                        // Left pointer input is reserved for selection and
+                        // manipulation while the editor camera is visible.
+                        self.pointer_active = false;
                         self.camera_pointer_active = false;
                         self.ui_pointer_active = false;
                     }

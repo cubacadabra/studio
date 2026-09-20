@@ -54,7 +54,7 @@ use network::{BackendClient, BackendEvent};
 use options::*;
 use project::*;
 use shell::{
-    PreparedShell, SceneEditRequest, SceneObjectGeometry, SceneObjectKind, SceneObjectProjection,
+    PreparedShell, SceneEditRequest, SceneObjectKind, SceneObjectProjection,
     SceneViewportEditPhase, SceneViewportEditRequest, StudioShell, scene_world_id,
 };
 #[cfg(target_os = "macos")]
@@ -64,7 +64,7 @@ use winit::{
     dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{KeyCode, ModifiersState, PhysicalKey},
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowAttributes},
 };
@@ -257,6 +257,7 @@ struct StudioApp {
     scene_drag_cancelled_target: Option<String>,
     local_morph_catalog: Option<LocalMorphCatalog>,
     pressed_keys: HashSet<KeyCode>,
+    modifiers: ModifiersState,
     jump_queued: bool,
     mobile_sprint: bool,
     morph_loadout: cubacadabra_morphs::MorphLoadout,

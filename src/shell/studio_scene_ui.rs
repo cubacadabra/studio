@@ -65,7 +65,6 @@ impl StudioShell {
         if self.selected_scene != previous_selection
             && let Some(selected) = self.scene_outline.root.find(&self.selected_scene)
         {
-            self.scene_focus_requested = true;
             self.notice = format!("Selected {}", selected.label);
         }
     }
@@ -165,7 +164,7 @@ impl StudioShell {
         self.scene_manifest_properties(ui, selected, &["Position", "Text"]);
         ui.label(
             RichText::new(if self.project_editable {
-                "Save, then Rebuild & Play to see the updated sign in the game."
+                "Press Play to see the updated sign in the game."
             } else {
                 "Open a raw source project to edit this sign."
             })
