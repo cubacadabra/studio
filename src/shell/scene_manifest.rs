@@ -186,11 +186,7 @@ pub(crate) fn is_imported_source_node(node: &AuthoringNode) -> bool {
             .and_then(|source| source.properties.get("generatedBy"))
             .and_then(Value::as_str)
             == Some("import-roblox-scene")
-            && node
-                .source
-                .as_ref()
-                .and_then(|source| source.properties.get("representation"))
-                .is_none())
+            && node.editor.locked)
 }
 
 pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {

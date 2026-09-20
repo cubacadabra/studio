@@ -125,6 +125,18 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .any(|id| id.starts_with("source-hierarchy-"))
     );
+    let linked_source_folder = scene
+        .nodes
+        .iter()
+        .find(|node| {
+            node.source
+                .as_ref()
+                .and_then(|source| source.path.as_deref())
+                == Some("Workspace:Workspace[1]/Folder:Map[1]")
+        })
+        .expect("linked source folder should be present");
+    assert!(linked_source_folder.editor.locked);
+    assert!(!outline.initial_expanded.contains(&linked_source_folder.id));
     assert_eq!(
         outline.root.find("interaction-plinko").unwrap().kind,
         "Interaction"
@@ -139,7 +151,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 420);
+    assert_eq!(objects.len(), 400);
     assert_eq!(
         objects
             .iter()
@@ -152,7 +164,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .filter(|object| object.id.starts_with("imported-part-"))
             .count(),
-        160
+        140
     );
     assert!(objects.iter().all(|object| {
         !matches!(

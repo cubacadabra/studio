@@ -379,7 +379,7 @@ mod tests {
             .expect("compiled Vegas scene should include the extracted chair");
         assert_eq!(chair["position"].as_array().map(Vec::len), Some(3));
         assert_eq!(world["world"]["physics"]["jumpVelocity"], 11.5);
-        assert!(world["signs"].as_array().unwrap().len() >= 5);
+        assert_eq!(world["signs"].as_array().unwrap().len(), 6);
         assert_eq!(world["interactions"].as_array().unwrap().len(), 7);
     }
 
