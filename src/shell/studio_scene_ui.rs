@@ -447,7 +447,10 @@ fn scene_add_menu(
     ui.menu_button("Add", |ui| {
         for kind in SceneObjectKind::ALL {
             if component_scene
-                && !matches!(kind, SceneObjectKind::Sign | SceneObjectKind::Interaction)
+                && !matches!(
+                    kind,
+                    SceneObjectKind::Block | SceneObjectKind::Sign | SceneObjectKind::Interaction
+                )
             {
                 continue;
             }

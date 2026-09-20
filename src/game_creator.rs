@@ -480,15 +480,6 @@ fn manifest(title: &str, game_id: &str) -> Value {
                 "palette": palette,
                 "world": world,
                 "checkpoints": course_checkpoints,
-                "signs": [
-                    {
-                        "id": "welcome-sign",
-                        "text": "EDIT THIS SIGN IN INSPECTOR",
-                        "position": [0, 2.2, 14],
-                        "maxWidth": 7.0,
-                        "color": "paper"
-                    }
-                ],
                 "interactions": [],
             },
         },
@@ -582,13 +573,7 @@ mod tests {
                 .len(),
             3
         );
-        assert_eq!(
-            manifest["worlds"]["starter-world"]["signs"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
+        assert!(manifest["worlds"]["starter-world"]["signs"].is_null());
         assert!(
             fs::read_to_string(result.project.join("src/main.luau"))
                 .unwrap()

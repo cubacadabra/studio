@@ -1403,6 +1403,15 @@ fn migrate_manifest_to_scene(source: &str) -> Result<String, String> {
                         .unwrap_or_else(|| serde_json::json!("signal")),
                 }),
             );
+            if let Some(runtime_id) = object
+                .and_then(|object| object.get("id"))
+                .and_then(Value::as_str)
+                && let Some(primitive) = components
+                    .get_mut("primitive")
+                    .and_then(Value::as_object_mut)
+            {
+                primitive.insert("runtimeId".to_owned(), Value::String(runtime_id.to_owned()));
+            }
             components.insert("collision".to_owned(), serde_json::json!({ "kind": "box" }));
             nodes.push(AuthoringNode {
                 id,
@@ -1416,6 +1425,74 @@ fn migrate_manifest_to_scene(source: &str) -> Result<String, String> {
                     ..Transform::default()
                 },
                 components,
+                editor: EditorMetadata::default(),
+                source: None,
+            });
+        }
+    }
+    if let Some(decorations) = world.get("decorations").and_then(Value::as_array) {
+        for (index, decoration) in decorations.iter().enumerate() {
+            let object = decoration.as_object();
+            let Some(asset) = object
+                .and_then(|object| object.get("asset"))
+                .and_then(Value::as_str)
+            else {
+                return Err(format!(
+                    "cannot migrate decoration {} without an asset-backed mesh",
+                    index + 1
+                ));
+            };
+            if object
+                .and_then(|object| object.get("kind"))
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind != "mesh")
+            {
+                return Err(format!(
+                    "cannot migrate legacy decoration {} into scene.json without losing its kind",
+                    index + 1
+                ));
+            }
+            let uniform_scale = object
+                .and_then(|object| object.get("scale"))
+                .and_then(Value::as_f64)
+                .map(|value| value as f32)
+                .unwrap_or(1.0);
+            let scale = object
+                .and_then(|object| object.get("scale3"))
+                .map(|value| scene_vector(Some(value), [uniform_scale; 3]))
+                .unwrap_or([uniform_scale; 3]);
+            let mut render = serde_json::json!({
+                "mesh": asset,
+                "color": object
+                    .and_then(|object| object.get("color"))
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("#FFFFFF")),
+            });
+            if let Some(material) = object.and_then(|object| object.get("material"))
+                && let Some(render) = render.as_object_mut()
+            {
+                render.insert("material".to_owned(), material.clone());
+            }
+            nodes.push(AuthoringNode {
+                id: format!("decoration-{}", index + 1),
+                parent_id: Some(root_id.clone()),
+                name: format!("Decoration {}", index + 1),
+                transform: Transform {
+                    position: scene_vector(
+                        object.and_then(|object| object.get("position")),
+                        [0.0, 0.0, 0.0],
+                    ),
+                    rotation: [
+                        0.0,
+                        object
+                            .and_then(|object| object.get("yaw"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0) as f32,
+                        0.0,
+                    ],
+                    scale,
+                },
+                components: BTreeMap::from([("render".to_owned(), render)]),
                 editor: EditorMetadata::default(),
                 source: None,
             });
@@ -1442,6 +1519,11 @@ fn migrate_manifest_to_scene(source: &str) -> Result<String, String> {
                         .unwrap_or_else(|| serde_json::json!("paper")),
                 }),
             );
+            if let Some(runtime_id) = object.and_then(|object| object.get("id")).cloned()
+                && let Some(text) = components.get_mut("text").and_then(Value::as_object_mut)
+            {
+                text.insert("id".to_owned(), runtime_id);
+            }
             nodes.push(AuthoringNode {
                 id: format!("sign-{}", index + 1),
                 parent_id: Some(root_id.clone()),
@@ -1684,6 +1766,26 @@ mod scene_edit_tests {
             block.components["primitive"]["size"],
             serde_json::json!([4, 1, 4])
         );
+        assert_eq!(
+            block.components["primitive"]["runtimeId"],
+            serde_json::json!("platform")
+        );
+    }
+
+    #[test]
+    fn manifest_migration_refuses_legacy_decorations_it_cannot_preserve() {
+        let source = serde_json::json!({
+            "launch": { "destinationWorld": "course" },
+            "worlds": {
+                "course": {
+                    "decorations": [{ "kind": "rock", "position": [0, 0, 0] }]
+                }
+            }
+        })
+        .to_string();
+
+        let error = migrate_manifest_to_scene(&source).expect_err("migration must be lossless");
+        assert!(error.contains("without an asset-backed mesh"));
     }
 }
 
