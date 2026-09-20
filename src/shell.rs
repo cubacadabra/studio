@@ -418,7 +418,7 @@ pub(crate) enum SceneViewportEditRequest {
         origin_screen: Pos2,
         current_screen: Pos2,
         origin_position: [f32; 3],
-        origin_scale: [f32; 3],
+        origin_scale: Option<[f32; 3]>,
         base_size: [f32; 3],
     },
 }

@@ -238,6 +238,21 @@ impl StudioShell {
         self.scene_object_projections = projections;
     }
 
+    pub(crate) fn activate_scene_resize_tool(&mut self) {
+        if self.project_editable
+            && !self.playing
+            && self.scene_object_projections.iter().any(|projection| {
+                projection.id == self.selected_scene
+                    && projection.editable
+                    && projection.size.is_some()
+                    && projection.screen_corners.is_some()
+            })
+        {
+            self.scene_viewport_tool = SceneViewportTool::Resize;
+            self.notice = "Resize tool — drag an X, Y, or Z handle".to_owned();
+        }
+    }
+
     pub(crate) fn take_scene_viewport_edit_request(&mut self) -> Option<SceneViewportEditRequest> {
         self.scene_viewport_edit_requested.take()
     }

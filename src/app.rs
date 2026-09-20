@@ -961,7 +961,7 @@ impl StudioApp {
                 base_size,
             } => {
                 let delta = origin_screen.y - current_screen.y;
-                let original_height = base_size[1] * origin_scale[1];
+                let original_height = base_size[1] * origin_scale.map_or(1.0, |scale| scale[1]);
                 let height = (original_height + delta * 0.05).max(0.25);
                 let scale_y = (height / base_size[1]).max(0.05);
                 let world_position = [
@@ -969,22 +969,36 @@ impl StudioApp {
                     origin_position[1] + (height - original_height) * 0.5,
                     origin_position[2],
                 ];
-                let desired_scale = [origin_scale[0], scale_y, origin_scale[2]];
-                let (position, scale) = if let Some(shell) = &self.shell {
-                    let (position, scale) = shell.authoring_local_transform_for_world(
-                        &target,
-                        world_position,
-                        desired_scale,
-                    )?;
-                    (position, Some(scale))
+                let (position, size, scale) = if let Some(origin_scale) = origin_scale {
+                    let desired_scale = [origin_scale[0], scale_y, origin_scale[2]];
+                    let (position, scale) = if let Some(shell) = &self.shell {
+                        let (position, scale) = shell.authoring_local_transform_for_world(
+                            &target,
+                            world_position,
+                            desired_scale,
+                        )?;
+                        (position, scale)
+                    } else {
+                        (world_position, desired_scale)
+                    };
+                    (position, None, Some(scale))
+                } else if let Some(shell) = &self.shell {
+                    let position = shell
+                        .authoring_local_position_for_world(&target, world_position)?
+                        .unwrap_or(world_position);
+                    (position, Some([base_size[0], height, base_size[2]]), None)
                 } else {
-                    (world_position, Some(desired_scale))
+                    (
+                        world_position,
+                        Some([base_size[0], height, base_size[2]]),
+                        None,
+                    )
                 };
                 Ok(Some((
                     SceneEditRequest::UpdateTransform {
                         target,
                         position,
-                        size: None,
+                        size,
                         scale,
                     },
                     phase,
