@@ -82,6 +82,12 @@ Controls:
 - `Play` / `Stop`: start or stop the current preview; starting again resets it
 - `Rebuild & Play`: save the source scene, rebuild the current project, and start
   a fresh preview
+- `+ Block`: stop playback, add a block in the nearest open space, and select it
+- drag a selected block to move it across the ground; drag its corner and top
+  handles to resize it, or its raised handle to move it up and down
+- click empty viewport space or press `Escape` to finish editing an object;
+  `Duplicate` places a selected copy beside it, and `Apply` saves and refreshes
+  the preview when the arrangement is ready
 - `Restart`: reset the current project without reopening the editor
 - `WASD` or arrow keys: move
 - `Shift`: sprint

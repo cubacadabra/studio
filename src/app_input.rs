@@ -68,12 +68,9 @@ impl StudioApp {
             ElementState::Pressed => {
                 if code == KeyCode::Escape && !event.repeat {
                     self.cancel_scene_viewport_edit();
-                }
-                if code == KeyCode::Digit3
-                    && !event.repeat
-                    && let Some(shell) = &mut self.shell
-                {
-                    shell.activate_scene_resize_tool();
+                    if let Some(shell) = &mut self.shell {
+                        shell.finish_scene_object_edit();
+                    }
                 }
                 if code == KeyCode::Space && !event.repeat {
                     self.jump_queued = true;

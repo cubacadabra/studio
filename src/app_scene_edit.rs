@@ -4,7 +4,8 @@ use crate::app_scene_migration::{
     migrate_manifest_to_scene, retarget_migrated_scene_edit,
 };
 use cubacadabra_scene::{
-    AuthoringNode, EditorMetadata, Transform, parse_authoring_scene, serialize_authoring_scene,
+    AuthoringNode, AuthoringScene, EditorMetadata, Transform, parse_authoring_scene,
+    serialize_authoring_scene,
 };
 use serde_json::Value;
 
@@ -180,15 +181,15 @@ impl StudioApp {
                         match kind {
                             SceneObjectKind::Block => (
                                 root_id.clone(),
-                                "block-new".to_owned(),
-                                "New Block".to_owned(),
+                                "block".to_owned(),
+                                "Block".to_owned(),
                                 "primitive".to_owned(),
                                 serde_json::json!({
                                     "shape": "box",
-                                    "size": [4, 1, 4],
+                                    "size": [2, 2, 2],
                                     "material": "signal"
                                 }),
-                                [0.0, 1.0, 0.0],
+                                next_block_position(&scene),
                             ),
                             SceneObjectKind::Sign => (
                                 scene
@@ -307,12 +308,17 @@ impl StudioApp {
                         source: None,
                     });
                     let updated = serialize_authoring_scene(&scene)?;
-                    self.commit_authoring_scene_transaction(
-                        scene_source,
-                        updated,
-                        &id,
-                        &format!("{} added — save, then Rebuild & Play", kind.label()),
-                    );
+                    let notice = if *kind == SceneObjectKind::Block {
+                        "Block added — drag to move, use the handles to resize".to_owned()
+                    } else {
+                        format!("{} added — save, then Rebuild & Play", kind.label())
+                    };
+                    self.commit_authoring_scene_transaction(scene_source, updated, &id, &notice);
+                    if *kind == SceneObjectKind::Block
+                        && let Some(shell) = &mut self.shell
+                    {
+                        shell.set_playing(false);
+                    }
                     return Ok(());
                 }
                 SceneEditRequest::SetTransform {
@@ -414,6 +420,7 @@ impl StudioApp {
                         let mut copy = node;
                         copy.id = id.clone();
                         copy.name = format!("{} Copy {number}", copy.name);
+                        offset_duplicate(&mut copy);
                         for component in copy.components.values_mut() {
                             if let Some(component) = component.as_object_mut() {
                                 for key in ["id", "runtimeId"] {
@@ -429,8 +436,11 @@ impl StudioApp {
                             scene_source,
                             updated,
                             &id,
-                            "Scene object duplicated — save to keep it",
+                            "Copy added beside the original — drag it into place",
                         );
+                        if let Some(shell) = &mut self.shell {
+                            shell.set_playing(false);
+                        }
                         return Ok(());
                     }
                 }
@@ -517,7 +527,7 @@ impl StudioApp {
                 if kind == SceneObjectKind::Block {
                     shell.set_playing(false);
                     shell.set_notice(
-                        "Block added — drag it in the viewport, then press Play to test".to_owned(),
+                        "Block added — drag to move, use the handles to resize".to_owned(),
                     );
                 } else {
                     shell.set_notice(format!(
@@ -587,6 +597,21 @@ impl StudioApp {
                 let copy_object = copy
                     .as_object_mut()
                     .ok_or_else(|| "scene object could not be duplicated".to_owned())?;
+                let horizontal_offset = copy_object
+                    .get("size")
+                    .and_then(Value::as_array)
+                    .and_then(|size| size.first())
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0) as f32
+                    + 0.5;
+                if let Some(position) = copy_object
+                    .get_mut("position")
+                    .and_then(Value::as_array_mut)
+                    && let Some(x) = position.first_mut()
+                    && let Some(value) = x.as_f64()
+                {
+                    *x = serde_json::json!(value as f32 + horizontal_offset);
+                }
                 if let Some(base_id) = copy_object
                     .get("id")
                     .and_then(Value::as_str)
@@ -615,6 +640,9 @@ impl StudioApp {
             if let Some(selection) = selection_after_edit {
                 shell.select_scene_node(&selection);
             }
+            if matches!(&operation, SceneEditOperation::Duplicate) {
+                shell.set_playing(false);
+            }
             shell.set_notice(match &operation {
                 SceneEditOperation::SetTransform { .. }
                 | SceneEditOperation::SetPrimitiveSize { .. } => {
@@ -624,13 +652,85 @@ impl StudioApp {
                     "Property changed — save to keep it".to_owned()
                 }
                 SceneEditOperation::Duplicate => {
-                    "Scene object duplicated — save to keep it".to_owned()
+                    "Copy added beside the original — drag it into place".to_owned()
                 }
                 SceneEditOperation::Delete => "Scene object deleted — save to keep it".to_owned(),
             });
         }
         Ok(())
     }
+}
+
+const NEW_BLOCK_SIZE: [f32; 3] = [2.0, 2.0, 2.0];
+const NEW_BLOCK_GAP: f32 = 0.5;
+
+fn next_block_position(scene: &AuthoringScene) -> [f32; 3] {
+    let blocks = scene
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            primitive_size(node).map(|size| {
+                let scale = node.transform.scale;
+                (
+                    node.transform.position,
+                    [size[0] * scale[0].abs(), size[2] * scale[2].abs()],
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for radius in 0..=32 {
+        let radius = radius as f32;
+        let mut candidates = if radius == 0.0 {
+            vec![[0.0, 0.0]]
+        } else {
+            vec![[radius, 0.0], [-radius, 0.0], [0.0, radius], [0.0, -radius]]
+        };
+        if radius > 0.0 {
+            let edge = radius as i32;
+            for x in -edge..=edge {
+                for z in -edge..=edge {
+                    if x != 0 && z != 0 && (x.abs() == edge || z.abs() == edge) {
+                        candidates.push([x as f32, z as f32]);
+                    }
+                }
+            }
+        }
+        for [grid_x, grid_z] in candidates {
+            let candidate = [grid_x * 2.5, NEW_BLOCK_SIZE[1] * 0.5, grid_z * 2.5];
+            let clear = blocks.iter().all(|(position, size)| {
+                let required_x = (NEW_BLOCK_SIZE[0] + size[0]) * 0.5 + NEW_BLOCK_GAP;
+                let required_z = (NEW_BLOCK_SIZE[2] + size[1]) * 0.5 + NEW_BLOCK_GAP;
+                (candidate[0] - position[0]).abs() >= required_x
+                    || (candidate[2] - position[2]).abs() >= required_z
+            });
+            if clear {
+                return candidate;
+            }
+        }
+    }
+    [blocks.len() as f32 * 2.5, NEW_BLOCK_SIZE[1] * 0.5, 0.0]
+}
+
+fn primitive_size(node: &AuthoringNode) -> Option<[f32; 3]> {
+    let size = node
+        .components
+        .get("primitive")?
+        .as_object()?
+        .get("size")?
+        .as_array()?;
+    Some([
+        size.first()?.as_f64()? as f32,
+        size.get(1)?.as_f64()? as f32,
+        size.get(2)?.as_f64()? as f32,
+    ])
+}
+
+fn offset_duplicate(node: &mut AuthoringNode) {
+    let offset = primitive_size(node)
+        .map(|size| size[0] * node.transform.scale[0].abs())
+        .unwrap_or(1.0)
+        + NEW_BLOCK_GAP;
+    node.transform.position[0] += offset;
 }
 
 fn record_scene_history(
@@ -695,6 +795,42 @@ fn set_authoring_component_property(
 mod scene_edit_tests {
     use super::*;
 
+    fn block_node(id: &str, position: [f32; 3], size: [f32; 3]) -> AuthoringNode {
+        AuthoringNode {
+            id: id.to_owned(),
+            parent_id: Some("world".to_owned()),
+            name: id.to_owned(),
+            transform: Transform {
+                position,
+                ..Transform::default()
+            },
+            components: BTreeMap::from([(
+                "primitive".to_owned(),
+                serde_json::json!({ "shape": "box", "size": size }),
+            )]),
+            editor: EditorMetadata::default(),
+            source: None,
+        }
+    }
+
+    fn scene_with(nodes: Vec<AuthoringNode>) -> AuthoringScene {
+        let mut all_nodes = vec![AuthoringNode {
+            id: "world".to_owned(),
+            parent_id: None,
+            name: "World".to_owned(),
+            transform: Transform::default(),
+            components: BTreeMap::new(),
+            editor: EditorMetadata::default(),
+            source: None,
+        }];
+        all_nodes.extend(nodes);
+        AuthoringScene {
+            format_version: 1,
+            world_id: Some("starter-world".to_owned()),
+            nodes: all_nodes,
+        }
+    }
+
     #[test]
     fn scene_history_records_one_transaction_and_invalidates_redo() {
         let mut undo = vec![SceneHistoryEntry {
@@ -718,5 +854,31 @@ mod scene_edit_tests {
         assert!(redo.is_empty());
         assert_eq!(undo[1].before, "middle");
         assert_eq!(undo[1].after, "latest");
+    }
+
+    #[test]
+    fn new_blocks_use_the_nearest_open_ground_slot() {
+        let empty = scene_with(Vec::new());
+        assert_eq!(next_block_position(&empty), [0.0, 1.0, 0.0]);
+
+        let one_block = scene_with(vec![block_node("block-1", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE)]);
+        assert_eq!(next_block_position(&one_block), [2.5, 1.0, 0.0]);
+
+        let wide_block = scene_with(vec![block_node(
+            "block-wide",
+            [0.0, 1.0, 0.0],
+            [6.0, 2.0, 2.0],
+        )]);
+        assert_eq!(next_block_position(&wide_block), [0.0, 1.0, 2.5]);
+    }
+
+    #[test]
+    fn duplicated_blocks_are_offset_by_their_visible_width() {
+        let mut block = block_node("block-1", [3.0, 1.0, 4.0], [2.0, 2.0, 2.0]);
+        block.transform.scale = [1.5, 1.0, 1.0];
+
+        offset_duplicate(&mut block);
+
+        assert_eq!(block.transform.position, [6.5, 1.0, 4.0]);
     }
 }

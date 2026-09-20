@@ -247,21 +247,6 @@ impl StudioShell {
         self.scene_object_projections = projections;
     }
 
-    pub(crate) fn activate_scene_resize_tool(&mut self) {
-        if self.project_editable
-            && !self.playing
-            && self.scene_object_projections.iter().any(|projection| {
-                projection.id == self.selected_scene
-                    && projection.editable
-                    && projection.size.is_some()
-                    && projection.screen_corners.is_some()
-            })
-        {
-            self.scene_viewport_tool = SceneViewportTool::Resize;
-            self.notice = "Resize tool — drag an X, Y, or Z handle".to_owned();
-        }
-    }
-
     pub(crate) fn take_scene_viewport_edit_request(&mut self) -> Option<SceneViewportEditRequest> {
         self.scene_viewport_edit_requested.take()
     }
@@ -322,6 +307,24 @@ impl StudioShell {
         if self.expanded_scene != previous_expanded {
             self.scene_tree_rows_dirty = true;
         }
+        true
+    }
+
+    pub(crate) fn finish_scene_object_edit(&mut self) -> bool {
+        let Some(selected) = self.scene_outline.root.find(&self.selected_scene) else {
+            return false;
+        };
+        if !self
+            .scene_object_projections
+            .iter()
+            .any(|projection| projection.id == selected.id)
+        {
+            return false;
+        }
+        let label = selected.label.clone();
+        let overview = self.scene_outline.initial_selection.clone();
+        self.select_scene_node(&overview);
+        self.notice = format!("{label} placed — add another block or select an object to edit it");
         true
     }
 

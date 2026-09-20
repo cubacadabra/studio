@@ -299,7 +299,6 @@ pub(crate) struct StudioShell {
     scene_editor_scale_text: [String; 3],
     scene_editor_text: String,
     scene_editor_properties: BTreeMap<String, String>,
-    scene_viewport_tool: SceneViewportTool,
     scene_object_projections: Vec<SceneObjectProjection>,
     scene_viewport_edit_requested: Option<SceneViewportEditRequest>,
     selected_world_asset: String,

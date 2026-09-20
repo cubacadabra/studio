@@ -83,13 +83,6 @@ impl SceneObjectKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum SceneViewportTool {
-    #[default]
-    Move,
-    Resize,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct SceneObjectGeometry {
     pub(crate) id: String,
@@ -184,6 +177,13 @@ pub(crate) enum SceneViewportEditPhase {
 #[derive(Clone, Debug)]
 pub(crate) enum SceneViewportEditRequest {
     Move {
+        phase: SceneViewportEditPhase,
+        target: String,
+        origin_screen: Pos2,
+        current_screen: Pos2,
+        origin_position: [f32; 3],
+    },
+    MoveHeight {
         phase: SceneViewportEditPhase,
         target: String,
         origin_screen: Pos2,

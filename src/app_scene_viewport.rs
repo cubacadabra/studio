@@ -134,6 +134,31 @@ impl StudioApp {
                     phase,
                 )))
             }
+            SceneViewportEditRequest::MoveHeight {
+                phase,
+                target,
+                origin_screen,
+                current_screen,
+                origin_position,
+            } => {
+                let world_position =
+                    scene_vertical_drag_position(origin_screen, current_screen, origin_position);
+                let position = if let Some(shell) = &self.shell {
+                    shell
+                        .authoring_local_position_for_world(&target, world_position)?
+                        .unwrap_or(world_position)
+                } else {
+                    world_position
+                };
+                Ok(Some((
+                    SceneEditRequest::SetTransform {
+                        target,
+                        position,
+                        scale: None,
+                    },
+                    phase,
+                )))
+            }
             SceneViewportEditRequest::Resize {
                 phase,
                 target,
@@ -294,10 +319,47 @@ fn snap_scene_value(value: f32) -> f32 {
     (value * 4.0).round() * 0.25
 }
 
+fn scene_vertical_drag_position(
+    origin_screen: egui::Pos2,
+    current_screen: egui::Pos2,
+    origin_position: [f32; 3],
+) -> [f32; 3] {
+    [
+        origin_position[0],
+        snap_scene_value(origin_position[1] + (origin_screen.y - current_screen.y) * 0.05),
+        origin_position[2],
+    ]
+}
+
 pub(crate) fn scene_object_horizontal_radius(geometry: &SceneObjectGeometry) -> f32 {
     let Some(size) = geometry.size else {
         return 2.25;
     };
     let scale = geometry.scale.unwrap_or([1.0; 3]);
     0.5 * (size[0] * scale[0]).abs().max((size[2] * scale[2]).abs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertical_drag_raises_and_lowers_without_changing_the_ground_plane_axes() {
+        assert_eq!(
+            scene_vertical_drag_position(
+                egui::pos2(100.0, 100.0),
+                egui::pos2(140.0, 60.0),
+                [3.0, 1.0, -2.0],
+            ),
+            [3.0, 3.0, -2.0]
+        );
+        assert_eq!(
+            scene_vertical_drag_position(
+                egui::pos2(100.0, 100.0),
+                egui::pos2(100.0, 130.0),
+                [3.0, 1.0, -2.0],
+            ),
+            [3.0, -0.5, -2.0]
+        );
+    }
 }

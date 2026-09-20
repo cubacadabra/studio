@@ -74,7 +74,6 @@ impl StudioShell {
             scene_editor_scale_text: std::array::from_fn(|_| "1".to_owned()),
             scene_editor_text: String::new(),
             scene_editor_properties: BTreeMap::new(),
-            scene_viewport_tool: SceneViewportTool::default(),
             scene_object_projections: Vec::new(),
             scene_viewport_edit_requested: None,
             selected_world_asset,
