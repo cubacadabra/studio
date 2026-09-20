@@ -403,12 +403,9 @@ mod tests {
             .as_deref()
             .and_then(|source| cubacadabra_scene::parse_authoring_scene(source).ok())
             .expect("starter scene");
-        assert!(
-            scene
-                .nodes
-                .iter()
-                .any(|node| node.components.contains_key("primitive"))
-        );
+        assert_eq!(scene.nodes.len(), 1);
+        assert_eq!(scene.nodes[0].id, "world-starter-world");
+        assert!(scene.nodes[0].components.is_empty());
         let client = cubacadabra_client::ClientSession::load(
             &sources.manifest_source,
             &sources.script_source,

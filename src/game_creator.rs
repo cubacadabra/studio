@@ -33,124 +33,7 @@ const SDK_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-const STARTER_SOURCE_TEMPLATE: &str = r#"local CubaObby = require("@cubacadabra/obby")
-
-local Game = {}
-local obby = CubaObby.create({})
-local status = "REACH THE FINISH"
-
-local function document()
-    return {
-        nodes = {
-            {
-                id = "course-title",
-                kind = "text",
-                text = __TITLE__,
-                layout = { anchor = "topLeft", width = 420, height = 30, offset = { 26, 122 } },
-                style = { color = __FOREGROUND__, fontSize = 20 },
-            },
-            {
-                id = "course-status",
-                kind = "text",
-                text = status,
-                layout = { anchor = "topLeft", width = 420, height = 26, offset = { 26, 158 } },
-                style = { color = __ACCENT__, fontSize = 14 },
-            },
-            {
-                id = "course-checkpoint",
-                kind = "text",
-                text = "CHECKPOINT  START",
-                layout = { anchor = "topLeft", width = 320, height = 22, offset = { 26, 190 } },
-                style = { color = __HIGHLIGHT__, fontSize = 12 },
-            },
-            {
-                id = "course-help",
-                kind = "text",
-                text = "MOVE  •  JUMP  •  REACH THE FINISH",
-                layout = { anchor = "bottom", width = "90%", maxWidth = 620, height = 24, offset = { 0, -24 } },
-                style = { color = __FOREGROUND_MUTED__, fontSize = 11, textAlign = "center" },
-            },
-            {
-                id = "player-joystick",
-                kind = "joystick",
-                action = "player.move",
-                layout = { anchor = "bottomLeft", width = 120, height = 120, offset = { 20, -24 } },
-                style = {
-                    background = __JOYSTICK_BACKGROUND__,
-                    borderColor = __JOYSTICK_BORDER__,
-                    borderWidth = 2,
-                    cornerRadius = 60,
-                    accent = __ACCENT__,
-                },
-            },
-            {
-                id = "player-jump",
-                kind = "button",
-                text = "JUMP",
-                action = "player.jump",
-                layout = { anchor = "bottomRight", width = 86, height = 44, offset = { -22, -84 } },
-                style = {
-                    background = __CONTROL_BACKGROUND__,
-                    borderColor = __ACCENT__,
-                    borderWidth = 2,
-                    cornerRadius = 17,
-                    foreground = __FOREGROUND__,
-                    accent = __ACCENT__,
-                    textAlign = "center",
-                    fontSize = 14,
-                },
-            },
-            {
-                id = "player-run",
-                kind = "button",
-                text = "RUN",
-                action = "player.run",
-                layout = { anchor = "bottomRight", width = 86, height = 44, offset = { -22, -30 } },
-                style = {
-                    background = __CONTROL_BACKGROUND__,
-                    borderColor = __ACCENT__,
-                    borderWidth = 2,
-                    cornerRadius = 17,
-                    foreground = __FOREGROUND__,
-                    accent = __ACCENT__,
-                    textAlign = "center",
-                    fontSize = 14,
-                },
-            },
-        },
-    }
-end
-
-local function update_hud(api)
-    local snapshot = obby:status()
-    api.ui:set_text("course-status", status)
-    api.ui:set_text("course-checkpoint", "CHECKPOINT  " .. string.upper(snapshot.checkpoint))
-end
-
-function Game.on_start(api)
-    api.lobby:set_enabled(false)
-    api.lobby:set_status("Jump across the platforms and reach the finish.")
-    api.session:start(__ID__, { mode = "preview" })
-    api.ui:set_document(document())
-    update_hud(api)
-end
-
-function Game.on_player_event(api, event)
-    obby:handle(api, event)
-    if event.kind == "checkpoint" and event.id == "finish" then
-        status = "COURSE COMPLETE  •  PLAY IT AGAIN"
-    elseif event.kind == "checkpoint" then
-        status = "CHECKPOINT SAVED  •  KEEP GOING"
-    elseif event.kind == "death" then
-        status = "YOU FELL  •  TRY THE NEXT JUMP"
-    elseif event.kind == "respawn" then
-        status = "BACK IN  •  YOU CAN DO THIS"
-    end
-    update_hud(api)
-end
-
-return Game
-"#;
+const STARTER_SOURCE_TEMPLATE: &str = "return {}\n";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GameCreateResult {
@@ -277,84 +160,16 @@ fn write_project(project: &Path, title: &str, game_id: &str) -> Result<(), Strin
 }
 
 fn starter_scene() -> Value {
-    let root = "world-starter-world";
-    let block = |id: &str, name: &str, position: [f32; 3], size: [f32; 3], material: &str| {
-        json!({
-            "id": id,
-            "parentId": root,
-            "name": name,
-            "transform": { "position": position, "rotation": [0, 0, 0], "scale": [1, 1, 1] },
-            "components": {
-                "primitive": { "shape": "box", "size": size, "material": material },
-                "collision": { "kind": "box" }
-            },
-            "editor": { "visible": true, "locked": false },
-        })
-    };
-    let mut nodes = vec![json!({
-        "id": root,
+    json!({
+        "formatVersion": 1,
+        "worldId": "starter-world",
+        "nodes": [{
+        "id": "world-starter-world",
         "name": "Starter World",
         "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
-        "components": {},
-        "editor": { "visible": true, "locked": false }
-    })];
-    for (id, name, position, size, material) in [
-        (
-            "start-platform",
-            "Start Platform",
-            [0.0, 0.5, 18.0],
-            [7.0, 1.0, 7.0],
-            "signal",
-        ),
-        (
-            "first-jump",
-            "First Jump",
-            [0.0, 0.6, 7.0],
-            [4.5, 1.2, 4.5],
-            "coral",
-        ),
-        (
-            "left-route",
-            "Left Route",
-            [-4.5, 1.8, -3.0],
-            [4.5, 1.2, 4.5],
-            "butter",
-        ),
-        (
-            "right-route",
-            "Right Route",
-            [4.5, 3.1, -13.0],
-            [4.5, 1.2, 4.5],
-            "periwinkle",
-        ),
-        (
-            "checkpoint-platform",
-            "Checkpoint Platform",
-            [0.0, 4.5, -22.0],
-            [6.0, 1.0, 6.0],
-            "signal",
-        ),
-        (
-            "finish-platform",
-            "Finish Platform",
-            [0.0, 4.5, -32.0],
-            [8.0, 1.0, 6.0],
-            "hot",
-        ),
-    ] {
-        nodes.push(block(id, name, position, size, material));
-    }
-    nodes.push(json!({
-        "id": "welcome-sign",
-        "parentId": root,
-        "name": "Welcome Sign",
-        "transform": { "position": [0, 2.2, 14], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
-        "components": {
-            "text": { "text": "EDIT THIS SIGN IN INSPECTOR", "maxWidth": 7.0, "color": "paper" }
-        },
-        "editor": { "visible": true, "locked": false }
-    }));
-    json!({ "formatVersion": 1, "worldId": "starter-world", "nodes": nodes })
+        "components": {}
+    }]
+    })
 }
 
 fn write_starter_floor_texture(path: &Path) -> Result<(), String> {
@@ -396,14 +211,14 @@ fn manifest(title: &str, game_id: &str) -> Value {
         "groundSize": 70,
         "gridSize": 64,
         "gridDivisions": 32,
-        "spawn": [0, 1.2, 18],
+        "spawn": [0, 1.2, 0],
         "showSpawnPad": false,
         "physics": {
             "gravity": 28,
             "jumpVelocity": 10.5,
-            "groundCollision": false,
-            "groundY": -12,
-            "deathY": -9,
+            "groundCollision": true,
+            "groundY": 0,
+            "deathY": -20,
             "respawnDelay": 0.65,
         },
         "groundMaterial": "floor",
@@ -414,16 +229,7 @@ fn manifest(title: &str, game_id: &str) -> Value {
                 "tileV": 8,
             }
         },
-        "clouds": [
-            { "position": [-20, 19, -35], "scale": 0.9 },
-            { "position": [24, 23, -48], "scale": 1.2 },
-        ],
     });
-    let course_checkpoints = json!([
-        { "id": "start", "position": [0, 1.5, 18], "radius": 3.5 },
-        { "id": "checkpoint", "position": [0, 5.5, -22], "radius": 2.8 },
-        { "id": "finish", "position": [0, 5.5, -32], "radius": 3.6 },
-    ]);
     json!({
         "id": game_id,
         "version": DEFAULT_VERSION,
@@ -479,25 +285,15 @@ fn manifest(title: &str, game_id: &str) -> Value {
             "starter-world": {
                 "palette": palette,
                 "world": world,
-                "checkpoints": course_checkpoints,
+                "checkpoints": [],
                 "interactions": [],
             },
         },
     })
 }
 
-fn starter_source(title: &str, game_id: &str) -> String {
-    let literal = |value: &str| serde_json::to_string(value).unwrap();
-    STARTER_SOURCE_TEMPLATE
-        .replace("__JOYSTICK_BACKGROUND__", &literal("#0B102BC9"))
-        .replace("__JOYSTICK_BORDER__", &literal("#57E5D055"))
-        .replace("__CONTROL_BACKGROUND__", &literal("#0B102BF5"))
-        .replace("__FOREGROUND__", &literal("#F7F5E9"))
-        .replace("__FOREGROUND_MUTED__", &literal("#F7F5E9B8"))
-        .replace("__ACCENT__", &literal("#57E5D0"))
-        .replace("__HIGHLIGHT__", &literal("#F1E95B"))
-        .replace("__TITLE__", &literal(title))
-        .replace("__ID__", &literal(game_id))
+fn starter_source(_title: &str, _game_id: &str) -> String {
+    STARTER_SOURCE_TEMPLATE.to_owned()
 }
 
 #[cfg(test)]
@@ -547,10 +343,9 @@ mod tests {
                 .join(".cubacadabra/sdk/shared-state.luau")
                 .is_file()
         );
-        assert!(
-            fs::read_to_string(result.project.join("src/main.luau"))
-                .unwrap()
-                .contains("api.session:start(\"the-wild-west\"")
+        assert_eq!(
+            fs::read_to_string(result.project.join("src/main.luau")).unwrap(),
+            "return {}\n"
         );
         assert_eq!(manifest["launch"]["destinationWorld"], "starter-world");
         assert!(manifest["worlds"]["starter-world"]["blocks"].is_null());
@@ -564,20 +359,22 @@ mod tests {
                 .iter()
                 .filter(|node| node["components"]["primitive"].is_object())
                 .count(),
-            6
+            0
         );
+        assert_eq!(scene["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(scene["nodes"][0]["id"], "world-starter-world");
+        assert_eq!(scene["nodes"][0]["components"], serde_json::json!({}));
         assert_eq!(
             manifest["worlds"]["starter-world"]["checkpoints"]
                 .as_array()
                 .unwrap()
                 .len(),
-            3
+            0
         );
         assert!(manifest["worlds"]["starter-world"]["signs"].is_null());
-        assert!(
-            fs::read_to_string(result.project.join("src/main.luau"))
-                .unwrap()
-                .contains("@cubacadabra/obby")
+        assert_eq!(
+            fs::read_to_string(result.project.join("src/main.luau")).unwrap(),
+            "return {}\n"
         );
         assert!(create_game("The Wild West", &root).is_err());
         let _ = fs::remove_dir_all(root);
