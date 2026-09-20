@@ -198,7 +198,13 @@ impl StudioShell {
                     Stroke::new(1.0, colors.border),
                     StrokeKind::Inside,
                 );
-                self.show_scene_object_handles(ui);
+                // Scene handles belong to authoring mode. Keep the current
+                // selection available to the inspector while playing, but do
+                // not draw editor bounds over the live game view or let them
+                // compete with gameplay input.
+                if !self.playing {
+                    self.show_scene_object_handles(ui);
+                }
                 if selected_is_placeable
                     && let Some(selected) = self.scene_outline.root.find(&self.selected_scene)
                 {
@@ -237,12 +243,10 @@ impl StudioShell {
                         colors.secondary_text,
                     );
                 }
-                let clicked_empty = ui.input(|input| {
-                    input.pointer.primary_clicked()
-                        && input
-                            .pointer
-                            .latest_pos()
-                            .is_some_and(|point| {
+                let clicked_empty = !self.playing
+                    && ui.input(|input| {
+                        input.pointer.primary_clicked()
+                            && input.pointer.latest_pos().is_some_and(|point| {
                                 self.runtime_viewport.contains(point)
                                     && !self
                                         .scene_object_projections
@@ -258,7 +262,7 @@ impl StudioShell {
                                                 .contains(point)
                                         })
                             })
-                });
+                    });
                 if clicked_empty {
                     self.deselect_scene_object();
                 }
