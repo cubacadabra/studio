@@ -89,7 +89,13 @@ impl StudioShell {
                             }
                             vertical_separator(ui, 14.0);
                             self.show_chatgpt_control(ui, colors);
-                            let play_label = if self.playing { "Stop" } else { "Play" };
+                            let play_label = if self.playing {
+                                "Stop"
+                            } else if self.project_dirty || self.preview_stale {
+                                "Apply & Play"
+                            } else {
+                                "Play"
+                            };
                             let play_width = toolbar_button_width(ui, play_label);
                             if ui.available_width() >= play_width + 48.0 {
                                 let live = ui.allocate_response(
@@ -108,7 +114,13 @@ impl StudioShell {
                                 );
                             }
                             let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
-                            if toolbar_button(ui, play_icon, play_label, self.playing).clicked() {
+                            let play_button = toolbar_button(ui, play_icon, play_label, self.playing)
+                                .on_hover_text(if self.project_dirty || self.preview_stale {
+                                    "Save the authoring scene, rebuild the preview, and enter Play mode"
+                                } else {
+                                    "Restart the preview and enter Play mode"
+                                });
+                            if play_button.clicked() {
                                 if self.playing {
                                     self.set_playing(false);
                                     self.notice = "Play session stopped".to_owned();
