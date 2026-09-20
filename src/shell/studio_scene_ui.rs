@@ -121,7 +121,7 @@ impl StudioShell {
     pub(crate) fn block_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
-        self.scene_transform_editor(ui, selected, true, false);
+        self.scene_transform_editor(ui, selected, true, false, false);
         self.scene_manifest_properties(ui, selected, &["Position", "Size"]);
         if !self.project_editable {
             ui.label(
@@ -135,7 +135,7 @@ impl StudioShell {
     pub(crate) fn sign_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
-        self.scene_transform_editor(ui, selected, false, false);
+        self.scene_transform_editor(ui, selected, false, false, false);
 
         property_section(ui, "Content", |ui| {
             ui.label(
@@ -177,8 +177,9 @@ impl StudioShell {
     fn scene_object_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         self.sync_scene_editor(selected);
         let has_size = vector_property(selected, "Size").is_some();
-        let has_scale = is_authoring_node(selected);
-        self.scene_transform_editor(ui, selected, has_size && !has_scale, has_scale);
+        let has_primitive_size = selected.kind == "Block" && is_authoring_node(selected);
+        let has_scale = is_authoring_node(selected) && !has_primitive_size;
+        self.scene_transform_editor(ui, selected, has_size, has_scale, has_primitive_size);
         self.scene_manifest_properties(ui, selected, &["Position", "Scale"]);
     }
 
@@ -208,20 +209,23 @@ impl StudioShell {
         selected: &SceneNode,
         has_size: bool,
         has_scale: bool,
+        has_primitive_size: bool,
     ) {
         property_section(ui, "Transform", |ui| {
-            let mut changed = false;
+            let mut position_changed = false;
+            let mut size_changed = false;
+            let mut scale_changed = false;
             ui.add_enabled_ui(
                 self.project_editable && !self.playing && !scene_node_locked(selected),
                 |ui| {
-                    changed |= vector_editor(
+                    position_changed |= vector_editor(
                         ui,
                         "Position",
                         &mut self.scene_editor_position,
                         &mut self.scene_editor_position_text,
                     );
                     if has_size {
-                        changed |= vector_editor(
+                        size_changed |= vector_editor(
                             ui,
                             "Size",
                             &mut self.scene_editor_size,
@@ -229,7 +233,7 @@ impl StudioShell {
                         );
                     }
                     if has_scale {
-                        changed |= vector_editor(
+                        scale_changed |= vector_editor(
                             ui,
                             "Scale",
                             &mut self.scene_editor_scale,
@@ -258,7 +262,7 @@ impl StudioShell {
                         .color(palette(ui).muted),
                 );
             }
-            if changed {
+            if position_changed || size_changed || scale_changed {
                 if has_size {
                     self.scene_editor_size = self.scene_editor_size.map(|value| value.max(0.05));
                     self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
@@ -269,12 +273,19 @@ impl StudioShell {
                 }
                 self.project_dirty = true;
                 self.project_error = None;
-                self.scene_edit_requested = Some(SceneEditRequest::UpdateTransform {
-                    target: selected.id.clone(),
-                    position: self.scene_editor_position,
-                    size: has_size.then_some(self.scene_editor_size),
-                    scale: has_scale.then_some(self.scene_editor_scale),
-                });
+                self.scene_edit_requested = if has_primitive_size && size_changed {
+                    Some(SceneEditRequest::SetPrimitiveSize {
+                        target: selected.id.clone(),
+                        position: self.scene_editor_position,
+                        size: self.scene_editor_size,
+                    })
+                } else {
+                    Some(SceneEditRequest::SetTransform {
+                        target: selected.id.clone(),
+                        position: self.scene_editor_position,
+                        scale: has_scale.then_some(self.scene_editor_scale),
+                    })
+                };
                 self.notice = "Scene object changed — save to keep it".to_owned();
             }
         });

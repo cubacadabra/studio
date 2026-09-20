@@ -1,5 +1,5 @@
 use super::*;
-use cubacadabra_builder::AuthoringWorldTransform;
+use cubacadabra_scene::AuthoringWorldTransform;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Workspace {
     #[default]
@@ -90,6 +90,7 @@ impl SceneNode {
                         .map(|transform| transform.scale)
                         .unwrap_or_else(|| vector_property(self, "Scale").unwrap_or([1.0; 3]))
                 }),
+                primitive_size: self.kind == "Block",
                 editable: !scene_node_locked(self),
             });
         }
@@ -452,7 +453,9 @@ fn authoring_scene_node(
     children: &BTreeMap<&str, Vec<&AuthoringNode>>,
     asset_bounds: &BTreeMap<String, [f32; 3]>,
 ) -> SceneNode {
-    let (kind, icon) = if node.components.contains_key("render") {
+    let (kind, icon) = if node.components.contains_key("primitive") {
+        ("Block", Icon::Object)
+    } else if node.components.contains_key("render") {
         ("Mesh", Icon::Object)
     } else if node.components.contains_key("text") {
         ("Sign", Icon::Object)
@@ -497,14 +500,20 @@ fn authoring_scene_node(
         .and_then(|render| render.get("mesh"))
         .and_then(Value::as_str)
         .and_then(|mesh| asset_bounds.get(mesh).copied());
-    if let Some(bounds) = node
+    let primitive_size = node
+        .components
+        .get("primitive")
+        .and_then(Value::as_object)
+        .and_then(|primitive| primitive.get("size"))
+        .and_then(vector_value);
+    let render_size = node
         .components
         .get("render")
         .and_then(Value::as_object)
         .and_then(|render| render.get("bounds"))
         .and_then(vector_value)
-        .or(mesh_asset_bounds)
-    {
+        .or(mesh_asset_bounds);
+    if let Some(bounds) = primitive_size.or(render_size) {
         properties.push(("Size".to_owned(), format_vector(bounds)));
     }
     if let Some(source) = &node.source {
@@ -554,7 +563,7 @@ pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {
 }
 
 fn is_authoring_placeable(node: &SceneNode) -> bool {
-    is_authoring_node(node) && matches!(node.kind, "Mesh" | "Sign" | "Interaction")
+    is_authoring_node(node) && matches!(node.kind, "Block" | "Mesh" | "Sign" | "Interaction")
 }
 
 pub(crate) fn scene_node_locked(node: &SceneNode) -> bool {

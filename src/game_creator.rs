@@ -261,11 +261,100 @@ fn write_project(project: &Path, title: &str, game_id: &str) -> Result<(), Strin
     )
     .map_err(|error| format!("could not write manifest.json: {error}"))?;
     fs::write(
+        project.join("scene.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&starter_scene()).unwrap()
+        ),
+    )
+    .map_err(|error| format!("could not write scene.json: {error}"))?;
+    fs::write(
         project.join("src/main.luau"),
         starter_source(title, game_id),
     )
     .map_err(|error| format!("could not write src/main.luau: {error}"))?;
     Ok(())
+}
+
+fn starter_scene() -> Value {
+    let root = "world-starter-world";
+    let block = |id: &str, name: &str, position: [f32; 3], size: [f32; 3], material: &str| {
+        json!({
+            "id": id,
+            "parentId": root,
+            "name": name,
+            "transform": { "position": position, "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+            "components": {
+                "primitive": { "shape": "box", "size": size, "material": material },
+                "collision": { "kind": "box" }
+            },
+            "editor": { "visible": true, "locked": false },
+        })
+    };
+    let mut nodes = vec![json!({
+        "id": root,
+        "name": "Starter World",
+        "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "components": {},
+        "editor": { "visible": true, "locked": false }
+    })];
+    for (id, name, position, size, material) in [
+        (
+            "start-platform",
+            "Start Platform",
+            [0.0, 0.5, 18.0],
+            [7.0, 1.0, 7.0],
+            "signal",
+        ),
+        (
+            "first-jump",
+            "First Jump",
+            [0.0, 0.6, 7.0],
+            [4.5, 1.2, 4.5],
+            "coral",
+        ),
+        (
+            "left-route",
+            "Left Route",
+            [-4.5, 1.8, -3.0],
+            [4.5, 1.2, 4.5],
+            "butter",
+        ),
+        (
+            "right-route",
+            "Right Route",
+            [4.5, 3.1, -13.0],
+            [4.5, 1.2, 4.5],
+            "periwinkle",
+        ),
+        (
+            "checkpoint-platform",
+            "Checkpoint Platform",
+            [0.0, 4.5, -22.0],
+            [6.0, 1.0, 6.0],
+            "signal",
+        ),
+        (
+            "finish-platform",
+            "Finish Platform",
+            [0.0, 4.5, -32.0],
+            [8.0, 1.0, 6.0],
+            "hot",
+        ),
+    ] {
+        nodes.push(block(id, name, position, size, material));
+    }
+    nodes.push(json!({
+        "id": "welcome-sign",
+        "parentId": root,
+        "name": "Welcome Sign",
+        "transform": { "position": [0, 2.2, 14], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "components": {
+            "text": { "text": "EDIT THIS SIGN IN INSPECTOR", "maxWidth": 7.0, "color": "paper" }
+        },
+        "editor": { "visible": true, "locked": false }
+    }));
+    json!({ "formatVersion": 1, "worldId": "starter-world", "nodes": nodes })
 }
 
 fn write_starter_floor_texture(path: &Path) -> Result<(), String> {
@@ -330,14 +419,6 @@ fn manifest(title: &str, game_id: &str) -> Value {
             { "position": [24, 23, -48], "scale": 1.2 },
         ],
     });
-    let course_blocks = json!([
-        { "id": "start-platform", "position": [0, 0.5, 18], "size": [7, 1, 7], "color": "signal" },
-        { "id": "first-jump", "position": [0, 0.6, 7], "size": [4.5, 1.2, 4.5], "color": "coral" },
-        { "id": "left-route", "position": [-4.5, 1.8, -3], "size": [4.5, 1.2, 4.5], "color": "butter" },
-        { "id": "right-route", "position": [4.5, 3.1, -13], "size": [4.5, 1.2, 4.5], "color": "periwinkle" },
-        { "id": "checkpoint-platform", "position": [0, 4.5, -22], "size": [6, 1, 6], "color": "signal" },
-        { "id": "finish-platform", "position": [0, 4.5, -32], "size": [8, 1, 6], "color": "hot" },
-    ]);
     let course_checkpoints = json!([
         { "id": "start", "position": [0, 1.5, 18], "radius": 3.5 },
         { "id": "checkpoint", "position": [0, 5.5, -22], "radius": 2.8 },
@@ -398,7 +479,6 @@ fn manifest(title: &str, game_id: &str) -> Value {
             "starter-world": {
                 "palette": palette,
                 "world": world,
-                "blocks": course_blocks,
                 "checkpoints": course_checkpoints,
                 "signs": [
                     {
@@ -482,11 +562,17 @@ mod tests {
                 .contains("api.session:start(\"the-wild-west\"")
         );
         assert_eq!(manifest["launch"]["destinationWorld"], "starter-world");
+        assert!(manifest["worlds"]["starter-world"]["blocks"].is_null());
+        let scene: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(result.project.join("scene.json")).unwrap())
+                .unwrap();
         assert_eq!(
-            manifest["worlds"]["starter-world"]["blocks"]
+            scene["nodes"]
                 .as_array()
                 .unwrap()
-                .len(),
+                .iter()
+                .filter(|node| node["components"]["primitive"].is_object())
+                .count(),
             6
         );
         assert_eq!(

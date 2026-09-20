@@ -7,10 +7,10 @@ use crate::{
     },
     project::{SourceAsset, SourceAssetKind},
 };
-use cubacadabra_builder::{AuthoringNode, AuthoringScene, parse_authoring_scene};
 use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
+use cubacadabra_scene::{AuthoringNode, AuthoringScene, parse_authoring_scene};
 #[cfg(target_os = "macos")]
 use egui::FontTweak;
 use egui::text::{LayoutJob, TextWrapping};
@@ -252,11 +252,15 @@ pub(crate) enum SceneEditRequest {
     UseImageAsFloor {
         asset_path: PathBuf,
     },
-    UpdateTransform {
+    SetTransform {
         target: String,
         position: [f32; 3],
-        size: Option<[f32; 3]>,
         scale: Option<[f32; 3]>,
+    },
+    SetPrimitiveSize {
+        target: String,
+        position: [f32; 3],
+        size: [f32; 3],
     },
     UpdateSignText {
         target: String,
@@ -335,6 +339,7 @@ pub(crate) struct SceneObjectGeometry {
     pub(crate) position: [f32; 3],
     pub(crate) size: Option<[f32; 3]>,
     pub(crate) scale: Option<[f32; 3]>,
+    pub(crate) primitive_size: bool,
     pub(crate) editable: bool,
 }
 
@@ -345,6 +350,7 @@ pub(crate) struct SceneObjectProjection {
     pub(crate) size: Option<[f32; 3]>,
     pub(crate) scale: Option<[f32; 3]>,
     pub(crate) base_size: Option<[f32; 3]>,
+    pub(crate) primitive_size: bool,
     pub(crate) editable: bool,
     pub(crate) center_screen: Pos2,
     pub(crate) world_corners: Option<[[f32; 3]; 4]>,
@@ -426,7 +432,6 @@ pub(crate) enum SceneViewportEditRequest {
         origin_screen: Pos2,
         current_screen: Pos2,
         origin_position: [f32; 3],
-        size: Option<[f32; 3]>,
     },
     Resize {
         phase: SceneViewportEditPhase,
@@ -437,6 +442,7 @@ pub(crate) enum SceneViewportEditRequest {
         origin_size: [f32; 3],
         origin_scale: Option<[f32; 3]>,
         base_size: Option<[f32; 3]>,
+        primitive_size: bool,
     },
     ResizeHeight {
         phase: SceneViewportEditPhase,
@@ -446,6 +452,7 @@ pub(crate) enum SceneViewportEditRequest {
         origin_position: [f32; 3],
         origin_scale: Option<[f32; 3]>,
         base_size: [f32; 3],
+        primitive_size: bool,
     },
 }
 

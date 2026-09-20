@@ -396,7 +396,19 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         let created = game_creator::create_game("Jump Course", &root).expect("starter project");
+        assert!(created.project.join("scene.json").is_file());
         let sources = load_game_sources(Some(created.project.clone())).expect("built starter");
+        let scene = sources
+            .authored_scene_source
+            .as_deref()
+            .and_then(|source| cubacadabra_scene::parse_authoring_scene(source).ok())
+            .expect("starter scene");
+        assert!(
+            scene
+                .nodes
+                .iter()
+                .any(|node| node.components.contains_key("primitive"))
+        );
         let client = cubacadabra_client::ClientSession::load(
             &sources.manifest_source,
             &sources.script_source,

@@ -1,6 +1,7 @@
 use super::*;
-use cubacadabra_builder::{
-    AuthoringNode, EditorMetadata, Transform, parse_authoring_scene, serialize_authoring_scene,
+use cubacadabra_scene::{
+    AuthoringNode, AuthoringScene, EditorMetadata, Transform, parse_authoring_scene,
+    serialize_authoring_scene,
 };
 impl StudioApp {
     pub(crate) fn create_new_project(&mut self, title: &str, parent: &Path) {
@@ -366,8 +367,9 @@ impl StudioApp {
         phase: SceneViewportEditPhase,
     ) -> Result<(), String> {
         let target = match &edit {
-            SceneEditRequest::UpdateTransform { target, .. } => target.clone(),
-            _ => return Err("viewport edits must update a transform".to_owned()),
+            SceneEditRequest::SetTransform { target, .. }
+            | SceneEditRequest::SetPrimitiveSize { target, .. } => target.clone(),
+            _ => return Err("viewport edits must update scene geometry".to_owned()),
         };
         if phase != SceneViewportEditPhase::Begin
             && self
@@ -468,17 +470,45 @@ impl StudioApp {
         {
             return Err("Open a raw source project to edit scene objects.".to_owned());
         }
+        if self.authored_scene_source.is_none() {
+            let migrated = migrate_manifest_to_scene(&self.authored_manifest_source)?;
+            self.authored_scene_source = Some(migrated.clone());
+            if let Some(shell) = &mut self.shell {
+                shell.set_source_scene(Some(&migrated), true);
+                shell.set_notice("Upgraded this project to the scene format".to_owned());
+            }
+        }
         if let Some(scene_source) = self.authored_scene_source.clone() {
             match &request {
                 SceneEditRequest::AddObject { kind, .. } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
+                    let root_id = scene
+                        .nodes
+                        .iter()
+                        .find(|node| node.parent_id.is_none())
+                        .map(|node| node.id.clone())
+                        .ok_or_else(|| "component scene has no world root".to_owned())?;
                     let (parent_id, base_id, name, component_name, components, position) =
                         match kind {
+                            SceneObjectKind::Block => (
+                                root_id.clone(),
+                                "block-new".to_owned(),
+                                "New Block".to_owned(),
+                                "primitive".to_owned(),
+                                serde_json::json!({
+                                    "shape": "box",
+                                    "size": [4, 1, 4],
+                                    "material": "signal"
+                                }),
+                                [0.0, 1.0, 0.0],
+                            ),
                             SceneObjectKind::Sign => (
-                                "signs",
-                                "sign-new",
-                                "New Sign",
-                                "text",
+                                scene
+                                    .node("signs")
+                                    .map_or_else(|| root_id.clone(), |node| node.id.clone()),
+                                "sign-new".to_owned(),
+                                "New Sign".to_owned(),
+                                "text".to_owned(),
                                 serde_json::json!({
                                     "text": "New sign",
                                     "maxWidth": 5,
@@ -487,10 +517,12 @@ impl StudioApp {
                                 [0.0, 2.0, 0.0],
                             ),
                             SceneObjectKind::Interaction => (
-                                "interactions",
-                                "interaction-new",
-                                "New Interaction",
-                                "interaction",
+                                scene
+                                    .node("interactions")
+                                    .map_or_else(|| root_id.clone(), |node| node.id.clone()),
+                                "interaction-new".to_owned(),
+                                "New Interaction".to_owned(),
+                                "interaction".to_owned(),
                                 serde_json::json!({
                                     "id": "interaction-new",
                                     "kind": "zone",
@@ -508,7 +540,7 @@ impl StudioApp {
                                 ));
                             }
                         };
-                    if scene.node(parent_id).is_none() {
+                    if scene.node(&parent_id).is_none() {
                         return Err(format!("component scene group {parent_id:?} was not found"));
                     }
                     let mut number = 1;
@@ -531,7 +563,7 @@ impl StudioApp {
                     component_map.insert(component_name.to_owned(), component);
                     scene.nodes.push(AuthoringNode {
                         id: id.clone(),
-                        parent_id: Some(parent_id.to_owned()),
+                        parent_id: Some(parent_id),
                         name: display_name,
                         transform: Transform {
                             position,
@@ -550,11 +582,10 @@ impl StudioApp {
                     );
                     return Ok(());
                 }
-                SceneEditRequest::UpdateTransform {
+                SceneEditRequest::SetTransform {
                     target,
                     position,
                     scale,
-                    ..
                 } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
                     if scene.node(target).is_some() {
@@ -568,6 +599,28 @@ impl StudioApp {
                             updated,
                             target,
                             "Position changed — save to keep it",
+                        );
+                        return Ok(());
+                    }
+                }
+                SceneEditRequest::SetPrimitiveSize {
+                    target,
+                    position,
+                    size,
+                } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    if let Some(node) = scene.node_mut(target) {
+                        if node.editor.locked {
+                            return Err(format!("scene node {target} is locked"));
+                        }
+                        node.transform.position = *position;
+                        set_authoring_component_property(node, "size", serde_json::json!(size))?;
+                        let updated = serialize_authoring_scene(&scene)?;
+                        self.commit_authoring_scene_transaction(
+                            scene_source,
+                            updated,
+                            target,
+                            "Primitive size changed — save to keep it",
                         );
                         return Ok(());
                     }
@@ -685,18 +738,22 @@ impl StudioApp {
             SceneEditRequest::UseImageAsFloor { .. } => {
                 return Err("floor image edit was not handled".to_owned());
             }
-            SceneEditRequest::UpdateTransform {
+            SceneEditRequest::SetTransform {
+                target,
+                position,
+                scale: None,
+            } => (target, SceneEditOperation::SetTransform { position }),
+            SceneEditRequest::SetTransform { scale: Some(_), .. } => {
+                return Err("non-uniform transform edits require an authoring scene".to_owned());
+            }
+            SceneEditRequest::SetPrimitiveSize {
                 target,
                 position,
                 size,
-                scale: None,
             } => (
                 target,
-                SceneEditOperation::UpdateTransform { position, size },
+                SceneEditOperation::SetPrimitiveSize { position, size },
             ),
-            SceneEditRequest::UpdateTransform { scale: Some(_), .. } => {
-                return Err("non-uniform transform edits require an authoring scene".to_owned());
-            }
             SceneEditRequest::DuplicateObject { target } => (target, SceneEditOperation::Duplicate),
             SceneEditRequest::DeleteObject { target } => (target, SceneEditOperation::Delete),
             SceneEditRequest::UpdateSignText { .. } => {
@@ -718,11 +775,12 @@ impl StudioApp {
             .ok_or_else(|| format!("scene object `{target}` was not found"))?;
         let mut selection_after_edit = None;
         match &operation {
-            SceneEditOperation::UpdateTransform { position, size } => {
+            SceneEditOperation::SetTransform { position } => {
                 object.insert("position".to_owned(), serde_json::json!(position));
-                if let Some(size) = size {
-                    object.insert("size".to_owned(), serde_json::json!(size));
-                }
+            }
+            SceneEditOperation::SetPrimitiveSize { position, size } => {
+                object.insert("position".to_owned(), serde_json::json!(position));
+                object.insert("size".to_owned(), serde_json::json!(size));
             }
             SceneEditOperation::UpdateProperty { key, value } => {
                 object.insert(key.clone(), value.clone());
@@ -761,7 +819,8 @@ impl StudioApp {
                 shell.select_scene_node(&selection);
             }
             shell.set_notice(match &operation {
-                SceneEditOperation::UpdateTransform { .. } => {
+                SceneEditOperation::SetTransform { .. }
+                | SceneEditOperation::SetPrimitiveSize { .. } => {
                     "Scene object changed — save to keep it".to_owned()
                 }
                 SceneEditOperation::UpdateProperty { .. } => {
@@ -1297,6 +1356,164 @@ fn set_authoring_component_property(
     Ok(())
 }
 
+fn migrate_manifest_to_scene(source: &str) -> Result<String, String> {
+    let manifest: Value = serde_json::from_str(source)
+        .map_err(|error| format!("manifest is no longer valid JSON: {error}"))?;
+    let world_id = active_manifest_world_id(&manifest);
+    let world = if world_id == "lobby" {
+        &manifest
+    } else {
+        manifest
+            .get("worlds")
+            .and_then(Value::as_object)
+            .and_then(|worlds| worlds.get(&world_id))
+            .ok_or_else(|| format!("scene world `{world_id}` was not found"))?
+    };
+    let root_id = format!("world-{world_id}");
+    let mut nodes = vec![AuthoringNode {
+        id: root_id.clone(),
+        parent_id: None,
+        name: format!("{} World", world_id.replace(['-', '_'], " ")),
+        transform: Transform::default(),
+        components: BTreeMap::new(),
+        editor: EditorMetadata::default(),
+        source: None,
+    }];
+
+    if let Some(blocks) = world.get("blocks").and_then(Value::as_array) {
+        for (index, block) in blocks.iter().enumerate() {
+            let object = block.as_object();
+            let id = object
+                .and_then(|object| object.get("id"))
+                .and_then(Value::as_str)
+                .map(|id| format!("block-{id}"))
+                .unwrap_or_else(|| format!("block-{}", index + 1));
+            let mut components = BTreeMap::new();
+            components.insert(
+                "primitive".to_owned(),
+                serde_json::json!({
+                    "shape": "box",
+                    "size": object
+                        .and_then(|object| object.get("size"))
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([1, 1, 1])),
+                    "material": object
+                        .and_then(|object| object.get("color"))
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!("signal")),
+                }),
+            );
+            components.insert("collision".to_owned(), serde_json::json!({ "kind": "box" }));
+            nodes.push(AuthoringNode {
+                id,
+                parent_id: Some(root_id.clone()),
+                name: format!("Block {}", index + 1),
+                transform: Transform {
+                    position: scene_vector(
+                        object.and_then(|object| object.get("position")),
+                        [0.0, 0.0, 0.0],
+                    ),
+                    ..Transform::default()
+                },
+                components,
+                editor: EditorMetadata::default(),
+                source: None,
+            });
+        }
+    }
+    if let Some(signs) = world.get("signs").and_then(Value::as_array) {
+        for (index, sign) in signs.iter().enumerate() {
+            let object = sign.as_object();
+            let mut components = BTreeMap::new();
+            components.insert(
+                "text".to_owned(),
+                serde_json::json!({
+                    "text": object
+                        .and_then(|object| object.get("text"))
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!("Sign")),
+                    "maxWidth": object
+                        .and_then(|object| object.get("maxWidth"))
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!(5)),
+                    "color": object
+                        .and_then(|object| object.get("color"))
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!("paper")),
+                }),
+            );
+            nodes.push(AuthoringNode {
+                id: format!("sign-{}", index + 1),
+                parent_id: Some(root_id.clone()),
+                name: format!("Sign {}", index + 1),
+                transform: Transform {
+                    position: scene_vector(
+                        object.and_then(|object| object.get("position")),
+                        [0.0, 0.0, 0.0],
+                    ),
+                    ..Transform::default()
+                },
+                components,
+                editor: EditorMetadata::default(),
+                source: None,
+            });
+        }
+    }
+    if let Some(interactions) = world.get("interactions").and_then(Value::as_array) {
+        for (index, interaction) in interactions.iter().enumerate() {
+            let object = interaction.as_object();
+            let id = object
+                .and_then(|object| object.get("id"))
+                .and_then(Value::as_str)
+                .map(|id| format!("interaction-{id}"))
+                .unwrap_or_else(|| format!("interaction-{}", index + 1));
+            let mut components = BTreeMap::new();
+            components.insert(
+                "interaction".to_owned(),
+                object
+                    .cloned()
+                    .map(Value::Object)
+                    .unwrap_or_else(|| serde_json::json!({ "kind": "zone" })),
+            );
+            nodes.push(AuthoringNode {
+                id,
+                parent_id: Some(root_id.clone()),
+                name: format!("Interaction {}", index + 1),
+                transform: Transform {
+                    position: scene_vector(
+                        object.and_then(|object| object.get("position")),
+                        [0.0, 0.0, 0.0],
+                    ),
+                    ..Transform::default()
+                },
+                components,
+                editor: EditorMetadata::default(),
+                source: None,
+            });
+        }
+    }
+
+    serialize_authoring_scene(&AuthoringScene {
+        format_version: 1,
+        world_id: Some(world_id),
+        nodes,
+    })
+}
+
+fn scene_vector(value: Option<&Value>, fallback: [f32; 3]) -> [f32; 3] {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return fallback;
+    };
+    let Some(values) = values.iter().map(Value::as_f64).collect::<Option<Vec<_>>>() else {
+        return fallback;
+    };
+    values
+        .get(..3)
+        .and_then(|values| values.try_into().ok())
+        .map(|values: [f64; 3]| values.map(|value| value as f32))
+        .unwrap_or(fallback)
+}
+
 fn active_manifest_world_id(manifest: &Value) -> String {
     manifest
         .pointer("/launch/destinationWorld")
@@ -1436,6 +1653,36 @@ mod scene_edit_tests {
         assert_ne!(
             default_scene_object(SceneObjectKind::Block, 0)["position"],
             default_scene_object(SceneObjectKind::Block, 1)["position"]
+        );
+    }
+
+    #[test]
+    fn manifest_migration_places_blocks_in_primitive_scene_nodes() {
+        let source = serde_json::json!({
+            "launch": { "destinationWorld": "course" },
+            "worlds": {
+                "course": {
+                    "blocks": [{
+                        "id": "platform",
+                        "position": [2, 1, 3],
+                        "size": [4, 1, 4],
+                        "color": "signal"
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let migrated = migrate_manifest_to_scene(&source).expect("scene migration");
+        let scene = parse_authoring_scene(&migrated).expect("valid migrated scene");
+        let block = scene
+            .nodes
+            .iter()
+            .find(|node| node.components.contains_key("primitive"))
+            .expect("primitive block");
+        assert_eq!(block.transform.position, [2.0, 1.0, 3.0]);
+        assert_eq!(
+            block.components["primitive"]["size"],
+            serde_json::json!([4, 1, 4])
         );
     }
 }

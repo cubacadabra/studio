@@ -837,6 +837,7 @@ impl StudioApp {
                         size: visual_size,
                         scale: geometry.scale,
                         base_size: geometry.size,
+                        primitive_size: geometry.primitive_size,
                         editable: geometry.editable,
                         center_screen: egui::pos2(center_x / scale, center_y / scale),
                         world_corners,
@@ -873,7 +874,6 @@ impl StudioApp {
                 origin_screen,
                 current_screen,
                 origin_position,
-                size,
             } => {
                 let Some(origin) = world_point(origin_screen, origin_position[1]) else {
                     return Ok(None);
@@ -894,10 +894,9 @@ impl StudioApp {
                     world_position
                 };
                 Ok(Some((
-                    SceneEditRequest::UpdateTransform {
+                    SceneEditRequest::SetTransform {
                         target,
                         position,
-                        size,
                         scale: None,
                     },
                     phase,
@@ -912,6 +911,7 @@ impl StudioApp {
                 origin_size,
                 origin_scale,
                 base_size,
+                primitive_size,
             } => {
                 let Some(mut moving) = world_point(current_screen, fixed_corner[1]) else {
                     return Ok(None);
@@ -939,8 +939,9 @@ impl StudioApp {
                     origin_size[1],
                     (moving[2] - fixed_corner[2]).abs(),
                 ];
-                let desired_scale = match (origin_scale, base_size) {
-                    (Some(origin_scale), Some(base_size)) => Some([
+                let desired_scale = match (origin_scale, base_size, primitive_size) {
+                    (_, _, true) => None,
+                    (Some(origin_scale), Some(base_size), false) => Some([
                         (size[0] / base_size[0]).max(0.05),
                         origin_scale[1],
                         (size[2] / base_size[2]).max(0.05),
@@ -967,11 +968,18 @@ impl StudioApp {
                     (world_position, None)
                 };
                 Ok(Some((
-                    SceneEditRequest::UpdateTransform {
-                        target,
-                        position,
-                        size: desired_scale.is_none().then_some(size),
-                        scale,
+                    if primitive_size {
+                        SceneEditRequest::SetPrimitiveSize {
+                            target,
+                            position,
+                            size,
+                        }
+                    } else {
+                        SceneEditRequest::SetTransform {
+                            target,
+                            position,
+                            scale,
+                        }
                     },
                     phase,
                 )))
@@ -984,6 +992,7 @@ impl StudioApp {
                 origin_position,
                 origin_scale,
                 base_size,
+                primitive_size,
             } => {
                 let delta = origin_screen.y - current_screen.y;
                 let original_height = base_size[1] * origin_scale.map_or(1.0, |scale| scale[1]);
@@ -994,7 +1003,16 @@ impl StudioApp {
                     origin_position[1] + (height - original_height) * 0.5,
                     origin_position[2],
                 ];
-                let (position, size, scale) = if let Some(origin_scale) = origin_scale {
+                let (position, size, scale) = if primitive_size {
+                    let position = if let Some(shell) = &self.shell {
+                        shell
+                            .authoring_local_position_for_world(&target, world_position)?
+                            .unwrap_or(world_position)
+                    } else {
+                        world_position
+                    };
+                    (position, Some([base_size[0], height, base_size[2]]), None)
+                } else if let Some(origin_scale) = origin_scale {
                     let desired_scale = [origin_scale[0], scale_y, origin_scale[2]];
                     let (position, scale) = if let Some(shell) = &self.shell {
                         let (position, scale) = shell.authoring_local_transform_for_world(
@@ -1020,11 +1038,18 @@ impl StudioApp {
                     )
                 };
                 Ok(Some((
-                    SceneEditRequest::UpdateTransform {
-                        target,
-                        position,
-                        size,
-                        scale,
+                    if primitive_size {
+                        SceneEditRequest::SetPrimitiveSize {
+                            target,
+                            position,
+                            size: size.expect("primitive resize has a size"),
+                        }
+                    } else {
+                        SceneEditRequest::SetTransform {
+                            target,
+                            position,
+                            scale,
+                        }
                     },
                     phase,
                 )))

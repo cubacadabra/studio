@@ -675,14 +675,9 @@ pub(crate) fn project_asset_slug(asset_id: &str) -> Result<String, String> {
 }
 
 pub(crate) enum SceneEditOperation {
-    UpdateTransform {
-        position: [f32; 3],
-        size: Option<[f32; 3]>,
-    },
-    UpdateProperty {
-        key: String,
-        value: Value,
-    },
+    SetTransform { position: [f32; 3] },
+    SetPrimitiveSize { position: [f32; 3], size: [f32; 3] },
+    UpdateProperty { key: String, value: Value },
     Duplicate,
     Delete,
 }

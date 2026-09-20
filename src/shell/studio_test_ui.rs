@@ -356,10 +356,7 @@ impl StudioShell {
                         scene_move_drag_origin(&projection, current_screen, total_drag_delta)
                 {
                     ui.data_mut(|data| {
-                        data.insert_temp(
-                            drag_id,
-                            (origin_screen, projection.position, projection.size),
-                        );
+                        data.insert_temp(drag_id, (origin_screen, projection.position));
                     });
                     self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
                         phase: SceneViewportEditPhase::Begin,
@@ -367,13 +364,12 @@ impl StudioShell {
                         origin_screen,
                         current_screen,
                         origin_position: projection.position,
-                        size: projection.size,
                     });
                 }
                 if response.dragged()
                     && let Some(current_screen) = response.interact_pointer_pos()
-                    && let Some((origin_screen, origin_position, size)) =
-                        ui.data(|data| data.get_temp::<(Pos2, [f32; 3], Option<[f32; 3]>)>(drag_id))
+                    && let Some((origin_screen, origin_position)) =
+                        ui.data(|data| data.get_temp::<(Pos2, [f32; 3])>(drag_id))
                 {
                     self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
                         phase: SceneViewportEditPhase::Update,
@@ -381,14 +377,12 @@ impl StudioShell {
                         origin_screen,
                         current_screen,
                         origin_position,
-                        size,
                     });
                 }
                 if response.drag_stopped() {
                     if let Some(current_screen) = response.interact_pointer_pos()
-                        && let Some((origin_screen, origin_position, size)) = ui.data(|data| {
-                            data.get_temp::<(Pos2, [f32; 3], Option<[f32; 3]>)>(drag_id)
-                        })
+                        && let Some((origin_screen, origin_position)) =
+                            ui.data(|data| data.get_temp::<(Pos2, [f32; 3])>(drag_id))
                     {
                         self.scene_viewport_edit_requested = Some(SceneViewportEditRequest::Move {
                             phase: SceneViewportEditPhase::Commit,
@@ -396,10 +390,9 @@ impl StudioShell {
                             origin_screen,
                             current_screen,
                             origin_position,
-                            size,
                         });
                     }
-                    ui.data_mut(|data| data.remove::<(Pos2, [f32; 3], Option<[f32; 3]>)>(drag_id));
+                    ui.data_mut(|data| data.remove::<(Pos2, [f32; 3])>(drag_id));
                 }
             }
             response.clone().context_menu(|ui| {
@@ -476,6 +469,7 @@ impl StudioShell {
                                 origin_size: size,
                                 origin_scale: projection.scale,
                                 base_size: projection.base_size,
+                                primitive_size: projection.primitive_size,
                             });
                     }
                     if handle_response.dragged()
@@ -506,6 +500,7 @@ impl StudioShell {
                                 origin_size,
                                 origin_scale,
                                 base_size,
+                                primitive_size: projection.primitive_size,
                             });
                     }
                     if handle_response.drag_stopped() {
@@ -536,6 +531,7 @@ impl StudioShell {
                                     origin_size,
                                     origin_scale,
                                     base_size,
+                                    primitive_size: projection.primitive_size,
                                 });
                         }
                         ui.data_mut(|data| {
@@ -600,6 +596,7 @@ impl StudioShell {
                             origin_position,
                             origin_scale,
                             base_size,
+                            primitive_size: projection.primitive_size,
                         });
                 }
                 if handle_response.drag_started() {
@@ -612,6 +609,7 @@ impl StudioShell {
                             origin_position: projection.position,
                             origin_scale: projection.scale,
                             base_size,
+                            primitive_size: projection.primitive_size,
                         });
                 }
                 if handle_response.drag_stopped()
@@ -630,6 +628,7 @@ impl StudioShell {
                             origin_position,
                             origin_scale,
                             base_size,
+                            primitive_size: projection.primitive_size,
                         });
                 }
                 if handle_response.drag_stopped() {
@@ -689,6 +688,7 @@ mod tests {
             size: Some([4.0, 1.0, 4.0]),
             scale: None,
             base_size: Some([4.0, 1.0, 4.0]),
+            primitive_size: false,
             editable: true,
             center_screen: egui::pos2(15.0, 15.0),
             world_corners: None,
