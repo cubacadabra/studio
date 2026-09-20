@@ -8,6 +8,11 @@ impl StudioApp {
         let initial_review_camera = sources.review_camera;
         let authored_manifest_source = sources.authored_manifest_source;
         let authored_scene_source = sources.authored_scene_source;
+        let authoring_scene = authored_scene_source
+            .as_deref()
+            .map(cubacadabra_scene::parse_authoring_scene)
+            .transpose()
+            .map_err(StudioError)?;
         let manifest_source = sources.manifest_source;
         let script_source = sources.script_source;
         let game_root = sources.root;
@@ -59,6 +64,11 @@ impl StudioApp {
             world_models: load_world_models(&game_root, &manifest_source)?,
             authored_manifest_source,
             authored_scene_source,
+            authoring_scene_indices: authoring_scene
+                .as_ref()
+                .map(authoring_scene_indices)
+                .unwrap_or_default(),
+            authoring_scene,
             manifest_source,
             game_root,
             standalone_preview,

@@ -75,6 +75,7 @@ impl SceneNode {
         world_transforms: &BTreeMap<String, AuthoringWorldTransform>,
     ) {
         if (is_scene_object(&self.id) || is_authoring_placeable(self))
+            && !scene_node_locked(self)
             && let Some(position) = vector_property(self, "Position")
         {
             objects.push(SceneObjectGeometry {
@@ -107,6 +108,7 @@ pub(crate) struct SceneOutline {
     pub(crate) initial_selection: String,
     pub(crate) initial_expanded: BTreeSet<String>,
     pub(crate) authoring_world_transforms: BTreeMap<String, AuthoringWorldTransform>,
+    pub(crate) placeable_objects: Vec<SceneObjectGeometry>,
 }
 
 pub(crate) struct ProjectLoadingState {
@@ -128,11 +130,16 @@ pub(crate) struct ManifestAsset {
 }
 
 impl SceneOutline {
-    pub(crate) fn placeable_object_geometries(&self) -> Vec<SceneObjectGeometry> {
-        let mut objects = Vec::new();
-        self.root
-            .collect_placeable_objects(&mut objects, &self.authoring_world_transforms);
-        objects
+    fn rebuild_placeable_objects(&mut self) {
+        self.placeable_objects.clear();
+        self.root.collect_placeable_objects(
+            &mut self.placeable_objects,
+            &self.authoring_world_transforms,
+        );
+    }
+
+    pub(crate) fn placeable_object_geometries(&self) -> &[SceneObjectGeometry] {
+        &self.placeable_objects
     }
 
     pub(crate) fn search_matches(&self, query: &str) -> BTreeSet<String> {
@@ -257,7 +264,7 @@ impl SceneOutline {
             .unwrap_or_else(|| root_id.clone());
         let initial_expanded = BTreeSet::from([root_id.clone(), initial_selection.clone()]);
 
-        Ok(Self {
+        let mut outline = Self {
             root: SceneNode {
                 id: root_id,
                 label: game_name,
@@ -274,7 +281,10 @@ impl SceneOutline {
             initial_selection,
             initial_expanded,
             authoring_world_transforms: BTreeMap::new(),
-        })
+            placeable_objects: Vec::new(),
+        };
+        outline.rebuild_placeable_objects();
+        Ok(outline)
     }
 
     pub(crate) fn parse_with_authoring_scene(
@@ -364,6 +374,7 @@ impl SceneOutline {
             }
         }
         outline.authoring_world_transforms = authoring_world_transforms;
+        outline.rebuild_placeable_objects();
         Ok(outline)
     }
 
@@ -383,6 +394,7 @@ impl SceneOutline {
             assets: Vec::new(),
             root,
             authoring_world_transforms: BTreeMap::new(),
+            placeable_objects: Vec::new(),
         }
     }
 

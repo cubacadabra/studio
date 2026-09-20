@@ -269,8 +269,8 @@ impl StudioShell {
     fn show_scene_object_handles(&mut self, ui: &mut egui::Ui) {
         let colors = palette(ui);
         let viewport = self.runtime_viewport;
-        let projections = self.scene_object_projections.clone();
-        for projection in projections.into_iter().rev() {
+        let projections = std::mem::take(&mut self.scene_object_projections);
+        for projection in projections.iter().rev() {
             let bounds = projection.bounds();
             if !bounds.intersects(viewport) {
                 continue;
@@ -739,6 +739,7 @@ impl StudioShell {
                 }
             }
         }
+        self.scene_object_projections = projections;
     }
 }
 

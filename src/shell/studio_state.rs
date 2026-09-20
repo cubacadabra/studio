@@ -99,6 +99,11 @@ impl StudioShell {
         self.project_editable
     }
 
+    pub(crate) fn mark_scene_dirty(&mut self) {
+        self.project_dirty = true;
+        self.preview_stale = true;
+    }
+
     pub(crate) fn project_is_dirty(&self) -> bool {
         self.project_dirty
     }
@@ -245,7 +250,7 @@ impl StudioShell {
         self.scene_edit_requested.take()
     }
 
-    pub(crate) fn scene_object_geometries(&self) -> Vec<SceneObjectGeometry> {
+    pub(crate) fn scene_object_geometries(&self) -> &[SceneObjectGeometry] {
         self.scene_outline.placeable_object_geometries()
     }
 
@@ -254,8 +259,9 @@ impl StudioShell {
             return None;
         }
         self.scene_object_geometries()
-            .into_iter()
+            .iter()
             .find(|geometry| geometry.id == self.selected_scene)
+            .cloned()
     }
 
     pub(crate) fn request_scene_focus(&mut self) -> bool {
@@ -273,8 +279,30 @@ impl StudioShell {
 
     pub(crate) fn selected_scene_object_geometry(&self) -> Option<SceneObjectGeometry> {
         self.scene_object_geometries()
-            .into_iter()
+            .iter()
             .find(|geometry| geometry.id == self.selected_scene && geometry.editable)
+            .cloned()
+    }
+
+    pub(crate) fn update_scene_object_geometry(
+        &mut self,
+        id: &str,
+        position: [f32; 3],
+        scale: [f32; 3],
+        size: Option<[f32; 3]>,
+    ) {
+        if let Some(geometry) = self
+            .scene_outline
+            .placeable_objects
+            .iter_mut()
+            .find(|geometry| geometry.id == id)
+        {
+            geometry.position = position;
+            geometry.scale = Some(scale);
+            if let Some(size) = size {
+                geometry.size = Some(size);
+            }
+        }
     }
 
     pub(crate) fn set_scene_object_projections(&mut self, projections: Vec<SceneObjectProjection>) {
@@ -293,37 +321,6 @@ impl StudioShell {
                 .scene_object_projections
                 .iter()
                 .any(|projection| projection.editable && projection.contains(point))
-    }
-
-    pub(crate) fn authoring_local_position_for_world(
-        &self,
-        id: &str,
-        world_position: [f32; 3],
-    ) -> Result<Option<[f32; 3]>, String> {
-        let Some(source) = self.authoring_scene_source.as_deref() else {
-            return Ok(None);
-        };
-        let scene = parse_authoring_scene(source)?;
-        if scene.node(id).is_none() {
-            return Ok(None);
-        }
-        scene.local_position_for_world(id, world_position).map(Some)
-    }
-
-    pub(crate) fn authoring_local_transform_for_world(
-        &self,
-        id: &str,
-        world_position: [f32; 3],
-        world_scale: [f32; 3],
-    ) -> Result<([f32; 3], [f32; 3]), String> {
-        let Some(source) = self.authoring_scene_source.as_deref() else {
-            return Ok((world_position, world_scale));
-        };
-        let scene = parse_authoring_scene(source)?;
-        if scene.node(id).is_none() {
-            return Ok((world_position, world_scale));
-        }
-        scene.local_transform_for_world(id, world_position, world_scale)
     }
 
     pub(crate) fn select_scene_node(&mut self, id: &str) -> bool {

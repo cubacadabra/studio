@@ -11,6 +11,12 @@ use serde_json::Value;
 
 impl StudioApp {
     fn apply_scene_source_snapshot(&mut self, source: String, target: &str, notice: &str) {
+        self.authoring_scene = parse_authoring_scene(&source).ok();
+        self.authoring_scene_indices = self
+            .authoring_scene
+            .as_ref()
+            .map(authoring_scene_indices)
+            .unwrap_or_default();
         self.authored_scene_source = Some(source.clone());
         if let Some(shell) = &mut self.shell {
             shell.set_source_scene(Some(&source), true);
@@ -68,9 +74,12 @@ impl StudioApp {
             self.scene_drag_cancelled_target = None;
         }
         if self.scene_drag_snapshot.is_none() {
+            let before = self
+                .scene_geometry_state(&target)
+                .ok_or_else(|| format!("scene node {target} was not found"))?;
             self.scene_drag_snapshot = Some(SceneDragSnapshot {
-                scene_before: self.authored_scene_source.clone(),
                 target: target.clone(),
+                before,
             });
         }
         if phase == SceneViewportEditPhase::Begin {
@@ -79,17 +88,17 @@ impl StudioApp {
         self.apply_scene_edit(edit)?;
         if phase == SceneViewportEditPhase::Commit {
             if let Some(snapshot) = self.scene_drag_snapshot.take()
-                && let (Some(before), Some(after)) =
-                    (snapshot.scene_before, self.authored_scene_source.clone())
-                && before != after
+                && let Some(after) = self.scene_geometry_state(&snapshot.target)
+                && snapshot.before != after
             {
-                record_scene_history(
-                    &mut self.scene_undo,
-                    &mut self.scene_redo,
-                    before,
-                    after,
-                    &snapshot.target,
-                );
+                self.scene_undo.push(SceneHistoryEntry {
+                    kind: SceneHistoryKind::Geometry {
+                        target: snapshot.target,
+                        before: snapshot.before,
+                        after,
+                    },
+                });
+                self.scene_redo.clear();
             }
         }
         Ok(())
@@ -100,12 +109,13 @@ impl StudioApp {
             return;
         };
         self.scene_drag_cancelled_target = Some(snapshot.target.clone());
-        if let Some(before) = snapshot.scene_before {
-            self.apply_scene_source_snapshot(
-                before,
-                &snapshot.target,
-                "Transform cancelled — source restored",
-            );
+        if let Err(message) = self.restore_scene_geometry_state(&snapshot.target, &snapshot.before)
+            && let Some(shell) = &mut self.shell
+        {
+            shell.set_project_error(message);
+        }
+        if let Some(shell) = &mut self.shell {
+            shell.set_notice("Transform cancelled".to_owned());
         }
     }
 
@@ -116,17 +126,177 @@ impl StudioApp {
         self.scene_drag_cancelled_target = None;
     }
 
+    fn scene_geometry_state(&self, target: &str) -> Option<SceneGeometryState> {
+        let scene = self.authoring_scene.as_ref()?;
+        let index = self.authoring_scene_indices.get(target)?;
+        let node = scene.nodes.get(*index)?;
+        let primitive_size = node
+            .components
+            .get("primitive")
+            .and_then(Value::as_object)
+            .and_then(|component| component.get("size"))
+            .and_then(crate::shell::vector_value);
+        Some(SceneGeometryState {
+            transform: node.transform.clone(),
+            primitive_size,
+        })
+    }
+
+    fn update_scene_geometry_cache(&mut self, target: &str) -> Result<(), String> {
+        let Some(scene) = self.authoring_scene.as_ref() else {
+            return Ok(());
+        };
+        let world = scene.world_transform(target)?;
+        let primitive_size = self
+            .authoring_scene_indices
+            .get(target)
+            .and_then(|index| scene.nodes.get(*index))
+            .and_then(|node| node.components.get("primitive"))
+            .and_then(Value::as_object)
+            .and_then(|component| component.get("size"))
+            .and_then(crate::shell::vector_value);
+        if let Some(shell) = &mut self.shell {
+            shell.update_scene_object_geometry(target, world.position, world.scale, primitive_size);
+        }
+        Ok(())
+    }
+
+    fn restore_scene_geometry_state(
+        &mut self,
+        target: &str,
+        state: &SceneGeometryState,
+    ) -> Result<(), String> {
+        let Some(scene) = self.authoring_scene.as_mut() else {
+            return Err("No authoring scene is loaded".to_owned());
+        };
+        let index = *self
+            .authoring_scene_indices
+            .get(target)
+            .ok_or_else(|| format!("scene node {target} was not found"))?;
+        let node = scene
+            .nodes
+            .get_mut(index)
+            .ok_or_else(|| format!("scene node {target} was not found"))?;
+        node.transform = state.transform.clone();
+        if let Some(size) = state.primitive_size {
+            set_authoring_component_property(node, "size", serde_json::json!(size))?;
+        }
+        self.update_scene_geometry_cache(target)?;
+        if let Some(shell) = &mut self.shell {
+            shell.mark_scene_dirty();
+        }
+        Ok(())
+    }
+
+    fn apply_live_geometry_edit(&mut self, request: &SceneEditRequest) -> Result<(), String> {
+        let target = match request {
+            SceneEditRequest::SetTransform { target, .. }
+            | SceneEditRequest::SetPrimitiveSize { target, .. } => target,
+            _ => return Ok(()),
+        };
+        let before = self
+            .scene_geometry_state(target)
+            .ok_or_else(|| format!("scene node {target} was not found"))?;
+        let Some(scene) = self.authoring_scene.as_mut() else {
+            return Err("No authoring scene is loaded".to_owned());
+        };
+        let index = *self
+            .authoring_scene_indices
+            .get(target)
+            .ok_or_else(|| format!("scene node {target} was not found"))?;
+        match request {
+            SceneEditRequest::SetTransform {
+                position, scale, ..
+            } => {
+                let node = scene
+                    .nodes
+                    .get_mut(index)
+                    .ok_or_else(|| format!("scene node {target} was not found"))?;
+                if node.editor.locked {
+                    return Err(format!("scene node {} is locked", node.id));
+                }
+                if position.iter().any(|value| !value.is_finite()) {
+                    return Err(format!(
+                        "scene node {target} position must contain finite values"
+                    ));
+                }
+                node.transform.position = *position;
+                if let Some(scale) = scale {
+                    if scale
+                        .iter()
+                        .any(|value| !value.is_finite() || *value < 0.05)
+                    {
+                        return Err(format!(
+                            "scene node {target} scale must contain finite values of at least 0.05"
+                        ));
+                    }
+                    node.transform.scale = *scale;
+                }
+            }
+            SceneEditRequest::SetPrimitiveSize { position, size, .. } => {
+                let node = scene
+                    .nodes
+                    .get_mut(index)
+                    .ok_or_else(|| format!("scene node {target} was not found"))?;
+                if node.editor.locked {
+                    return Err(format!("scene node {target} is locked"));
+                }
+                node.transform.position = *position;
+                set_authoring_component_property(node, "size", serde_json::json!(size))?;
+            }
+            _ => unreachable!(),
+        }
+        let after = self
+            .scene_geometry_state(target)
+            .ok_or_else(|| format!("scene node {target} was not found"))?;
+        self.update_scene_geometry_cache(target)?;
+        if let Some(shell) = &mut self.shell {
+            shell.mark_scene_dirty();
+        }
+        if self.scene_drag_snapshot.is_none() && before != after {
+            self.scene_undo.push(SceneHistoryEntry {
+                kind: SceneHistoryKind::Geometry {
+                    target: target.clone(),
+                    before,
+                    after,
+                },
+            });
+            self.scene_redo.clear();
+        }
+        if let Some(shell) = &mut self.shell {
+            shell.set_notice(
+                if matches!(request, SceneEditRequest::SetPrimitiveSize { .. }) {
+                    "Primitive size changed — save to keep it".to_owned()
+                } else {
+                    "Position changed — save to keep it".to_owned()
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn undo_scene_edit(&mut self) -> Result<(), String> {
         let entry = self
             .scene_undo
             .pop()
             .ok_or_else(|| "Nothing to undo".to_owned())?;
+        match &entry.kind {
+            SceneHistoryKind::Snapshot { before, target, .. } => {
+                self.apply_scene_source_snapshot(
+                    before.clone(),
+                    target,
+                    "Position restored — save to keep it",
+                );
+            }
+            SceneHistoryKind::Geometry { target, before, .. } => {
+                self.restore_scene_geometry_state(target, before)?;
+                if let Some(shell) = &mut self.shell {
+                    shell.select_scene_node(target);
+                    shell.set_notice("Position restored — save to keep it".to_owned());
+                }
+            }
+        }
         self.scene_redo.push(entry.clone());
-        self.apply_scene_source_snapshot(
-            entry.before,
-            &entry.target,
-            "Position restored — save to keep it",
-        );
         Ok(())
     }
 
@@ -135,12 +305,23 @@ impl StudioApp {
             .scene_redo
             .pop()
             .ok_or_else(|| "Nothing to redo".to_owned())?;
+        match &entry.kind {
+            SceneHistoryKind::Snapshot { after, target, .. } => {
+                self.apply_scene_source_snapshot(
+                    after.clone(),
+                    target,
+                    "Position reapplied — save to keep it",
+                );
+            }
+            SceneHistoryKind::Geometry { target, after, .. } => {
+                self.restore_scene_geometry_state(target, after)?;
+                if let Some(shell) = &mut self.shell {
+                    shell.select_scene_node(target);
+                    shell.set_notice("Position reapplied — save to keep it".to_owned());
+                }
+            }
+        }
         self.scene_undo.push(entry.clone());
-        self.apply_scene_source_snapshot(
-            entry.after,
-            &entry.target,
-            "Position reapplied — save to keep it",
-        );
         Ok(())
     }
 
@@ -161,13 +342,27 @@ impl StudioApp {
             retarget_migrated_scene_edit(&mut request, &migrated.target_map);
             self.authored_manifest_source = manifest_source.clone();
             self.authored_scene_source = Some(scene_source.clone());
+            self.authoring_scene = Some(migrated.scene.clone());
+            self.authoring_scene_indices = authoring_scene_indices(&migrated.scene);
             if let Some(shell) = &mut self.shell {
                 shell.set_source_manifest(&manifest_source, true);
                 shell.set_source_scene(Some(&scene_source), true);
                 shell.set_notice("Upgraded this project to the scene format".to_owned());
             }
         }
-        if let Some(scene_source) = self.authored_scene_source.clone() {
+        if matches!(
+            request,
+            SceneEditRequest::SetTransform { .. } | SceneEditRequest::SetPrimitiveSize { .. }
+        ) {
+            return self.apply_live_geometry_edit(&request);
+        }
+        let scene_source = self
+            .authoring_scene
+            .as_ref()
+            .map(serialize_authoring_scene)
+            .transpose()?
+            .or_else(|| self.authored_scene_source.clone());
+        if let Some(scene_source) = scene_source {
             match &request {
                 SceneEditRequest::AddObject { kind, .. } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
@@ -738,9 +933,11 @@ fn record_scene_history(
     target: &str,
 ) {
     undo.push(SceneHistoryEntry {
-        before,
-        after,
-        target: target.to_owned(),
+        kind: SceneHistoryKind::Snapshot {
+            before,
+            after,
+            target: target.to_owned(),
+        },
     });
     redo.clear();
 }
@@ -831,14 +1028,18 @@ mod scene_edit_tests {
     #[test]
     fn scene_history_records_one_transaction_and_invalidates_redo() {
         let mut undo = vec![SceneHistoryEntry {
-            before: "old".to_owned(),
-            after: "middle".to_owned(),
-            target: "node".to_owned(),
+            kind: SceneHistoryKind::Snapshot {
+                before: "old".to_owned(),
+                after: "middle".to_owned(),
+                target: "node".to_owned(),
+            },
         }];
         let mut redo = vec![SceneHistoryEntry {
-            before: "middle".to_owned(),
-            after: "new".to_owned(),
-            target: "node".to_owned(),
+            kind: SceneHistoryKind::Snapshot {
+                before: "middle".to_owned(),
+                after: "new".to_owned(),
+                target: "node".to_owned(),
+            },
         }];
         record_scene_history(
             &mut undo,
@@ -849,8 +1050,11 @@ mod scene_edit_tests {
         );
         assert_eq!(undo.len(), 2);
         assert!(redo.is_empty());
-        assert_eq!(undo[1].before, "middle");
-        assert_eq!(undo[1].after, "latest");
+        let SceneHistoryKind::Snapshot { before, after, .. } = &undo[1].kind else {
+            panic!("expected snapshot history entry");
+        };
+        assert_eq!(before, "middle");
+        assert_eq!(after, "latest");
     }
 
     #[test]

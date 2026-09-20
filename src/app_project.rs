@@ -162,6 +162,25 @@ impl StudioApp {
             .as_ref()
             .map(StudioShell::source_files_for_save)
             .unwrap_or_default();
+        if let Some(scene) = self.authoring_scene.as_ref() {
+            let scene_source = match cubacadabra_scene::serialize_authoring_scene(scene) {
+                Ok(source) => source,
+                Err(error) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_project_error(format!("Cannot save scene.json: {error}"));
+                    }
+                    return false;
+                }
+            };
+            if let Some((_, source)) = source_files
+                .iter_mut()
+                .find(|(relative_path, _)| relative_path == Path::new("scene.json"))
+            {
+                *source = scene_source;
+            } else {
+                source_files.push((PathBuf::from("scene.json"), scene_source));
+            }
+        }
         if !source_files
             .iter()
             .any(|(relative_path, _)| relative_path == Path::new("manifest.json"))
@@ -318,6 +337,12 @@ impl StudioApp {
         if scene_path.is_file()
             && let Ok(source) = fs::read_to_string(&scene_path)
         {
+            self.authoring_scene = cubacadabra_scene::parse_authoring_scene(&source).ok();
+            self.authoring_scene_indices = self
+                .authoring_scene
+                .as_ref()
+                .map(authoring_scene_indices)
+                .unwrap_or_default();
             self.authored_scene_source = Some(source.clone());
             if let Some(shell) = &mut self.shell {
                 shell.set_source_scene(Some(&source), false);

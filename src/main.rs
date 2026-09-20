@@ -1,4 +1,5 @@
 use cubacadabra_client::{ClientAction, ClientSession, native::Renderer};
+use cubacadabra_scene::{AuthoringScene, Transform};
 use image::{GenericImage, RgbaImage, imageops::FilterType};
 use log::{debug, error, info, warn};
 use serde_json::Value;
@@ -168,15 +169,42 @@ struct CodexFileChange {
 
 #[derive(Clone, Debug)]
 struct SceneHistoryEntry {
-    before: String,
-    after: String,
-    target: String,
+    kind: SceneHistoryKind,
 }
 
 #[derive(Clone, Debug)]
 struct SceneDragSnapshot {
-    scene_before: Option<String>,
     target: String,
+    before: SceneGeometryState,
+}
+
+#[derive(Clone, Debug)]
+enum SceneHistoryKind {
+    Snapshot {
+        before: String,
+        after: String,
+        target: String,
+    },
+    Geometry {
+        target: String,
+        before: SceneGeometryState,
+        after: SceneGeometryState,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct SceneGeometryState {
+    transform: Transform,
+    primitive_size: Option<[f32; 3]>,
+}
+
+fn authoring_scene_indices(scene: &AuthoringScene) -> BTreeMap<String, usize> {
+    scene
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.clone(), index))
+        .collect()
 }
 
 struct LocalMorphCatalog {
@@ -220,6 +248,8 @@ struct StudioApp {
     game_root: PathBuf,
     authored_manifest_source: String,
     authored_scene_source: Option<String>,
+    authoring_scene: Option<AuthoringScene>,
+    authoring_scene_indices: BTreeMap<String, usize>,
     manifest_source: String,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,

@@ -362,6 +362,16 @@ impl StudioApp {
         self.game_root = root;
         self.authored_manifest_source = authored_manifest_source;
         self.authored_scene_source = authored_scene_source;
+        self.authoring_scene = self
+            .authored_scene_source
+            .as_deref()
+            .map(cubacadabra_scene::parse_authoring_scene)
+            .transpose()?;
+        self.authoring_scene_indices = self
+            .authoring_scene
+            .as_ref()
+            .map(authoring_scene_indices)
+            .unwrap_or_default();
         self.manifest_source = manifest_source;
         self.standalone_preview = standalone_preview;
         self.temporary_package = temporary_package;

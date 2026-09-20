@@ -1,6 +1,35 @@
 use super::*;
 
 impl StudioApp {
+    pub(crate) fn authoring_local_position_for_world(
+        &self,
+        id: &str,
+        world_position: [f32; 3],
+    ) -> Result<Option<[f32; 3]>, String> {
+        let Some(scene) = self.authoring_scene.as_ref() else {
+            return Ok(None);
+        };
+        if !self.authoring_scene_indices.contains_key(id) {
+            return Ok(None);
+        }
+        scene.local_position_for_world(id, world_position).map(Some)
+    }
+
+    pub(crate) fn authoring_local_transform_for_world(
+        &self,
+        id: &str,
+        world_position: [f32; 3],
+        world_scale: [f32; 3],
+    ) -> Result<([f32; 3], [f32; 3]), String> {
+        let Some(scene) = self.authoring_scene.as_ref() else {
+            return Ok((world_position, world_scale));
+        };
+        if !self.authoring_scene_indices.contains_key(id) {
+            return Ok((world_position, world_scale));
+        }
+        scene.local_transform_for_world(id, world_position, world_scale)
+    }
+
     pub(crate) fn update_scene_object_projections(&mut self) {
         let Some(window) = &self.window else { return };
         let scale = window.scale_factor() as f32;
@@ -9,28 +38,65 @@ impl StudioApp {
             .shell
             .as_ref()
             .map(StudioShell::scene_object_geometries)
+            .map(|geometries| {
+                geometries
+                    .iter()
+                    .filter(|geometry| {
+                        active_world.is_none_or(|world| {
+                            scene_world_id(&geometry.id).is_none_or(|candidate| candidate == world)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         let projections = self.renderer.as_ref().map_or_else(Vec::new, |renderer| {
+            let mut world_points = Vec::new();
+            for geometry in &geometries {
+                let [x, y, z] = geometry.position;
+                world_points.push([x, y, z]);
+                let transform_scale = geometry.scale.unwrap_or([1.0; 3]);
+                if let Some([width, height, depth]) = geometry.size.map(|size| {
+                    [
+                        size[0] * transform_scale[0],
+                        size[1] * transform_scale[1],
+                        size[2] * transform_scale[2],
+                    ]
+                }) {
+                    let top = y + height * 0.5;
+                    world_points.extend([
+                        [x - width * 0.5, top, z - depth * 0.5],
+                        [x + width * 0.5, top, z - depth * 0.5],
+                        [x + width * 0.5, top, z + depth * 0.5],
+                        [x - width * 0.5, top, z + depth * 0.5],
+                    ]);
+                    let bottom = y - height * 0.5;
+                    world_points.extend([
+                        [x - width * 0.5, bottom, z - depth * 0.5],
+                        [x + width * 0.5, bottom, z - depth * 0.5],
+                        [x + width * 0.5, bottom, z + depth * 0.5],
+                        [x - width * 0.5, bottom, z + depth * 0.5],
+                    ]);
+                }
+            }
+            let projected = renderer.studio_project_world_points(&world_points);
+            let mut point_index = 0;
             geometries
                 .into_iter()
-                .filter(|geometry| {
-                    active_world.is_none_or(|world| {
-                        scene_world_id(&geometry.id).is_none_or(|candidate| candidate == world)
-                    })
-                })
                 .filter_map(|geometry| {
-                    let [x, y, z] = geometry.position;
-                    let [center_x, center_y] = renderer.studio_project_world_point([x, y, z])?;
-                    let transform_scale = geometry.scale.unwrap_or([1.0; 3]);
+                    let center = projected.get(point_index).copied().flatten();
+                    point_index += 1;
                     let visual_size = geometry.size.map(|size| {
+                        let transform_scale = geometry.scale.unwrap_or([1.0; 3]);
                         [
                             size[0] * transform_scale[0],
                             size[1] * transform_scale[1],
                             size[2] * transform_scale[2],
                         ]
                     });
-                    let (world_corners, screen_corners, bottom_screen_corners) = visual_size
-                        .map_or((None, None, None), |[width, height, depth]| {
+                    let (world_corners, screen_corners, bottom_screen_corners) =
+                        if let Some([width, height, depth]) = visual_size {
+                            let [x, y, z] = geometry.position;
                             let top = y + height * 0.5;
                             let top_corners = [
                                 [x - width * 0.5, top, z - depth * 0.5],
@@ -38,31 +104,31 @@ impl StudioApp {
                                 [x + width * 0.5, top, z + depth * 0.5],
                                 [x - width * 0.5, top, z + depth * 0.5],
                             ];
-                            let bottom = y - height * 0.5;
-                            let bottom_corners = [
-                                [x - width * 0.5, bottom, z - depth * 0.5],
-                                [x + width * 0.5, bottom, z - depth * 0.5],
-                                [x + width * 0.5, bottom, z + depth * 0.5],
-                                [x - width * 0.5, bottom, z + depth * 0.5],
-                            ];
-                            let projected = top_corners
-                                .map(|point| renderer.studio_project_world_point(point))
-                                .into_iter()
+                            let top_screen = projected
+                                .get(point_index..point_index + 4)?
+                                .iter()
+                                .copied()
                                 .collect::<Option<Vec<_>>>()
                                 .and_then(|points| points.try_into().ok())
                                 .map(|points: [[f32; 2]; 4]| {
                                     points.map(|[x, y]| egui::pos2(x / scale, y / scale))
                                 });
-                            let projected_bottom = bottom_corners
-                                .map(|point| renderer.studio_project_world_point(point))
-                                .into_iter()
+                            point_index += 4;
+                            let bottom_screen = projected
+                                .get(point_index..point_index + 4)?
+                                .iter()
+                                .copied()
                                 .collect::<Option<Vec<_>>>()
                                 .and_then(|points| points.try_into().ok())
                                 .map(|points: [[f32; 2]; 4]| {
                                     points.map(|[x, y]| egui::pos2(x / scale, y / scale))
                                 });
-                            (Some(top_corners), projected, projected_bottom)
-                        });
+                            point_index += 4;
+                            (Some(top_corners), top_screen, bottom_screen)
+                        } else {
+                            (None, None, None)
+                        };
+                    let center = center?;
                     Some(SceneObjectProjection {
                         id: geometry.id,
                         position: geometry.position,
@@ -71,7 +137,7 @@ impl StudioApp {
                         base_size: geometry.size,
                         primitive_size: geometry.primitive_size,
                         editable: geometry.editable,
-                        center_screen: egui::pos2(center_x / scale, center_y / scale),
+                        center_screen: egui::pos2(center[0] / scale, center[1] / scale),
                         world_corners,
                         screen_corners,
                         bottom_screen_corners,
@@ -118,13 +184,9 @@ impl StudioApp {
                     origin_position[1],
                     snap_scene_value(origin_position[2] + current[2] - origin[2]),
                 ];
-                let position = if let Some(shell) = &self.shell {
-                    shell
-                        .authoring_local_position_for_world(&target, world_position)?
-                        .unwrap_or(world_position)
-                } else {
-                    world_position
-                };
+                let position = self
+                    .authoring_local_position_for_world(&target, world_position)?
+                    .unwrap_or(world_position);
                 Ok(Some((
                     SceneEditRequest::SetTransform {
                         target,
@@ -143,13 +205,9 @@ impl StudioApp {
             } => {
                 let world_position =
                     scene_vertical_drag_position(origin_screen, current_screen, origin_position);
-                let position = if let Some(shell) = &self.shell {
-                    shell
-                        .authoring_local_position_for_world(&target, world_position)?
-                        .unwrap_or(world_position)
-                } else {
-                    world_position
-                };
+                let position = self
+                    .authoring_local_position_for_world(&target, world_position)?
+                    .unwrap_or(world_position);
                 Ok(Some((
                     SceneEditRequest::SetTransform {
                         target,
@@ -211,16 +269,12 @@ impl StudioApp {
                     (moving[2] + fixed_corner[2]) * 0.5,
                 ];
                 let (position, scale) = if let Some(desired_scale) = desired_scale {
-                    if let Some(shell) = &self.shell {
-                        let (position, scale) = shell.authoring_local_transform_for_world(
-                            &target,
-                            world_position,
-                            desired_scale,
-                        )?;
-                        (position, Some(scale))
-                    } else {
-                        (world_position, Some(desired_scale))
-                    }
+                    let (position, scale) = self.authoring_local_transform_for_world(
+                        &target,
+                        world_position,
+                        desired_scale,
+                    )?;
+                    (position, Some(scale))
                 } else {
                     (world_position, None)
                 };
@@ -261,38 +315,23 @@ impl StudioApp {
                     origin_position[2],
                 ];
                 let (position, size, scale) = if primitive_size {
-                    let position = if let Some(shell) = &self.shell {
-                        shell
-                            .authoring_local_position_for_world(&target, world_position)?
-                            .unwrap_or(world_position)
-                    } else {
-                        world_position
-                    };
-                    (position, Some([base_size[0], height, base_size[2]]), None)
-                } else if let Some(origin_scale) = origin_scale {
-                    let desired_scale = [origin_scale[0], scale_y, origin_scale[2]];
-                    let (position, scale) = if let Some(shell) = &self.shell {
-                        let (position, scale) = shell.authoring_local_transform_for_world(
-                            &target,
-                            world_position,
-                            desired_scale,
-                        )?;
-                        (position, scale)
-                    } else {
-                        (world_position, desired_scale)
-                    };
-                    (position, None, Some(scale))
-                } else if let Some(shell) = &self.shell {
-                    let position = shell
+                    let position = self
                         .authoring_local_position_for_world(&target, world_position)?
                         .unwrap_or(world_position);
                     (position, Some([base_size[0], height, base_size[2]]), None)
-                } else {
-                    (
+                } else if let Some(origin_scale) = origin_scale {
+                    let desired_scale = [origin_scale[0], scale_y, origin_scale[2]];
+                    let (position, scale) = self.authoring_local_transform_for_world(
+                        &target,
                         world_position,
-                        Some([base_size[0], height, base_size[2]]),
-                        None,
-                    )
+                        desired_scale,
+                    )?;
+                    (position, None, Some(scale))
+                } else {
+                    let position = self
+                        .authoring_local_position_for_world(&target, world_position)?
+                        .unwrap_or(world_position);
+                    (position, Some([base_size[0], height, base_size[2]]), None)
                 };
                 Ok(Some((
                     if primitive_size {

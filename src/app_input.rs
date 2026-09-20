@@ -127,9 +127,7 @@ impl StudioApp {
                 selected.position[2] + (right[1] * screen_right + away[1] * screen_away) * 0.25,
             ),
         ];
-        let position = match self.shell.as_ref().map_or(Ok(None), |shell| {
-            shell.authoring_local_position_for_world(&selected.id, world_position)
-        }) {
+        let position = match self.authoring_local_position_for_world(&selected.id, world_position) {
             Ok(Some(position)) => position,
             Ok(None) => world_position,
             Err(message) => {

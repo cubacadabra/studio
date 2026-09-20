@@ -75,7 +75,7 @@ fn scene_outline_uses_artist_facing_manifest_content() {
 }
 
 #[test]
-fn scene_outline_exposes_every_placeable_object_to_viewport_tools() {
+fn scene_outline_exposes_editable_placeable_objects_to_viewport_tools() {
     let outline = SceneOutline::parse(
         r#"{
             "id": "tools",
@@ -128,7 +128,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 16);
+    assert_eq!(objects.len(), 13);
     assert!(objects.iter().all(|object| {
         !matches!(
             object.id.as_str(),
@@ -204,6 +204,7 @@ fn scene_search_indexes_a_large_lightweight_tree() {
         initial_selection: "game".to_owned(),
         initial_expanded: BTreeSet::from(["game".to_owned()]),
         authoring_world_transforms: BTreeMap::new(),
+        placeable_objects: Vec::new(),
     };
     let matches = outline.search_matches("Node 9999");
     assert!(matches.contains("game"));
