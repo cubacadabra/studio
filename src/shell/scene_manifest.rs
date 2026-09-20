@@ -16,7 +16,7 @@ pub(crate) fn manifest_active_world(source: &str) -> String {
 
 pub(crate) fn authoring_scene_node(
     node: &AuthoringNode,
-    children: &BTreeMap<&str, Vec<&AuthoringNode>>,
+    children_by_parent: &BTreeMap<&str, Vec<&AuthoringNode>>,
     asset_bounds: &BTreeMap<String, [f32; 3]>,
 ) -> SceneNode {
     let (kind, icon) = if node.components.contains_key("primitive") {
@@ -120,12 +120,46 @@ pub(crate) fn authoring_scene_node(
             }
         }
     }
-    let children = children
+    let source_children = children_by_parent
         .get(node.id.as_str())
         .into_iter()
         .flatten()
-        .map(|child| authoring_scene_node(child, children, asset_bounds))
+        .filter(|child| is_imported_source_root(child))
+        .copied()
         .collect::<Vec<_>>();
+    let mut children = children_by_parent
+        .get(node.id.as_str())
+        .into_iter()
+        .flatten()
+        .filter(|child| !is_imported_source_root(child))
+        .map(|child| authoring_scene_node(child, children_by_parent, asset_bounds))
+        .collect::<Vec<_>>();
+    if !source_children.is_empty() {
+        let source_count = source_children
+            .first()
+            .and_then(|source| source.source.as_ref())
+            .and_then(|source| source.properties.get("instanceCount"))
+            .and_then(Value::as_u64)
+            .map(|count| format!("{count} source nodes"));
+        children.push(SceneNode {
+            id: format!("{}/imported-source", node.id),
+            label: "Imported Source".to_owned(),
+            kind: "Collection",
+            icon: Icon::Folder,
+            detail: source_count,
+            properties: vec![
+                ("Kind".to_owned(), "Source/reference data".to_owned()),
+                (
+                    "Editing".to_owned(),
+                    "Source nodes are preserved for inspection".to_owned(),
+                ),
+            ],
+            children: source_children
+                .into_iter()
+                .map(|child| authoring_scene_node(child, children_by_parent, asset_bounds))
+                .collect(),
+        });
+    }
     SceneNode {
         id: node.id.clone(),
         label: node.name.clone(),
@@ -135,6 +169,28 @@ pub(crate) fn authoring_scene_node(
         properties,
         children,
     }
+}
+
+fn is_imported_source_root(node: &AuthoringNode) -> bool {
+    node.source
+        .as_ref()
+        .and_then(|source| source.class.as_deref())
+        == Some("SourceHierarchy")
+}
+
+pub(crate) fn is_imported_source_node(node: &AuthoringNode) -> bool {
+    is_imported_source_root(node)
+        || (node
+            .source
+            .as_ref()
+            .and_then(|source| source.properties.get("generatedBy"))
+            .and_then(Value::as_str)
+            == Some("import-roblox-scene")
+            && node
+                .source
+                .as_ref()
+                .and_then(|source| source.properties.get("representation"))
+                .is_none())
 }
 
 pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {

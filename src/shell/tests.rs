@@ -114,6 +114,17 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
     let outline =
         SceneOutline::parse_with_authoring_scene(manifest, &scene).expect("authoring outline");
     assert_eq!(outline.root.find("sign-tables").unwrap().label, "TABLES");
+    let imported_source = outline
+        .root
+        .find("imported-environment/imported-source")
+        .expect("imported source should be grouped separately");
+    assert_eq!(imported_source.label, "Imported Source");
+    assert!(
+        !outline
+            .initial_expanded
+            .iter()
+            .any(|id| id.starts_with("source-hierarchy-"))
+    );
     assert_eq!(
         outline.root.find("interaction-plinko").unwrap().kind,
         "Interaction"
@@ -128,13 +139,20 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 257);
+    assert_eq!(objects.len(), 262);
     assert_eq!(
         objects
             .iter()
             .filter(|object| object.id.starts_with("vegas-chair-"))
             .count(),
         245
+    );
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|object| object.id.starts_with("imported-part-"))
+            .count(),
+        5
     );
     assert!(objects.iter().all(|object| {
         !matches!(

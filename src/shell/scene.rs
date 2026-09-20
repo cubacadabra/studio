@@ -369,7 +369,7 @@ impl SceneOutline {
         outline.initial_expanded =
             BTreeSet::from([outline.root.id.clone(), outline.initial_selection.clone()]);
         for node in &scene.nodes {
-            if children.contains_key(node.id.as_str()) {
+            if children.contains_key(node.id.as_str()) && !is_imported_source_node(node) {
                 outline.initial_expanded.insert(node.id.clone());
             }
         }
