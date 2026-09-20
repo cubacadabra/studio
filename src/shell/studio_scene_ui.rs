@@ -176,9 +176,11 @@ impl StudioShell {
 
     fn scene_object_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         self.sync_scene_editor(selected);
-        let has_size = vector_property(selected, "Size").is_some();
-        let has_primitive_size = selected.kind == "Block" && is_authoring_node(selected);
-        let has_scale = is_authoring_node(selected) && !has_primitive_size;
+        let authoring_node = is_authoring_node(selected);
+        let has_primitive_size = selected.kind == "Block" && authoring_node;
+        let has_size =
+            vector_property(selected, "Size").is_some() && (!authoring_node || has_primitive_size);
+        let has_scale = authoring_node && !has_primitive_size;
         self.scene_transform_editor(ui, selected, has_size, has_scale, has_primitive_size);
         self.scene_manifest_properties(ui, selected, &["Position", "Scale"]);
     }
@@ -441,19 +443,11 @@ fn editable_scene_property(label: &str) -> Option<(&'static str, ScenePropertyKi
 fn scene_add_menu(
     ui: &mut egui::Ui,
     world_id: Option<String>,
-    component_scene: bool,
+    _component_scene: bool,
     request: &mut Option<SceneEditRequest>,
 ) {
     ui.menu_button("Add", |ui| {
         for kind in SceneObjectKind::ALL {
-            if component_scene
-                && !matches!(
-                    kind,
-                    SceneObjectKind::Block | SceneObjectKind::Sign | SceneObjectKind::Interaction
-                )
-            {
-                continue;
-            }
             if ui.button(kind.label()).clicked() {
                 *request = Some(SceneEditRequest::AddObject {
                     world_id: world_id.clone(),

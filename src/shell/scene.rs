@@ -461,6 +461,14 @@ fn authoring_scene_node(
         ("Sign", Icon::Object)
     } else if node.components.contains_key("interaction") {
         ("Interaction", Icon::Object)
+    } else if node.components.contains_key("ladder") {
+        ("Ladder", Icon::Object)
+    } else if node.components.contains_key("checkpoint") {
+        ("Checkpoint", Icon::Object)
+    } else if node.components.contains_key("hazard") {
+        ("Hazard", Icon::Object)
+    } else if node.components.contains_key("safeZone") {
+        ("Safe Zone", Icon::Object)
     } else {
         ("Group", Icon::Folder)
     };
@@ -506,6 +514,13 @@ fn authoring_scene_node(
         .and_then(Value::as_object)
         .and_then(|primitive| primitive.get("size"))
         .and_then(vector_value);
+    let volume_size = node
+        .components
+        .get("ladder")
+        .or_else(|| node.components.get("hazard"))
+        .and_then(Value::as_object)
+        .and_then(|component| component.get("size"))
+        .and_then(vector_value);
     let render_size = node
         .components
         .get("render")
@@ -513,7 +528,7 @@ fn authoring_scene_node(
         .and_then(|render| render.get("bounds"))
         .and_then(vector_value)
         .or(mesh_asset_bounds);
-    if let Some(bounds) = primitive_size.or(render_size) {
+    if let Some(bounds) = primitive_size.or(volume_size).or(render_size) {
         properties.push(("Size".to_owned(), format_vector(bounds)));
     }
     if let Some(source) = &node.source {
@@ -563,7 +578,18 @@ pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {
 }
 
 fn is_authoring_placeable(node: &SceneNode) -> bool {
-    is_authoring_node(node) && matches!(node.kind, "Block" | "Mesh" | "Sign" | "Interaction")
+    is_authoring_node(node)
+        && matches!(
+            node.kind,
+            "Block"
+                | "Mesh"
+                | "Sign"
+                | "Interaction"
+                | "Ladder"
+                | "Checkpoint"
+                | "Hazard"
+                | "Safe Zone"
+        )
 }
 
 pub(crate) fn scene_node_locked(node: &SceneNode) -> bool {
@@ -596,6 +622,7 @@ fn format_component_property(component: &str, key: &str) -> String {
         "render" => format!("Render {label}"),
         "text" => label,
         "interaction" => label,
+        "ladder" | "checkpoint" | "hazard" | "safeZone" => label,
         _ => format!("{component} {label}"),
     }
 }

@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 cubacadabra-morph-authoring = { path = "crates/morph_authoring" }
 cubacadabra-builder = { path = "../tools/crates/builder" }
+cubacadabra-project = { path = "../tools/crates/project" }
 cubacadabra-scene = { path = "../tools/crates/scene" }
 cubacadabra-morphs = { path = "../rust/crates/morphs" }
 cubacadabra-client = { path = "../rust/crates/client", features = ["desktop-backends", "studio-ui"] }
@@ -26,7 +27,6 @@ rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
-unicode-normalization = "0.1"
 tungstenite = { version = "0.27", features = ["native-tls"] }
 ureq = { version = "3", default-features = true }
 url = "2"
