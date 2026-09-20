@@ -47,6 +47,8 @@ mod morph_ui_tests;
 mod scene;
 #[path = "shell/scene_interaction.rs"]
 mod scene_interaction;
+#[path = "shell/scene_manifest.rs"]
+mod scene_manifest;
 #[path = "shell/studio_chrome.rs"]
 mod studio_chrome;
 #[path = "shell/studio_codex_ui.rs"]
@@ -90,6 +92,7 @@ mod theme;
 pub(crate) use morph_preview::projected_triangle_area;
 pub(crate) use scene::*;
 pub(crate) use scene_interaction::*;
+pub(crate) use scene_manifest::*;
 use style::*;
 use style_controls::*;
 use style_icons::*;
