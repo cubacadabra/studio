@@ -734,6 +734,7 @@ impl StudioApp {
         }
 
         let mut renderer_sync_ms = 0.0;
+        let mut renderer_draw_ms = 0.0;
         if let Some(renderer) = &mut self.renderer {
             renderer.set_studio_edit_mode(!playing && !morph_preview);
             renderer.set_avatar_preview_mode(
@@ -744,6 +745,7 @@ impl StudioApp {
             let renderer_sync_started = Instant::now();
             renderer.sync(self.client.engine());
             renderer_sync_ms = renderer_sync_started.elapsed().as_secs_f32() * 1_000.0;
+            let renderer_draw_started = Instant::now();
             match (&mut self.shell, prepared_shell) {
                 (Some(shell), Some(prepared)) => {
                     #[cfg(debug_assertions)]
@@ -783,6 +785,7 @@ impl StudioApp {
                 }
                 _ => renderer.draw(),
             }
+            renderer_draw_ms = renderer_draw_started.elapsed().as_secs_f32() * 1_000.0;
         }
         if let Some(shell) = &mut self.shell {
             shell.finish_performance_frame(
@@ -791,6 +794,7 @@ impl StudioApp {
                 client_step_ms,
                 scene_projection_ms,
                 renderer_sync_ms,
+                renderer_draw_ms,
             );
         }
     }

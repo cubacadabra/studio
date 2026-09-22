@@ -187,6 +187,7 @@ pub(crate) struct PerformanceSample {
     pub(crate) ui_build_ms: f32,
     pub(crate) ui_tessellate_ms: f32,
     pub(crate) renderer_sync_ms: f32,
+    pub(crate) renderer_draw_ms: f32,
     pub(crate) overlay_paint_ms: f32,
     pub(crate) tree_rows: usize,
     pub(crate) scene_objects: usize,
@@ -198,7 +199,7 @@ pub(crate) struct PerformanceSample {
 impl PerformanceSample {
     fn log_line(self) -> String {
         format!(
-            "frame={:.1}ms logic={:.1}ms step={:.1}ms projections={:.1}ms ui={:.1}ms tessellate={:.1}ms sync={:.1}ms paint={:.1}ms tree_rows={} scene_objects={} egui_primitives={} playing={} workspace={}",
+            "frame={:.1}ms logic={:.1}ms step={:.1}ms projections={:.1}ms ui={:.1}ms tessellate={:.1}ms sync={:.1}ms draw={:.1}ms paint={:.1}ms tree_rows={} scene_objects={} egui_primitives={} playing={} workspace={}",
             self.frame_ms,
             self.logic_ms,
             self.client_step_ms,
@@ -206,6 +207,7 @@ impl PerformanceSample {
             self.ui_build_ms,
             self.ui_tessellate_ms,
             self.renderer_sync_ms,
+            self.renderer_draw_ms,
             self.overlay_paint_ms,
             self.tree_rows,
             self.scene_objects,

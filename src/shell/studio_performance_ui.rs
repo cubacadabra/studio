@@ -8,6 +8,7 @@ impl StudioShell {
         client_step_ms: f32,
         scene_projection_ms: f32,
         renderer_sync_ms: f32,
+        renderer_draw_ms: f32,
     ) {
         let Some(mut sample) = self.performance_pending.take() else {
             return;
@@ -17,6 +18,7 @@ impl StudioShell {
         sample.client_step_ms = client_step_ms;
         sample.scene_projection_ms = scene_projection_ms;
         sample.renderer_sync_ms = renderer_sync_ms;
+        sample.renderer_draw_ms = renderer_draw_ms;
         self.performance_latest = sample;
         self.performance_history.push_back(sample);
         if self.performance_history.len() > PERFORMANCE_HISTORY_LIMIT {
@@ -96,6 +98,7 @@ impl StudioShell {
                 metric_row(ui, "UI build", sample.ui_build_ms, colors);
                 metric_row(ui, "UI tessellate", sample.ui_tessellate_ms, colors);
                 metric_row(ui, "Renderer sync", sample.renderer_sync_ms, colors);
+                metric_row(ui, "Renderer draw", sample.renderer_draw_ms, colors);
                 metric_row(ui, "Overlay paint", sample.overlay_paint_ms, colors);
 
                 ui.add_space(8.0);
