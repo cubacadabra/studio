@@ -478,6 +478,7 @@ pub(crate) struct StudioShell {
     pending_textures_delta: egui::TexturesDelta,
     performance_open: bool,
     performance_shadows_enabled: bool,
+    performance_static_translucent_sort_enabled: bool,
     performance_log_slow_frames: bool,
     performance_history: VecDeque<PerformanceSample>,
     performance_latest: PerformanceSample,

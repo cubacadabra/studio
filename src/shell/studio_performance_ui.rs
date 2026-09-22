@@ -5,6 +5,10 @@ impl StudioShell {
         self.performance_shadows_enabled
     }
 
+    pub(crate) fn performance_static_translucent_sort_enabled(&self) -> bool {
+        self.performance_static_translucent_sort_enabled
+    }
+
     pub(crate) fn finish_performance_frame(
         &mut self,
         frame_ms: f32,
@@ -127,6 +131,13 @@ impl StudioShell {
                     .on_hover_text(
                         "Toggle Studio's directional shadow pass for an A/B performance check.",
                     );
+                ui.checkbox(
+                    &mut self.performance_static_translucent_sort_enabled,
+                    "Sort static translucent",
+                )
+                .on_hover_text(
+                    "Toggle per-frame depth sorting of static translucent geometry. Disable for an A/B check; static blending order may look different.",
+                );
                 ui.checkbox(
                     &mut self.performance_log_slow_frames,
                     "Log frames over 50 ms (once per second)",

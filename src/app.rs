@@ -743,6 +743,11 @@ impl StudioApp {
                     .as_ref()
                     .is_none_or(StudioShell::performance_shadows_enabled),
             );
+            renderer.set_studio_static_translucent_sort_enabled(
+                self.shell
+                    .as_ref()
+                    .is_none_or(StudioShell::performance_static_translucent_sort_enabled),
+            );
             renderer.set_avatar_preview_mode(
                 self.shell
                     .as_ref()
