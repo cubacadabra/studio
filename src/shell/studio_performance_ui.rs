@@ -133,10 +133,10 @@ impl StudioShell {
                     );
                 ui.checkbox(
                     &mut self.performance_static_translucent_sort_enabled,
-                    "Sort static translucent",
+                    "Sort static translucent (slow)",
                 )
                 .on_hover_text(
-                    "Toggle per-frame depth sorting of static translucent geometry. Disable for an A/B check; static blending order may look different.",
+                    "Diagnostic fallback: per-frame depth sorting of static translucent geometry. The normal Studio path keeps static geometry in authored order for performance; blending order may differ.",
                 );
                 ui.checkbox(
                     &mut self.performance_log_slow_frames,

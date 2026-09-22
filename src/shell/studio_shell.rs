@@ -208,7 +208,9 @@ impl StudioShell {
             pending_textures_delta: egui::TexturesDelta::default(),
             performance_open: false,
             performance_shadows_enabled: true,
-            performance_static_translucent_sort_enabled: true,
+            // Static translucent sorting is an expensive diagnostic fallback;
+            // the normal Studio path keeps static geometry in authored order.
+            performance_static_translucent_sort_enabled: false,
             performance_log_slow_frames: false,
             performance_history: VecDeque::with_capacity(PERFORMANCE_HISTORY_LIMIT),
             performance_latest: PerformanceSample::default(),
