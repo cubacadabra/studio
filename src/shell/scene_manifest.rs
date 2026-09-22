@@ -215,17 +215,6 @@ fn is_imported_source_root(node: &AuthoringNode) -> bool {
         == Some("SourceHierarchy")
 }
 
-pub(crate) fn is_imported_source_node(node: &AuthoringNode) -> bool {
-    is_imported_source_root(node)
-        || (node
-            .source
-            .as_ref()
-            .and_then(|source| source.properties.get("generatedBy"))
-            .and_then(Value::as_str)
-            == Some("import-roblox-scene")
-            && node.editor.locked)
-}
-
 pub(crate) fn is_authoring_node(node: &SceneNode) -> bool {
     node.properties
         .iter()

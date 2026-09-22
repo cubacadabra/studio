@@ -62,6 +62,16 @@ pub(crate) fn navigation_row(
 }
 
 pub(crate) fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
+    search_field_with_hint(ui, query, width, "Search assets…", "Search assets");
+}
+
+pub(crate) fn search_field_with_hint(
+    ui: &mut egui::Ui,
+    query: &mut String,
+    width: f32,
+    hint: &str,
+    accessible_label: &str,
+) {
     let colors = palette(ui);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(width.min(ui.available_width()).max(80.0), CONTROL_HEIGHT),
@@ -85,13 +95,13 @@ pub(crate) fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
     let response = ui.put(
         text_rect,
         egui::TextEdit::singleline(query)
-            .hint_text("Search assets…")
+            .hint_text(hint)
             .font(FontId::proportional(TYPE.secondary))
             .margin(Margin::ZERO)
             .frame(Frame::NONE),
     );
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search assets")
+        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, accessible_label)
     });
 }
 

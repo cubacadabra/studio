@@ -148,9 +148,7 @@ impl SceneOutline {
             return BTreeSet::new();
         }
         fn visit(node: &SceneNode, query: &str, matches: &mut BTreeSet<String>) -> bool {
-            let direct = node.label.to_ascii_lowercase().contains(query)
-                || node.id.to_ascii_lowercase().contains(query)
-                || node.kind.to_ascii_lowercase().contains(query);
+            let direct = SceneOutline::node_matches_query(node, query);
             let descendant = node
                 .children
                 .iter()
@@ -164,6 +162,36 @@ impl SceneOutline {
         let mut matches = BTreeSet::new();
         visit(&self.root, &query, &mut matches);
         matches
+    }
+
+    pub(crate) fn search_result_count(&self, query: &str) -> usize {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return 0;
+        }
+        fn count(node: &SceneNode, query: &str) -> usize {
+            usize::from(SceneOutline::node_matches_query(node, query))
+                + node
+                    .children
+                    .iter()
+                    .map(|child| count(child, query))
+                    .sum::<usize>()
+        }
+        count(&self.root, &query)
+    }
+
+    fn node_matches_query(node: &SceneNode, query: &str) -> bool {
+        node.label.to_ascii_lowercase().contains(query)
+            || node.id.to_ascii_lowercase().contains(query)
+            || node.kind.to_ascii_lowercase().contains(query)
+            || node
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.to_ascii_lowercase().contains(query))
+            || node.properties.iter().any(|(label, value)| {
+                label.to_ascii_lowercase().contains(query)
+                    || value.to_ascii_lowercase().contains(query)
+            })
     }
 
     pub(crate) fn parse(source: &str) -> Result<Self, serde_json::Error> {
@@ -368,11 +396,6 @@ impl SceneOutline {
             .unwrap_or_else(|| outline.root.id.clone());
         outline.initial_expanded =
             BTreeSet::from([outline.root.id.clone(), outline.initial_selection.clone()]);
-        for node in &scene.nodes {
-            if children.contains_key(node.id.as_str()) && !is_imported_source_node(node) {
-                outline.initial_expanded.insert(node.id.clone());
-            }
-        }
         outline.authoring_world_transforms = authoring_world_transforms;
         outline.rebuild_placeable_objects();
         Ok(outline)

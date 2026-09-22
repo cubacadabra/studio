@@ -126,6 +126,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .iter()
             .any(|id| id.starts_with("source-hierarchy-"))
     );
+    assert!(!outline.initial_expanded.contains("signs"));
     let linked_source_folder = scene
         .nodes
         .iter()
@@ -310,6 +311,7 @@ fn scene_search_indexes_a_large_lightweight_tree() {
     assert!(matches.contains("game"));
     assert!(matches.contains("node-9999"));
     assert!(!matches.contains("node-9998"));
+    assert_eq!(outline.search_result_count("Node 9999"), 1);
 }
 
 #[test]

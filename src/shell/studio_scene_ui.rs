@@ -23,12 +23,40 @@ impl StudioShell {
                 .on_hover_text("Open a raw source project to edit the scene");
             }
         });
-        search_field(ui, &mut self.search_query, ui.available_width());
+        search_field_with_hint(
+            ui,
+            &mut self.scene_search_query,
+            ui.available_width(),
+            "Filter scene…",
+            "Filter scene tree",
+        );
         ui.add_space(4.0);
-        if self.scene_search_query != self.search_query {
-            self.scene_search_query = self.search_query.clone();
-            self.scene_search_matches = self.scene_outline.search_matches(&self.search_query);
+        if self.scene_search_matches_query != self.scene_search_query {
+            self.scene_search_matches_query = self.scene_search_query.clone();
+            self.scene_search_matches = self.scene_outline.search_matches(&self.scene_search_query);
+            self.scene_search_result_count = self
+                .scene_outline
+                .search_result_count(&self.scene_search_query);
             self.scene_tree_rows_dirty = true;
+        }
+        let scene_filter = self.scene_search_query.trim();
+        if !scene_filter.is_empty() {
+            let result_count = self.scene_search_result_count;
+            let label = if result_count == 1 {
+                "1 matching item"
+            } else {
+                "matching items"
+            };
+            ui.label(
+                RichText::new(if result_count == 1 {
+                    label.to_owned()
+                } else {
+                    format!("{result_count} {label}")
+                })
+                .size(TYPE.meta)
+                .color(palette(ui).muted),
+            );
+            ui.add_space(2.0);
         }
         if self.scene_tree_rows_dirty {
             self.scene_tree_rows.clear();
@@ -36,29 +64,38 @@ impl StudioShell {
                 &self.scene_outline.root,
                 0,
                 &self.expanded_scene,
-                (!self.search_query.trim().is_empty()).then_some(&self.scene_search_matches),
+                (!scene_filter.is_empty()).then_some(&self.scene_search_matches),
                 &mut self.scene_tree_rows,
             );
             self.scene_tree_rows_dirty = false;
         }
         let expanded_before = self.expanded_scene.clone();
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show_rows(ui, UI.row, self.scene_tree_rows.len(), |ui, row_range| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.spacing_mut().interact_size.y = UI.row;
-                for index in row_range {
-                    let row = self.scene_tree_rows[index].clone();
-                    show_scene_row(
-                        ui,
-                        &row,
-                        &mut self.expanded_scene,
-                        &mut self.selected_scene,
-                        self.project_editable,
-                        &mut self.scene_edit_requested,
-                    );
-                }
-            });
+        if self.scene_tree_rows.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("No scene items match this filter.")
+                    .size(TYPE.secondary)
+                    .color(palette(ui).muted),
+            );
+        } else {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, UI.row, self.scene_tree_rows.len(), |ui, row_range| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.spacing_mut().interact_size.y = UI.row;
+                    for index in row_range {
+                        let row = self.scene_tree_rows[index].clone();
+                        show_scene_row(
+                            ui,
+                            &row,
+                            &mut self.expanded_scene,
+                            &mut self.selected_scene,
+                            self.project_editable,
+                            &mut self.scene_edit_requested,
+                        );
+                    }
+                });
+        }
         if self.expanded_scene != expanded_before {
             self.scene_tree_rows_dirty = true;
         }

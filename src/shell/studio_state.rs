@@ -131,7 +131,9 @@ impl StudioShell {
         self.scene_outline = outline;
         self.scene_tree_rows_dirty = true;
         self.scene_search_query.clear();
+        self.scene_search_matches_query.clear();
         self.scene_search_matches.clear();
+        self.scene_search_result_count = 0;
         self.selected_scene = selected;
         self.project_dirty = dirty;
         if dirty {
@@ -184,7 +186,9 @@ impl StudioShell {
             .extend(outline.initial_expanded.iter().cloned());
         self.scene_outline = outline;
         self.scene_search_query.clear();
+        self.scene_search_matches_query.clear();
         self.scene_search_matches.clear();
+        self.scene_search_result_count = 0;
         self.scene_tree_rows_dirty = true;
         self.project_dirty = dirty;
         if dirty {
