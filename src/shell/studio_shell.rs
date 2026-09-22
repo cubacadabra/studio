@@ -207,6 +207,7 @@ impl StudioShell {
             roughness: 0.72,
             pending_textures_delta: egui::TexturesDelta::default(),
             performance_open: false,
+            performance_shadows_enabled: true,
             performance_log_slow_frames: false,
             performance_history: VecDeque::with_capacity(PERFORMANCE_HISTORY_LIMIT),
             performance_latest: PerformanceSample::default(),

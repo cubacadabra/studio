@@ -1,6 +1,10 @@
 use super::*;
 
 impl StudioShell {
+    pub(crate) fn performance_shadows_enabled(&self) -> bool {
+        self.performance_shadows_enabled
+    }
+
     pub(crate) fn finish_performance_frame(
         &mut self,
         frame_ms: f32,
@@ -110,6 +114,10 @@ impl StudioShell {
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(4.0);
+                ui.checkbox(&mut self.performance_shadows_enabled, "Static shadows")
+                    .on_hover_text(
+                        "Toggle Studio's directional shadow pass for an A/B performance check.",
+                    );
                 ui.checkbox(
                     &mut self.performance_log_slow_frames,
                     "Log frames over 50 ms (once per second)",

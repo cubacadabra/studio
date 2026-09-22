@@ -737,6 +737,11 @@ impl StudioApp {
         let mut renderer_draw_ms = 0.0;
         if let Some(renderer) = &mut self.renderer {
             renderer.set_studio_edit_mode(!playing && !morph_preview);
+            renderer.set_studio_shadows_enabled(
+                self.shell
+                    .as_ref()
+                    .is_none_or(StudioShell::performance_shadows_enabled),
+            );
             renderer.set_avatar_preview_mode(
                 self.shell
                     .as_ref()
