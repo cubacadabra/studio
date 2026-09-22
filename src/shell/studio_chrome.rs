@@ -88,6 +88,13 @@ impl StudioShell {
                                 self.auth_requested = true;
                             }
                             vertical_separator(ui, 14.0);
+                            if toolbar_button(ui, Icon::Gauge, "Perf", self.performance_open)
+                                .on_hover_text("Open the Studio performance monitor")
+                                .clicked()
+                            {
+                                self.performance_open = !self.performance_open;
+                            }
+                            vertical_separator(ui, 14.0);
                             self.show_chatgpt_control(ui, colors);
                             let play_label = if self.playing {
                                 "Stop"

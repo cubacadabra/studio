@@ -59,6 +59,8 @@ mod studio_commands;
 mod studio_morph_state;
 #[path = "shell/studio_morph_ui.rs"]
 mod studio_morph_ui;
+#[path = "shell/studio_performance_ui.rs"]
+mod studio_performance_ui;
 #[path = "shell/studio_project_ui.rs"]
 mod studio_project_ui;
 #[path = "shell/studio_scene_ui.rs"]
@@ -171,6 +173,47 @@ pub(crate) enum StudioCommand {
 pub(crate) struct PreparedShell {
     paint_jobs: Vec<egui::ClippedPrimitive>,
     screen: ScreenDescriptor,
+    performance: PerformanceSample,
+}
+
+const PERFORMANCE_HISTORY_LIMIT: usize = 180;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PerformanceSample {
+    pub(crate) frame_ms: f32,
+    pub(crate) logic_ms: f32,
+    pub(crate) client_step_ms: f32,
+    pub(crate) scene_projection_ms: f32,
+    pub(crate) ui_build_ms: f32,
+    pub(crate) ui_tessellate_ms: f32,
+    pub(crate) renderer_sync_ms: f32,
+    pub(crate) overlay_paint_ms: f32,
+    pub(crate) tree_rows: usize,
+    pub(crate) scene_objects: usize,
+    pub(crate) egui_primitives: usize,
+    pub(crate) playing: bool,
+    pub(crate) workspace: Workspace,
+}
+
+impl PerformanceSample {
+    fn log_line(self) -> String {
+        format!(
+            "frame={:.1}ms logic={:.1}ms step={:.1}ms projections={:.1}ms ui={:.1}ms tessellate={:.1}ms sync={:.1}ms paint={:.1}ms tree_rows={} scene_objects={} egui_primitives={} playing={} workspace={}",
+            self.frame_ms,
+            self.logic_ms,
+            self.client_step_ms,
+            self.scene_projection_ms,
+            self.ui_build_ms,
+            self.ui_tessellate_ms,
+            self.renderer_sync_ms,
+            self.overlay_paint_ms,
+            self.tree_rows,
+            self.scene_objects,
+            self.egui_primitives,
+            self.playing,
+            self.workspace.label(),
+        )
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -423,6 +466,12 @@ pub(crate) struct StudioShell {
     imported_asset_paths: Vec<PathBuf>,
     roughness: f32,
     pending_textures_delta: egui::TexturesDelta,
+    performance_open: bool,
+    performance_log_slow_frames: bool,
+    performance_history: VecDeque<PerformanceSample>,
+    performance_latest: PerformanceSample,
+    performance_pending: Option<PerformanceSample>,
+    performance_last_slow_log: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

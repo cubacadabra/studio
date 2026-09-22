@@ -243,6 +243,7 @@ fn capture(
             size_in_pixels: size,
             pixels_per_point: 1.,
         },
+        performance: PerformanceSample::default(),
     };
     shell.paint(
         device,

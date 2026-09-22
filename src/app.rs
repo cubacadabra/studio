@@ -254,6 +254,7 @@ impl StudioApp {
     }
 
     pub(crate) fn render(&mut self) {
+        let render_started = Instant::now();
         #[cfg(debug_assertions)]
         if let Some(mut probe) = self.preview_probe.take() {
             probe.step(self);
@@ -429,10 +430,13 @@ impl StudioApp {
         if draft_export_requested {
             self.export_morph_draft();
         }
+        let scene_projection_started = Instant::now();
         self.update_scene_object_projections();
+        let scene_projection_ms = scene_projection_started.elapsed().as_secs_f32() * 1_000.0;
         // Morph requests can turn the loading veil on or commit the first
         // native v2 appearance. Prepare the overlay after those transitions
         // so the old bundled character never reaches a visible frame.
+        let logic_ms = render_started.elapsed().as_secs_f32() * 1_000.0;
         let prepared_shell: Option<PreparedShell> = match (&mut self.shell, &self.window) {
             (Some(shell), Some(window)) => Some(shell.prepare(window, &project_name)),
             _ => None,
@@ -707,9 +711,11 @@ impl StudioApp {
         self.look_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
         self.dispatch_client_actions();
+        let client_step_started = Instant::now();
         if playing {
             self.client.step(delta);
         }
+        let client_step_ms = client_step_started.elapsed().as_secs_f32() * 1_000.0;
         self.drain_ui_events();
         self.refresh_runtime_ui_outline();
         self.dispatch_client_actions();
@@ -727,6 +733,7 @@ impl StudioApp {
             );
         }
 
+        let mut renderer_sync_ms = 0.0;
         if let Some(renderer) = &mut self.renderer {
             renderer.set_studio_edit_mode(!playing && !morph_preview);
             renderer.set_avatar_preview_mode(
@@ -734,7 +741,9 @@ impl StudioApp {
                     .as_ref()
                     .is_some_and(StudioShell::is_morphs_workspace),
             );
+            let renderer_sync_started = Instant::now();
             renderer.sync(self.client.engine());
+            renderer_sync_ms = renderer_sync_started.elapsed().as_secs_f32() * 1_000.0;
             match (&mut self.shell, prepared_shell) {
                 (Some(shell), Some(prepared)) => {
                     #[cfg(debug_assertions)]
@@ -774,6 +783,15 @@ impl StudioApp {
                 }
                 _ => renderer.draw(),
             }
+        }
+        if let Some(shell) = &mut self.shell {
+            shell.finish_performance_frame(
+                render_started.elapsed().as_secs_f32() * 1_000.0,
+                logic_ms,
+                client_step_ms,
+                scene_projection_ms,
+                renderer_sync_ms,
+            );
         }
     }
 

@@ -206,6 +206,12 @@ impl StudioShell {
             imported_asset_paths: Vec::new(),
             roughness: 0.72,
             pending_textures_delta: egui::TexturesDelta::default(),
+            performance_open: false,
+            performance_log_slow_frames: false,
+            performance_history: VecDeque::with_capacity(PERFORMANCE_HISTORY_LIMIT),
+            performance_latest: PerformanceSample::default(),
+            performance_pending: None,
+            performance_last_slow_log: None,
         }
     }
 }

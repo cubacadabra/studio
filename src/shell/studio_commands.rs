@@ -72,14 +72,28 @@ impl StudioShell {
     pub(crate) fn prepare(&mut self, window: &Window, project_name: &str) -> PreparedShell {
         let input = self.state.take_egui_input(window);
         let context = self.context.clone();
+        let ui_started = Instant::now();
         let output = context.run_ui(input, |ui| self.show(ui, project_name));
+        let ui_build_ms = ui_started.elapsed().as_secs_f32() * 1_000.0;
         self.state
             .handle_platform_output(window, output.platform_output);
         let pixels_per_point = context.pixels_per_point();
+        let tessellate_started = Instant::now();
         let paint_jobs = context.tessellate(output.shapes, pixels_per_point);
+        let ui_tessellate_ms = tessellate_started.elapsed().as_secs_f32() * 1_000.0;
         let size = window.inner_size();
         self.pending_textures_delta.append(output.textures_delta);
         PreparedShell {
+            performance: PerformanceSample {
+                ui_build_ms,
+                ui_tessellate_ms,
+                tree_rows: self.scene_tree_rows.len(),
+                scene_objects: self.scene_outline.placeable_object_geometries().len(),
+                egui_primitives: paint_jobs.len(),
+                playing: self.playing,
+                workspace: self.workspace,
+                ..PerformanceSample::default()
+            },
             paint_jobs,
             screen: ScreenDescriptor {
                 size_in_pixels: [size.width, size.height],
@@ -96,6 +110,8 @@ impl StudioShell {
         destination: &wgpu::TextureView,
         prepared: PreparedShell,
     ) {
+        let paint_started = Instant::now();
+        let mut performance = prepared.performance;
         let textures_delta = std::mem::take(&mut self.pending_textures_delta);
         for (id, image_delta) in &textures_delta.set {
             self.renderer
@@ -133,6 +149,8 @@ impl StudioShell {
         for id in &textures_delta.free {
             self.renderer.free_texture(id);
         }
+        performance.overlay_paint_ms = paint_started.elapsed().as_secs_f32() * 1_000.0;
+        self.performance_pending = Some(performance);
     }
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, project_name: &str) {
@@ -159,6 +177,7 @@ impl StudioShell {
         self.show_project_loading(ui.ctx());
         self.show_project_error(ui.ctx());
         self.show_unsaved_changes(ui.ctx());
+        self.show_performance_monitor(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
     }
 
