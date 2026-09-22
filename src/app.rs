@@ -735,6 +735,7 @@ impl StudioApp {
 
         let mut renderer_sync_ms = 0.0;
         let mut renderer_draw_ms = 0.0;
+        let mut renderer_timings_ms = [0.0; 4];
         if let Some(renderer) = &mut self.renderer {
             renderer.set_studio_edit_mode(!playing && !morph_preview);
             renderer.set_studio_shadows_enabled(
@@ -791,6 +792,7 @@ impl StudioApp {
                 _ => renderer.draw(),
             }
             renderer_draw_ms = renderer_draw_started.elapsed().as_secs_f32() * 1_000.0;
+            renderer_timings_ms = renderer.studio_draw_timings_ms();
         }
         if let Some(shell) = &mut self.shell {
             shell.finish_performance_frame(
@@ -800,6 +802,7 @@ impl StudioApp {
                 scene_projection_ms,
                 renderer_sync_ms,
                 renderer_draw_ms,
+                renderer_timings_ms,
             );
         }
     }
