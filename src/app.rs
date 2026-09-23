@@ -173,6 +173,7 @@ impl StudioApp {
             shell.set_playing(false);
         }
         shell.set_source_manifest(&self.authored_manifest_source, false);
+        shell.set_source_scene(self.authored_scene_source.as_deref(), false);
         shell.set_source_assets(load_source_assets(&self.project_root));
         shell.set_source_files(load_source_files(&self.project_root));
         shell.set_source_directories(load_source_directories(&self.project_root));
