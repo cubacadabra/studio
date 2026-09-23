@@ -458,7 +458,12 @@ impl ScenePropertyKind {
 fn editable_scene_property(label: &str) -> Option<(&'static str, ScenePropertyKind)> {
     Some(match label {
         "Id" => ("id", ScenePropertyKind::Text),
+        "Name" => ("name", ScenePropertyKind::Text),
         "Label" => ("label", ScenePropertyKind::Text),
+        "Skin" => ("actor.skin", ScenePropertyKind::Text),
+        "Shirt" => ("actor.shirt", ScenePropertyKind::Text),
+        "Pants" => ("actor.pants", ScenePropertyKind::Text),
+        "Shoes" => ("actor.shoes", ScenePropertyKind::Text),
         "Kind" => ("kind", ScenePropertyKind::Text),
         "Color" => ("color", ScenePropertyKind::Text),
         "Material" => ("material", ScenePropertyKind::Text),

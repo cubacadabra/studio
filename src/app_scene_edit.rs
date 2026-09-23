@@ -947,6 +947,20 @@ fn set_authoring_component_property(
     key: &str,
     value: Value,
 ) -> Result<(), String> {
+    if let Some((component, nested_key)) = key.split_once('.') {
+        let object = node
+            .components
+            .get_mut(component)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| format!("scene node {} has no {component} component", node.id))?;
+        let nested = object
+            .entry("appearance".to_owned())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+            .as_object_mut()
+            .ok_or_else(|| format!("scene node {} has invalid appearance", node.id))?;
+        nested.insert(nested_key.to_owned(), value);
+        return Ok(());
+    }
     let matches = node
         .components
         .iter()

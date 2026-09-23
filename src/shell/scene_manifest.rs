@@ -27,6 +27,8 @@ pub(crate) fn authoring_scene_node(
         ("Sign", Icon::Object)
     } else if node.components.contains_key("interaction") {
         ("Interaction", Icon::Object)
+    } else if node.components.contains_key("actor") {
+        ("Actor", Icon::Object)
     } else if node.components.contains_key("ladder") {
         ("Ladder", Icon::Object)
     } else if node.components.contains_key("checkpoint") {
@@ -114,6 +116,16 @@ pub(crate) fn authoring_scene_node(
     for (component, value) in &node.components {
         if let Some(object) = value.as_object() {
             for (key, value) in object {
+                if component == "actor" && key == "appearance" {
+                    if let Some(appearance) = value.as_object() {
+                        for (key, value) in appearance {
+                            if let Some(value) = compact_value(value) {
+                                properties.push((humanize_identifier(key), value));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if let Some(value) = compact_value(value) {
                     properties.push((format_component_property(component, key), value));
                 }
@@ -228,6 +240,7 @@ pub(crate) fn is_authoring_placeable(node: &SceneNode) -> bool {
             "Block"
                 | "Mesh"
                 | "Sign"
+                | "Actor"
                 | "Interaction"
                 | "Ladder"
                 | "Checkpoint"
