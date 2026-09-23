@@ -1,10 +1,14 @@
 use super::*;
 impl StudioApp {
     pub(crate) fn load(
-        game_root: Option<PathBuf>,
+        startup_project: Option<PathBuf>,
         morph_catalog_path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
-        let sources = load_game_sources(game_root)?;
+        // Always bootstrap the chooser's standalone session first. A project
+        // supplied with --path is opened after the window exists through the
+        // same background loader and commit path as a folder selected in the
+        // start screen.
+        let sources = load_game_sources(None)?;
         let initial_review_camera = sources.review_camera;
         let authored_manifest_source = sources.authored_manifest_source;
         let authored_scene_source = sources.authored_scene_source;
@@ -19,17 +23,18 @@ impl StudioApp {
         let project_root = sources.project_root;
         let standalone_preview = sources.standalone_preview;
         let temporary_package = sources.temporary_package;
-        let morph_catalog_path =
-            morph_catalog_path.or_else(|| discover_project_morph_catalog(&project_root));
-        let recent_projects = if sources.standalone_preview {
-            load_recent_projects()
+        let recent_projects = load_recent_projects();
+        let (local_morph_catalog, startup_morph_catalog) = if startup_project.is_some() {
+            (None, morph_catalog_path)
         } else {
-            remember_recent_project(&project_root)
+            (
+                morph_catalog_path
+                    .as_deref()
+                    .map(load_local_morph_catalog)
+                    .transpose()?,
+                None,
+            )
         };
-        let local_morph_catalog = morph_catalog_path
-            .as_deref()
-            .map(load_local_morph_catalog)
-            .transpose()?;
         let mut client = ClientSession::load(&manifest_source, &script_source)?;
         if standalone_preview {
             let position = client
@@ -59,6 +64,8 @@ impl StudioApp {
             initial_review_camera,
             #[cfg(debug_assertions)]
             preview_probe: preview_probe::PreviewProbe::from_env(),
+            startup_project,
+            startup_morph_catalog,
             project_root,
             image_atlas: load_image_atlas(&game_root, &manifest_source)?,
             world_models: load_world_models(&game_root, &manifest_source)?,
@@ -191,6 +198,10 @@ impl StudioApp {
         if let Some(local_catalog) = self.local_morph_catalog.take() {
             self.install_local_morphs(local_catalog)
                 .map_err(|message| Box::new(StudioError(message)) as Box<dyn Error>)?;
+        }
+        if let Some(project) = self.startup_project.take() {
+            let morph_catalog = self.startup_morph_catalog.take();
+            self.start_project_load_with_catalog(project, morph_catalog);
         }
         self.update_viewport();
         self.request_redraw();

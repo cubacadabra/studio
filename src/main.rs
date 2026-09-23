@@ -244,6 +244,8 @@ struct StudioApp {
     initial_review_camera: crate::shell::ReviewCameraPreset,
     #[cfg(debug_assertions)]
     preview_probe: Option<preview_probe::PreviewProbe>,
+    startup_project: Option<PathBuf>,
+    startup_morph_catalog: Option<PathBuf>,
     project_root: PathBuf,
     game_root: PathBuf,
     authored_manifest_source: String,
@@ -567,7 +569,7 @@ mod tests {
         fs::write(project.join("game.luau"), "return {}").unwrap();
 
         let mut progress = Vec::new();
-        let result = load_project_in_background(&project, |value| progress.push(value));
+        let result = load_project_in_background(&project, None, |value| progress.push(value));
         assert!(result.is_ok());
         assert!(progress.windows(2).all(|values| values[0] <= values[1]));
         assert_eq!(progress.first().copied(), Some(0.04));

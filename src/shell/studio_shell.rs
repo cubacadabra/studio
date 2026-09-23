@@ -80,9 +80,9 @@ impl StudioShell {
             selected_asset: "forest-grass",
             test_tool: "Sessions",
             asset_filter: "All",
-            // A project opened from the command line starts in the live
-            // workspace. The no-argument bootstrap changes this to the start
-            // screen in `set_start_screen` before the first frame.
+            // The standalone bootstrap changes this to the start screen in
+            // `set_start_screen` before the first frame. Opening any project
+            // then replaces this shell through the shared project-load path.
             playing: true,
             project_editable: false,
             project_dirty: false,

@@ -24,11 +24,19 @@ impl StudioApp {
     }
 
     pub(crate) fn start_project_load(&mut self, project: PathBuf) {
+        self.start_project_load_with_catalog(project, None);
+    }
+
+    pub(crate) fn start_project_load_with_catalog(
+        &mut self,
+        project: PathBuf,
+        morph_catalog: Option<PathBuf>,
+    ) {
         self.recent_projects = remember_recent_project(&project);
         if let Some(shell) = &mut self.shell {
             shell.set_recent_projects(self.recent_projects.clone());
         }
-        self.start_project_load_with_mode(project, false, false);
+        self.start_project_load_with_mode(project, false, false, morph_catalog);
     }
 
     pub(crate) fn start_project_reload(&mut self) {
@@ -53,7 +61,7 @@ impl StudioApp {
             }
             return;
         }
-        self.start_project_load_with_mode(self.project_root.clone(), true, codex_rebuild);
+        self.start_project_load_with_mode(self.project_root.clone(), true, codex_rebuild, None);
     }
 
     pub(crate) fn start_project_load_with_mode(
@@ -61,8 +69,15 @@ impl StudioApp {
         project: PathBuf,
         preserve_editor: bool,
         codex_rebuild: bool,
+        morph_catalog: Option<PathBuf>,
     ) {
-        self.start_project_load_with_play_mode(project, preserve_editor, codex_rebuild, true);
+        self.start_project_load_with_play_mode(
+            project,
+            preserve_editor,
+            codex_rebuild,
+            true,
+            morph_catalog,
+        );
     }
 
     fn start_project_load_with_play_mode(
@@ -71,6 +86,7 @@ impl StudioApp {
         preserve_editor: bool,
         codex_rebuild: bool,
         play_after_rebuild: bool,
+        morph_catalog: Option<PathBuf>,
     ) {
         if self.pending_project_load.is_some()
             || self.background_project_ready.is_some()
@@ -91,13 +107,18 @@ impl StudioApp {
         }
         let (sender, receiver) = mpsc::channel();
         let worker_project = project.clone();
+        let worker_morph_catalog = morph_catalog;
         let spawn = thread::Builder::new()
             .name("studio-project-loader".to_owned())
             .spawn(move || {
                 let progress_sender = sender.clone();
-                let result = load_project_in_background(&worker_project, move |progress| {
-                    let _ = progress_sender.send(ProjectLoadEvent::Progress(progress));
-                });
+                let result = load_project_in_background(
+                    &worker_project,
+                    worker_morph_catalog.as_deref(),
+                    move |progress| {
+                        let _ = progress_sender.send(ProjectLoadEvent::Progress(progress));
+                    },
+                );
                 let _ = sender.send(ProjectLoadEvent::Finished(result));
             });
         match spawn {

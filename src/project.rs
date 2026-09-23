@@ -157,6 +157,7 @@ fn recent_projects_file() -> Option<PathBuf> {
 
 pub(crate) fn load_project_in_background(
     project: &Path,
+    morph_catalog: Option<&Path>,
     mut progress: impl FnMut(f32),
 ) -> Result<BackgroundProjectLoad, String> {
     project_manifest(project)?;
@@ -175,7 +176,9 @@ pub(crate) fn load_project_in_background(
         let world_models = load_world_models(&sources.root, &sources.manifest_source)
             .map_err(|error| error.to_string())?;
         progress(0.76);
-        let morph_catalog_path = discover_project_morph_catalog(&sources.project_root);
+        let morph_catalog_path = morph_catalog
+            .map(Path::to_path_buf)
+            .or_else(|| discover_project_morph_catalog(&sources.project_root));
         let local_morph_catalog = morph_catalog_path
             .as_deref()
             .map(load_local_morph_catalog)
