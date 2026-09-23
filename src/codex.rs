@@ -526,8 +526,8 @@ fn start_app_server(project_root: &Path) -> Result<Child, String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    if project_root.is_dir() {
-        command.current_dir(project_root);
+    if let Some(directory) = codex_bootstrap_directory(project_root) {
+        command.current_dir(directory);
     }
     command.spawn().map_err(|error| {
         format!(
@@ -535,6 +535,34 @@ fn start_app_server(project_root: &Path) -> Result<Child, String> {
             executable.display()
         )
     })
+}
+
+fn codex_bootstrap_directory(project_root: &Path) -> Option<PathBuf> {
+    let launch_directory = env::current_dir().ok();
+    codex_bootstrap_directory_from(project_root, launch_directory.as_deref())
+}
+
+fn codex_bootstrap_directory_from(
+    project_root: &Path,
+    launch_directory: Option<&Path>,
+) -> Option<PathBuf> {
+    find_codex_root(project_root)
+        .or_else(|| launch_directory.and_then(find_codex_root))
+        .or_else(|| project_root.is_dir().then(|| project_root.to_path_buf()))
+}
+
+fn find_codex_root(start: &Path) -> Option<PathBuf> {
+    let mut directory = start.to_path_buf();
+    loop {
+        if directory.join(".codex-root").is_file() {
+            return Some(directory);
+        }
+        let parent = directory.parent()?.to_path_buf();
+        if parent == directory {
+            return None;
+        }
+        directory = parent;
+    }
 }
 
 fn codex_executable() -> PathBuf {
@@ -903,6 +931,7 @@ fn open_browser(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn parses_chatgpt_account_status() {
@@ -988,5 +1017,33 @@ mod tests {
             reasoning_summary_delta(&message),
             Some("Reviewing the game layout.")
         );
+    }
+
+    #[test]
+    fn prefers_the_project_checkout_root_for_codex_bootstrap() {
+        let root = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-codex-root-{}",
+            std::process::id()
+        ));
+        let checkout = root.join("cubacadabra");
+        let project = checkout.join("examples/game");
+        let launch_directory = checkout.join("studio");
+        let outside_project = root.join("external-game");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&launch_directory).unwrap();
+        fs::create_dir_all(&outside_project).unwrap();
+        fs::write(checkout.join(".codex-root"), "").unwrap();
+
+        assert_eq!(
+            codex_bootstrap_directory_from(&project, Some(&launch_directory)),
+            Some(checkout.clone())
+        );
+        assert_eq!(
+            codex_bootstrap_directory_from(&outside_project, Some(&launch_directory)),
+            Some(checkout),
+            "the launch checkout should be used for an external project"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }
