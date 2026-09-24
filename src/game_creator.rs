@@ -11,8 +11,13 @@ pub(crate) fn create_game(title: &str, parent: &Path) -> Result<CreateResult, St
 #[cfg(test)]
 mod tests {
     use super::create_game;
+    use cubacadabra_reference_import::{
+        ImportOptions, load_reference, write_roblox_place_with_manifest,
+    };
+    use cubacadabra_scene::parse_authoring_scene;
     use std::{
         fs,
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -151,6 +156,29 @@ mod tests {
                 .join(".cubacadabra/sdk/shared-state.luau")
                 .is_file()
         );
+        let authoring_scene =
+            parse_authoring_scene(&fs::read_to_string(result.project.join("scene.json")).unwrap())
+                .unwrap();
+        let exported_place = root.join("starter.rbxlx");
+        let report =
+            write_roblox_place_with_manifest(&authoring_scene, &manifest, None, &exported_place)
+                .unwrap();
+        assert_eq!(report.added_parts, 46);
+        let exported = load_reference(&ImportOptions {
+            place_path: exported_place,
+            terrain_path: None,
+            project_path: None,
+            output_path: PathBuf::new(),
+        })
+        .unwrap();
+        let ground = exported
+            .geometry
+            .iter()
+            .find(|geometry| geometry.name == "Ground")
+            .expect("the default ground must be a physical Roblox Part");
+        assert_eq!(ground.size, [120.0, 0.16, 120.0]);
+        assert_eq!(ground.transform.position, [0.0, -0.08, 0.0]);
+        assert!(ground.anchored && ground.can_collide);
         assert!(create_game("The Wild West", &root).is_err());
         let _ = fs::remove_dir_all(root);
     }

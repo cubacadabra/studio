@@ -1,7 +1,7 @@
 use super::*;
 use crate::app_scene_migration::migrate_manifest_to_scene;
 use cubacadabra_reference_import::{
-    import_roblox_authoring_scene, roblox_source_files, write_roblox_place,
+    import_roblox_authoring_scene, roblox_source_files, write_roblox_place_with_manifest,
 };
 use cubacadabra_scene::serialize_authoring_scene;
 use sha2::{Digest, Sha256};
@@ -165,7 +165,19 @@ impl StudioApp {
                 return;
             }
         };
-        match write_roblox_place(scene, preserved_source.as_deref(), &output_path) {
+        let manifest: Value = match serde_json::from_str(&self.authored_manifest_source) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                self.set_roblox_error(&format!("The project manifest is not valid JSON: {error}"));
+                return;
+            }
+        };
+        match write_roblox_place_with_manifest(
+            scene,
+            &manifest,
+            preserved_source.as_deref(),
+            &output_path,
+        ) {
             Ok(report) => {
                 if let Some(shell) = &mut self.shell {
                     let warning = if report.warnings.is_empty() {
