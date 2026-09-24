@@ -142,6 +142,7 @@ mod tests {
         );
         let source = fs::read_to_string(result.project.join("src/main.luau")).unwrap();
         assert!(source.contains("function Game.on_interaction"));
+        assert!(source.contains("api.effects:set_state(interaction_id(index), \"complete\")"));
         assert!(source.contains("All 21 lines are back on the cubes"));
         assert!(
             result
