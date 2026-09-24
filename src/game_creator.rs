@@ -37,7 +37,7 @@ mod tests {
         assert_eq!(result.game_id, "the-wild-west");
         assert_eq!(manifest["displayName"], "The Wild West");
         let nodes = scene["nodes"].as_array().unwrap();
-        assert_eq!(nodes.len(), 35);
+        assert_eq!(nodes.len(), 38);
         assert_eq!(
             nodes
                 .iter()
