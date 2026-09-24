@@ -13,6 +13,7 @@ jobs:
     permissions:
       contents: write
     uses: cubacadabra/tools/.github/workflows/native-release-reusable.yml@main
+    secrets: inherit
     with:
       app_repository: ${{ github.repository }}
       app_ref: ${{ github.ref_name }}
