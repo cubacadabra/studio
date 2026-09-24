@@ -463,11 +463,11 @@ impl StudioApp {
                             SceneObjectKind::Actor => (
                                 root_id.clone(),
                                 "actor".to_owned(),
-                                "Wizard Guide".to_owned(),
+                                "Actor 1".to_owned(),
                                 "actor".to_owned(),
                                 serde_json::json!({
                                     "id": "actor",
-                                    "name": "Wizard Guide",
+                                    "name": "Actor 1",
                                     "yaw": 0,
                                     "appearance": {
                                         "skin": "#E8AE86",
