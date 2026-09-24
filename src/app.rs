@@ -171,6 +171,7 @@ impl StudioApp {
         }
 
         let mut shell = StudioShell::new(&window, &renderer, &self.manifest_source);
+        shell.set_about_preview_texture(renderer.device(), renderer.about_preview_texture());
         shell.set_review_camera(self.initial_review_camera);
         shell.set_project_asset_available(!self.standalone_preview);
         shell.set_project_editable(
@@ -766,6 +767,9 @@ impl StudioApp {
             let renderer_sync_started = Instant::now();
             renderer.sync(self.client.engine());
             renderer_sync_ms = renderer_sync_started.elapsed().as_secs_f32() * 1_000.0;
+            if let Some(elapsed) = self.shell.as_ref().and_then(StudioShell::about_elapsed) {
+                renderer.render_about_preview(elapsed);
+            }
             let renderer_draw_started = Instant::now();
             match (&mut self.shell, prepared_shell) {
                 (Some(shell), Some(prepared)) => {

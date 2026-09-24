@@ -7,7 +7,7 @@ use crate::{
     },
     project::{SourceAsset, SourceAssetKind},
 };
-use cubacadabra_client::{AboutAnimation, native::Renderer as GameRenderer};
+use cubacadabra_client::native::Renderer as GameRenderer;
 use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 use cubacadabra_scene::{AuthoringNode, AuthoringScene, parse_authoring_scene};
@@ -174,49 +174,6 @@ pub(crate) enum StudioCommand {
     ShowMaterials,
     ShowMorphs,
     ShowTest,
-}
-
-struct AboutVideo {
-    animation: AboutAnimation,
-    texture: Option<egui::TextureHandle>,
-    displayed_frame: u64,
-}
-
-impl AboutVideo {
-    fn decode() -> Result<Self, String> {
-        let animation = AboutAnimation::decode()?;
-        Ok(Self {
-            animation,
-            texture: None,
-            displayed_frame: u64::MAX,
-        })
-    }
-
-    fn update_texture(&mut self, context: &egui::Context) -> &egui::TextureHandle {
-        let (frame_id, width, height, pixels) = {
-            let frame = self
-                .animation
-                .current_frame()
-                .expect("bundled About animation should provide a frame");
-            (frame.id, frame.width, frame.height, frame.pixels.clone())
-        };
-        if self.displayed_frame != frame_id {
-            let image = egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels);
-            if let Some(texture) = &mut self.texture {
-                texture.set(image, egui::TextureOptions::LINEAR);
-            } else {
-                self.texture = Some(context.load_texture(
-                    "cubacadabra-about-video",
-                    image,
-                    egui::TextureOptions::LINEAR,
-                ));
-            }
-            self.displayed_frame = frame_id;
-        }
-        self.texture
-            .as_ref()
-            .expect("About video texture should be initialized")
-    }
 }
 
 pub(crate) struct PreparedShell {
@@ -531,8 +488,8 @@ pub(crate) struct StudioShell {
     new_project_title_focus_requested: bool,
     logo_texture: egui::TextureHandle,
     about_open: bool,
-    about_video: Option<AboutVideo>,
-    about_video_error: Option<String>,
+    about_texture: Option<egui::TextureId>,
+    about_started_at: Option<Instant>,
     pending_project_action: Option<PendingProjectAction>,
     exit_requested: bool,
     imported_asset_paths: Vec<PathBuf>,

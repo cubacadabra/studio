@@ -8,12 +8,7 @@ impl StudioShell {
         match command {
             StudioCommand::ShowAbout => {
                 self.about_open = true;
-                if self.about_video.is_none() && self.about_video_error.is_none() {
-                    match AboutVideo::decode() {
-                        Ok(video) => self.about_video = Some(video),
-                        Err(error) => self.about_video_error = Some(error),
-                    }
-                }
+                self.about_started_at = Some(Instant::now());
             }
             StudioCommand::NewProject => {
                 if self.project_dirty {
@@ -94,6 +89,25 @@ impl StudioShell {
     pub(crate) fn select_workspace(&mut self, workspace: Workspace) {
         self.workspace = workspace;
         self.notice = format!("{} workspace", workspace.label());
+    }
+
+    pub(crate) fn set_about_preview_texture(
+        &mut self,
+        device: &wgpu::Device,
+        texture: &wgpu::TextureView,
+    ) {
+        self.about_texture = Some(self.renderer.register_native_texture(
+            device,
+            texture,
+            wgpu::FilterMode::Linear,
+        ));
+    }
+
+    pub(crate) fn about_elapsed(&self) -> Option<f32> {
+        self.about_open.then(|| {
+            self.about_started_at
+                .map_or(0.0, |started| started.elapsed().as_secs_f32())
+        })
     }
 
     pub(crate) fn prepare(&mut self, window: &Window, project_name: &str) -> PreparedShell {
@@ -207,7 +221,11 @@ impl StudioShell {
         self.show_about(ui.ctx());
         self.show_add_palette(ui.ctx());
         self.show_performance_monitor(ui.ctx());
-        ui.ctx().request_repaint_after(Duration::from_millis(16));
+        ui.ctx().request_repaint_after(if self.about_open {
+            Duration::from_millis(33)
+        } else {
+            Duration::from_millis(16)
+        });
     }
 
     fn show_about(&mut self, context: &egui::Context) {
@@ -219,11 +237,7 @@ impl StudioShell {
         } else {
             LIGHT_PALETTE
         };
-        let video_texture = self
-            .about_video
-            .as_mut()
-            .map(|video| video.update_texture(context).clone());
-        let video_error = self.about_video_error.clone();
+        let about_texture = self.about_texture;
         let logo_texture = self.logo_texture.clone();
         let mut close_requested = false;
         let response = egui::Modal::new(egui::Id::new("about_cubacadabra"))
@@ -249,17 +263,11 @@ impl StudioShell {
                     );
                 });
                 ui.add_space(14.0);
-                if let Some(texture) = &video_texture {
+                if let Some(texture) = about_texture {
                     let width = ui.available_width().min(512.0);
                     ui.add(
-                        egui::Image::from_texture(texture)
+                        egui::Image::from_texture((texture, egui::vec2(width, width * 9.0 / 16.0)))
                             .fit_to_exact_size(egui::vec2(width, width * 9.0 / 16.0)),
-                    );
-                } else if let Some(error) = &video_error {
-                    ui.label(
-                        RichText::new(error)
-                            .size(TYPE.secondary)
-                            .color(colors.axis_x),
                     );
                 }
                 ui.add_space(12.0);
