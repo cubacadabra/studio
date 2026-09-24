@@ -184,6 +184,8 @@ pub(crate) struct SceneTreeRow {
     pub(crate) placeable: bool,
     pub(crate) has_parent: bool,
     pub(crate) group: bool,
+    pub(crate) locked: bool,
+    pub(crate) roblox_linked: bool,
     pub(crate) ancestors: Vec<String>,
 }
 
@@ -226,6 +228,8 @@ fn flatten_scene_rows_with_ancestors(
         placeable: is_authoring_placeable(node),
         has_parent: scene_parent_id_for_row(node).is_some(),
         group: node.kind == "Group" && is_authoring_transformable(node),
+        locked: scene_node_locked(node),
+        roblox_linked: scene_node_roblox_linked(node),
         ancestors: ancestors.clone(),
     });
     if expanded_nodes.contains(&node.id) || filter_matches.is_some() {
@@ -461,7 +465,16 @@ pub(crate) fn show_scene_row(
                 });
                 ui.close();
             }
-            if ui.button("Delete").clicked() {
+            let can_delete = !row.roblox_linked && !row.locked;
+            if ui
+                .add_enabled(can_delete, egui::Button::new("Delete"))
+                .on_hover_text(if can_delete {
+                    "Delete scene object"
+                } else {
+                    "Deleting imported Roblox objects is not supported yet"
+                })
+                .clicked()
+            {
                 *edit_request = Some(SceneEditRequest::DeleteObject {
                     target: row.id.clone(),
                 });

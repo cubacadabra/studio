@@ -278,6 +278,12 @@ pub(crate) fn scene_node_locked(node: &SceneNode) -> bool {
         .is_some_and(|(_, value)| value == "Yes")
 }
 
+pub(crate) fn scene_node_roblox_linked(node: &SceneNode) -> bool {
+    node.properties
+        .iter()
+        .any(|(label, value)| label == "Source" && value == "roblox")
+}
+
 pub(crate) fn format_vector(values: [f32; 3]) -> String {
     values
         .into_iter()

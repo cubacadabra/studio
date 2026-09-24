@@ -638,7 +638,17 @@ impl StudioShell {
                     });
                     self.notice = "Duplicating scene object…".to_owned();
                 }
-                if ui.button("Delete").clicked() {
+                let can_delete =
+                    !scene_node_roblox_linked(selected) && !scene_node_locked(selected);
+                if ui
+                    .add_enabled(can_delete, egui::Button::new("Delete"))
+                    .on_hover_text(if can_delete {
+                        "Delete scene object"
+                    } else {
+                        "Deleting imported Roblox objects is not supported yet"
+                    })
+                    .clicked()
+                {
                     self.scene_edit_requested = Some(SceneEditRequest::DeleteObject {
                         target: selected.id.clone(),
                     });

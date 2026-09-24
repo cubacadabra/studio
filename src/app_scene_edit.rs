@@ -850,6 +850,10 @@ impl StudioApp {
                                     copy.name = format!("{} Copy {number}", copy.name);
                                     offset_duplicate(&mut copy);
                                 }
+                                // A duplicate is new authored content. Keeping the
+                                // original Roblox source link would make both scene
+                                // nodes edit the same preserved DOM instance.
+                                copy.source = None;
                                 if let Some(parent_id) = copy.parent_id.as_deref()
                                     && let Some(remapped) = mapping.get(parent_id)
                                 {
@@ -898,6 +902,12 @@ impl StudioApp {
                 SceneEditRequest::DeleteObject { target } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
                     if let Some(node) = scene.node(target) {
+                        if is_roblox_source_linked(node) {
+                            return Err(
+                                "Deleting imported Roblox objects is not supported yet; the source is preserved for export"
+                                    .to_owned(),
+                            );
+                        }
                         if node.editor.locked {
                             return Err(format!("scene node {target} is locked"));
                         }
@@ -1353,6 +1363,12 @@ fn normalize_legacy_primitive_appearance(primitive: &mut serde_json::Map<String,
     }
 }
 
+fn is_roblox_source_linked(node: &AuthoringNode) -> bool {
+    node.source
+        .as_ref()
+        .is_some_and(|source| source.format == "roblox")
+}
+
 #[cfg(test)]
 mod scene_edit_tests {
     use super::*;
@@ -1449,6 +1465,18 @@ mod scene_edit_tests {
         offset_duplicate(&mut block);
 
         assert_eq!(block.transform.position, [6.5, 1.0, 4.0]);
+    }
+
+    #[test]
+    fn imported_roblox_nodes_are_not_deletable_yet() {
+        let mut block = block_node("block-1", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE);
+        block.source = Some(cubacadabra_scene::SourceMetadata {
+            format: "roblox".to_owned(),
+            class: Some("Part".to_owned()),
+            path: Some("Workspace:Workspace[1]/Part:Block[1]".to_owned()),
+            properties: BTreeMap::new(),
+        });
+        assert!(is_roblox_source_linked(&block));
     }
 
     #[test]
