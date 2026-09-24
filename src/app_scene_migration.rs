@@ -223,6 +223,41 @@ pub(crate) fn migrate_manifest_to_scene(source: &str) -> Result<ManifestSceneMig
             });
         }
     }
+    if let Some(actors) = manifest_collection(world, "actors")? {
+        for (index, actor) in actors.iter().enumerate() {
+            let object = manifest_collection_object(actor, "actors", index)?;
+            let runtime_id = object
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("actor-{}", index + 1));
+            let id = format!("actor-{runtime_id}");
+            let mut component = object.clone();
+            component.remove("position");
+            let yaw = component
+                .remove("yaw")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0);
+            target_map.insert(format!("world/{world_id}/actors/{index}"), id.clone());
+            nodes.push(AuthoringNode {
+                id,
+                parent_id: Some(root_id.clone()),
+                name: object
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("Actor {}", index + 1)),
+                transform: Transform {
+                    position: scene_vector(object.get("position"), [0.0, 0.0, 0.0]),
+                    rotation: [0.0, yaw as f32, 0.0],
+                    ..Transform::default()
+                },
+                components: BTreeMap::from([("actor".to_owned(), Value::Object(component))]),
+                editor: EditorMetadata::default(),
+                source: None,
+            });
+        }
+    }
     for (collection, component_name, node_prefix, display_name) in [
         ("ladders", "ladder", "ladder", "Ladder"),
         ("checkpoints", "checkpoint", "checkpoint", "Checkpoint"),
@@ -297,6 +332,7 @@ pub(crate) fn migrate_manifest_to_scene(source: &str) -> Result<ManifestSceneMig
         "decorations",
         "signs",
         "interactions",
+        "actors",
         "ladders",
         "checkpoints",
         "hazards",
@@ -321,7 +357,10 @@ pub(crate) fn retarget_migrated_scene_edit(
         | SceneEditRequest::DuplicateObject { target }
         | SceneEditRequest::DeleteObject { target }
         | SceneEditRequest::UpdateSignText { target, .. }
-        | SceneEditRequest::UpdateProperty { target, .. } => target,
+        | SceneEditRequest::UpdateProperty { target, .. }
+        | SceneEditRequest::RemoveProperty { target, .. }
+        | SceneEditRequest::RenameObject { target, .. }
+        | SceneEditRequest::ReparentObject { target, .. } => target,
         SceneEditRequest::AddObject { .. } | SceneEditRequest::UseImageAsFloor { .. } => return,
     };
     if let Some(migrated_target) = target_map.get(target) {
@@ -431,6 +470,18 @@ pub(crate) fn default_scene_object(kind: SceneObjectKind, index: usize) -> Value
             "climbAxis": "z",
             "color": "signal"
         }),
+        SceneObjectKind::Actor => serde_json::json!({
+            "id": format!("actor-{number}"),
+            "name": format!("Actor {number}"),
+            "position": [x, 0, 0],
+            "yaw": 0,
+            "appearance": {
+                "skin": "#E8AE86",
+                "shirt": "#4C3F91",
+                "pants": "#24365A",
+                "shoes": "#19343A"
+            }
+        }),
         SceneObjectKind::Interaction => serde_json::json!({
             "id": format!("interaction-{number}"),
             "label": format!("Interaction {number}"),
@@ -457,6 +508,7 @@ pub(crate) fn default_scene_object(kind: SceneObjectKind, index: usize) -> Value
             "radius": 5,
             "healPerSecond": 10
         }),
+        SceneObjectKind::Group => Value::Null,
     }
 }
 
@@ -467,8 +519,8 @@ mod migration_tests {
     #[test]
     fn every_insertable_scene_kind_has_a_valid_position_and_collection() {
         let mut world = serde_json::json!({});
-        for kind in SceneObjectKind::ALL {
-            let collection = kind.collection();
+        for kind in SceneObjectKind::MANIFEST_KINDS {
+            let collection = kind.collection().expect("manifest collection");
             ensure_scene_collection(&mut world, collection)
                 .expect("collection")
                 .push(default_scene_object(kind, 0));
@@ -526,6 +578,37 @@ mod migration_tests {
         assert!(
             migrated.cleaned_manifest["worlds"]["course"]
                 .get("blocks")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn manifest_migration_preserves_authored_actors() {
+        let source = serde_json::json!({
+            "startWorld": "course",
+            "worlds": {
+                "course": {
+                    "actors": [{
+                        "id": "guide",
+                        "name": "Wizard Guide",
+                        "position": [3, 0, 5],
+                        "yaw": 0.75,
+                        "appearance": {"shirt": "#4C3F91"}
+                    }]
+                }
+            }
+        })
+        .to_string();
+
+        let migrated = migrate_manifest_to_scene(&source).unwrap();
+        let actor = migrated.scene.node("actor-guide").unwrap();
+        assert_eq!(actor.name, "Wizard Guide");
+        assert_eq!(actor.transform.position, [3.0, 0.0, 5.0]);
+        assert_eq!(actor.transform.rotation, [0.0, 0.75, 0.0]);
+        assert_eq!(actor.components["actor"]["id"], "guide");
+        assert!(
+            migrated.cleaned_manifest["worlds"]["course"]
+                .get("actors")
                 .is_none()
         );
     }

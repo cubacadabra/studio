@@ -83,6 +83,12 @@ Controls:
   or return to the preserved Build-mode camera
 - `Add` or `Shift-A`: open the searchable Add palette; creating a Block places
   it in the nearest open space, selects it, and enters Craft mode
+- add a Group to organize scene nodes, then use the selected node's Parent
+  control to move it in the hierarchy without changing its world placement
+- rename authoring nodes and change a Block's color or portable built-in
+  surface material in the Inspector
+- add a stationary Actor for an authored character/NPC and edit its transform
+  and appearance properties
 - drag a selected block to move it across the ground; drag its corner and top
   handles to resize it, or its raised handle to move it up and down
 - click empty viewport space or press `Escape` to clear selection
@@ -112,6 +118,10 @@ CUBA_STUDIO_PROBE_DIR=/tmp/maze-review CUBA_STUDIO_PROBE_REVIEW=1 \
 
 CUBA_STUDIO_PROBE_DIR=/tmp/add-palette CUBA_STUDIO_PROBE_ADD=1 \
   cargo run -- --path ../examples/survival-101
+
+CUBA_STUDIO_PROBE_DIR=/tmp/appearance CUBA_STUDIO_PROBE_APPEARANCE=1 \
+  CUBA_STUDIO_PROBE_WORLD=starter-world \
+  cargo run -- --path ../examples/survival-101
 ```
 
 For a fixed source-reference comparison, also provide the target screenshot.
@@ -134,7 +144,9 @@ release builds.
 
 The Add probe opens the production palette from a stopped editable project,
 captures `add-palette.png`, and verifies that the shared palette entry point
-honors Studio's edit-mode checks.
+honors Studio's edit-mode checks. The Appearance probe performs an in-memory
+Block addition through the normal scene transaction path and captures its
+production Inspector without saving the fixture project.
 
 ## ChatGPT connection
 

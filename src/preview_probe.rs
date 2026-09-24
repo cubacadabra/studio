@@ -8,6 +8,7 @@ pub(crate) struct PreviewProbe {
     frame: u32,
     review: bool,
     add_palette: bool,
+    appearance: bool,
     world: Option<String>,
     gameplay_camera: [f32; 3],
     projected: Option<[f32; 2]>,
@@ -34,6 +35,7 @@ impl PreviewProbe {
             frame: 0,
             review: env::var_os("CUBA_STUDIO_PROBE_REVIEW").is_some(),
             add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
+            appearance: env::var_os("CUBA_STUDIO_PROBE_APPEARANCE").is_some(),
             world: env::var("CUBA_STUDIO_PROBE_WORLD").ok(),
             gameplay_camera: [0.0; 3],
             projected: None,
@@ -77,6 +79,20 @@ impl PreviewProbe {
             }
             if self.frame == 81 {
                 eprintln!("add palette probe passed");
+            }
+            return;
+        }
+        if self.appearance {
+            if self.frame == 60 {
+                app.shell.as_mut().unwrap().set_playing(false);
+                app.apply_scene_edit(crate::shell::SceneEditRequest::AddObject {
+                    world_id: self.world.clone(),
+                    kind: crate::shell::SceneObjectKind::Block,
+                })
+                .expect("appearance probe could not add a block");
+            }
+            if self.frame == 81 {
+                eprintln!("appearance inspector probe passed");
             }
             return;
         }
@@ -155,6 +171,8 @@ impl PreviewProbe {
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
         let name = if self.add_palette && self.frame == 80 {
             "add-palette"
+        } else if self.appearance && self.frame == 80 {
+            "appearance-inspector"
         } else {
             match (self.review, self.frame) {
                 (false, 120) => {
@@ -183,7 +201,12 @@ impl PreviewProbe {
     }
 
     pub(crate) fn finished(&self) -> bool {
-        self.frame >= if self.add_palette { 81 } else { 121 }
+        self.frame
+            >= if self.add_palette || self.appearance {
+                81
+            } else {
+                121
+            }
     }
 }
 

@@ -28,7 +28,7 @@ pub(crate) fn authoring_scene_node(
     } else if node.components.contains_key("interaction") {
         ("Interaction", Icon::Object)
     } else if node.components.contains_key("actor") {
-        ("Actor", Icon::Object)
+        ("Actor", Icon::Character)
     } else if node.components.contains_key("ladder") {
         ("Ladder", Icon::Object)
     } else if node.components.contains_key("checkpoint") {
@@ -42,7 +42,7 @@ pub(crate) fn authoring_scene_node(
     };
     let mut properties = vec![
         ("Authoring ID".to_owned(), node.id.clone()),
-        ("ID".to_owned(), node.id.clone()),
+        ("Name".to_owned(), node.name.clone()),
         ("Kind".to_owned(), kind.to_owned()),
         (
             "Parent".to_owned(),
@@ -276,6 +276,11 @@ pub(crate) fn vector_value(value: &Value) -> Option<[f32; 3]> {
 pub(crate) fn format_component_property(component: &str, key: &str) -> String {
     let label = humanize_identifier(key);
     match component {
+        "primitive" => match key {
+            "material" => "Color".to_owned(),
+            "runtimeMaterial" => "Material".to_owned(),
+            _ => label,
+        },
         "render" => format!("Render {label}"),
         "text" => label,
         "interaction" => label,
@@ -302,18 +307,19 @@ pub(crate) fn is_scene_object(node_id: &str) -> bool {
     };
     parts.next().is_some()
         && parts.next().is_none()
-        && SceneObjectKind::ALL
+        && SceneObjectKind::MANIFEST_KINDS
             .iter()
-            .any(|kind| kind.collection() == collection)
+            .any(|kind| kind.collection() == Some(collection))
 }
 
-pub(crate) const WORLD_COLLECTIONS: [(&str, &str, &str, Icon); 11] = [
+pub(crate) const WORLD_COLLECTIONS: [(&str, &str, &str, Icon); 12] = [
     ("launchPads", "Launch Pads", "Launch Pad", Icon::Object),
     ("blocks", "Blocks", "Block", Icon::Object),
     ("portals", "Portals", "Portal", Icon::Object),
     ("signs", "Signs", "Sign", Icon::Object),
     ("billboards", "Billboards", "Billboard", Icon::Image),
     ("interactions", "Interactions", "Interaction", Icon::Object),
+    ("actors", "Actors", "Actor", Icon::Character),
     ("ladders", "Ladders", "Ladder", Icon::Object),
     ("checkpoints", "Checkpoints", "Checkpoint", Icon::Object),
     ("hazards", "Hazards", "Hazard", Icon::Object),

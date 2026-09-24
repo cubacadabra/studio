@@ -29,6 +29,18 @@ pub(crate) enum SceneEditRequest {
         key: String,
         value: Value,
     },
+    RemoveProperty {
+        target: String,
+        key: String,
+    },
+    RenameObject {
+        target: String,
+        name: String,
+    },
+    ReparentObject {
+        target: String,
+        parent_id: String,
+    },
     DuplicateObject {
         target: String,
     },
@@ -104,8 +116,10 @@ impl SceneTool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SceneObjectKind {
     Block,
+    Group,
     Sign,
     Ladder,
+    Actor,
     Interaction,
     Checkpoint,
     Hazard,
@@ -113,10 +127,24 @@ pub(crate) enum SceneObjectKind {
 }
 
 impl SceneObjectKind {
-    pub(crate) const ALL: [Self; 7] = [
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 9] = [
+        Self::Block,
+        Self::Group,
+        Self::Sign,
+        Self::Ladder,
+        Self::Actor,
+        Self::Interaction,
+        Self::Checkpoint,
+        Self::Hazard,
+        Self::SafeZone,
+    ];
+
+    pub(crate) const MANIFEST_KINDS: [Self; 8] = [
         Self::Block,
         Self::Sign,
         Self::Ladder,
+        Self::Actor,
         Self::Interaction,
         Self::Checkpoint,
         Self::Hazard,
@@ -126,8 +154,10 @@ impl SceneObjectKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Block => "Block",
+            Self::Group => "Group",
             Self::Sign => "Sign",
             Self::Ladder => "Ladder",
+            Self::Actor => "Actor",
             Self::Interaction => "Interaction",
             Self::Checkpoint => "Checkpoint",
             Self::Hazard => "Hazard",
@@ -135,16 +165,18 @@ impl SceneObjectKind {
         }
     }
 
-    pub(crate) fn collection(self) -> &'static str {
-        match self {
+    pub(crate) fn collection(self) -> Option<&'static str> {
+        Some(match self {
             Self::Block => "blocks",
+            Self::Group => return None,
             Self::Sign => "signs",
             Self::Ladder => "ladders",
+            Self::Actor => "actors",
             Self::Interaction => "interactions",
             Self::Checkpoint => "checkpoints",
             Self::Hazard => "hazards",
             Self::SafeZone => "safeZones",
-        }
+        })
     }
 }
 

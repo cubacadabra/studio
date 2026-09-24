@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AddCategory {
     Build,
+    Characters,
     Gameplay,
 }
 
@@ -10,6 +11,7 @@ impl AddCategory {
     const fn label(self) -> &'static str {
         match self {
             Self::Build => "BUILD",
+            Self::Characters => "CHARACTERS",
             Self::Gameplay => "GAMEPLAY",
         }
     }
@@ -19,22 +21,33 @@ impl AddCategory {
 struct AddPaletteItem {
     kind: SceneObjectKind,
     category: AddCategory,
+    icon: Icon,
     label: &'static str,
     description: &'static str,
     aliases: &'static [&'static str],
 }
 
-const ADD_PALETTE_ITEMS: [AddPaletteItem; 7] = [
+const ADD_PALETTE_ITEMS: [AddPaletteItem; 9] = [
     AddPaletteItem {
         kind: SceneObjectKind::Block,
         category: AddCategory::Build,
+        icon: Icon::Object,
         label: "Block",
         description: "Solid editable shape",
         aliases: &["cube", "part", "platform", "brick"],
     },
     AddPaletteItem {
+        kind: SceneObjectKind::Group,
+        category: AddCategory::Build,
+        icon: Icon::Folder,
+        label: "Group",
+        description: "Organize related scene nodes",
+        aliases: &["folder", "model", "container", "collection"],
+    },
+    AddPaletteItem {
         kind: SceneObjectKind::Sign,
         category: AddCategory::Build,
+        icon: Icon::Object,
         label: "Sign",
         description: "World-space text",
         aliases: &["text", "label", "message"],
@@ -42,13 +55,23 @@ const ADD_PALETTE_ITEMS: [AddPaletteItem; 7] = [
     AddPaletteItem {
         kind: SceneObjectKind::Ladder,
         category: AddCategory::Build,
+        icon: Icon::Object,
         label: "Ladder",
         description: "Climbable volume",
         aliases: &["climb", "climbable", "stairs"],
     },
     AddPaletteItem {
+        kind: SceneObjectKind::Actor,
+        category: AddCategory::Characters,
+        icon: Icon::Character,
+        label: "Actor",
+        description: "Stationary authored character",
+        aliases: &["character", "npc", "humanoid", "guide", "rig"],
+    },
+    AddPaletteItem {
         kind: SceneObjectKind::Interaction,
         category: AddCategory::Gameplay,
+        icon: Icon::Object,
         label: "Interaction",
         description: "Trigger an action",
         aliases: &["trigger", "prompt", "action", "zone"],
@@ -56,6 +79,7 @@ const ADD_PALETTE_ITEMS: [AddPaletteItem; 7] = [
     AddPaletteItem {
         kind: SceneObjectKind::Checkpoint,
         category: AddCategory::Gameplay,
+        icon: Icon::Object,
         label: "Checkpoint",
         description: "Save player progress",
         aliases: &["spawn", "progress", "save"],
@@ -63,6 +87,7 @@ const ADD_PALETTE_ITEMS: [AddPaletteItem; 7] = [
     AddPaletteItem {
         kind: SceneObjectKind::Hazard,
         category: AddCategory::Gameplay,
+        icon: Icon::Object,
         label: "Hazard",
         description: "Damage players",
         aliases: &["damage", "kill", "danger", "lava"],
@@ -70,6 +95,7 @@ const ADD_PALETTE_ITEMS: [AddPaletteItem; 7] = [
     AddPaletteItem {
         kind: SceneObjectKind::SafeZone,
         category: AddCategory::Gameplay,
+        icon: Icon::Object,
         label: "Safe Zone",
         description: "Heal and protect players",
         aliases: &["heal", "safety", "protect", "recovery"],
@@ -298,7 +324,7 @@ fn add_palette_row(ui: &mut egui::Ui, item: &AddPaletteItem, selected: bool) -> 
             rect.left_center() + egui::vec2(18.0, 0.0),
             Vec2::splat(18.0),
         ),
-        Icon::Object,
+        item.icon,
         if selected { colors.text } else { colors.muted },
     );
     ui.painter().text(
@@ -346,6 +372,8 @@ mod tests {
             filtered_add_items("heal")[0].kind,
             SceneObjectKind::SafeZone
         );
+        assert_eq!(filtered_add_items("npc")[0].kind, SceneObjectKind::Actor);
+        assert_eq!(filtered_add_items("model")[0].kind, SceneObjectKind::Group);
     }
 
     #[test]

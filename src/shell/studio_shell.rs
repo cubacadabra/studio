@@ -66,6 +66,7 @@ impl StudioShell {
             selected_scene,
             scene_focus_requested: false,
             scene_editor_target: String::new(),
+            scene_editor_name: String::new(),
             scene_editor_position: [0.0; 3],
             scene_editor_rotation: [0.0; 3],
             scene_editor_size: [1.0; 3],

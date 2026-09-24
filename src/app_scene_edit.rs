@@ -418,6 +418,14 @@ impl StudioApp {
                                 }),
                                 next_block_position(&scene),
                             ),
+                            SceneObjectKind::Group => (
+                                root_id.clone(),
+                                "group".to_owned(),
+                                "Group".to_owned(),
+                                String::new(),
+                                serde_json::json!({}),
+                                [0.0, 0.0, 0.0],
+                            ),
                             SceneObjectKind::Sign => (
                                 scene
                                     .node("signs")
@@ -444,6 +452,24 @@ impl StudioApp {
                                     "color": "signal"
                                 }),
                                 [0.0, 3.0, 0.0],
+                            ),
+                            SceneObjectKind::Actor => (
+                                root_id.clone(),
+                                "actor".to_owned(),
+                                "Wizard Guide".to_owned(),
+                                "actor".to_owned(),
+                                serde_json::json!({
+                                    "id": "actor",
+                                    "name": "Wizard Guide",
+                                    "yaw": 0,
+                                    "appearance": {
+                                        "skin": "#E8AE86",
+                                        "shirt": "#4C3F91",
+                                        "pants": "#24365A",
+                                        "shoes": "#19343A"
+                                    }
+                                }),
+                                [0.0, 0.0, 0.0],
                             ),
                             SceneObjectKind::Interaction => (
                                 scene
@@ -521,7 +547,9 @@ impl StudioApp {
                         }
                     }
                     let mut component_map = BTreeMap::new();
-                    component_map.insert(component_name.to_owned(), component);
+                    if !component_name.is_empty() {
+                        component_map.insert(component_name.to_owned(), component);
+                    }
                     scene.nodes.push(AuthoringNode {
                         id: id.clone(),
                         parent_id: Some(parent_id),
@@ -643,6 +671,63 @@ impl StudioApp {
                         return Ok(());
                     }
                 }
+                SceneEditRequest::RemoveProperty { target, key } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    if let Some(node) = scene.node_mut(target) {
+                        if node.editor.locked {
+                            return Err(format!("scene node {target} is locked"));
+                        }
+                        remove_authoring_component_property(node, key)?;
+                        let updated = serialize_authoring_scene(&scene)?;
+                        self.commit_authoring_scene_transaction(
+                            scene_source,
+                            updated,
+                            target,
+                            "Property reset — save to keep it",
+                        );
+                        return Ok(());
+                    }
+                }
+                SceneEditRequest::RenameObject { target, name } => {
+                    let name = name.trim();
+                    if name.is_empty() {
+                        return Err("Scene object name cannot be empty".to_owned());
+                    }
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    if let Some(node) = scene.node_mut(target) {
+                        if node.editor.locked {
+                            return Err(format!("scene node {target} is locked"));
+                        }
+                        node.name = name.to_owned();
+                        if let Some(actor) = node
+                            .components
+                            .get_mut("actor")
+                            .and_then(Value::as_object_mut)
+                        {
+                            actor.insert("name".to_owned(), Value::String(name.to_owned()));
+                        }
+                        let updated = serialize_authoring_scene(&scene)?;
+                        self.commit_authoring_scene_transaction(
+                            scene_source,
+                            updated,
+                            target,
+                            "Scene object renamed — save to keep it",
+                        );
+                        return Ok(());
+                    }
+                }
+                SceneEditRequest::ReparentObject { target, parent_id } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    scene.reparent_preserving_world_transform(target, parent_id)?;
+                    let updated = serialize_authoring_scene(&scene)?;
+                    self.commit_authoring_scene_transaction(
+                        scene_source,
+                        updated,
+                        target,
+                        "Scene object moved in the hierarchy — save to keep it",
+                    );
+                    return Ok(());
+                }
                 SceneEditRequest::DuplicateObject { target } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
                     if let Some(node) = scene.node(target).cloned() {
@@ -751,7 +836,9 @@ impl StudioApp {
             let world_id = world_id
                 .clone()
                 .unwrap_or_else(|| active_manifest_world_id(&manifest));
-            let collection = kind.collection();
+            let collection = kind
+                .collection()
+                .ok_or_else(|| format!("{} requires the authoring scene format", kind.label()))?;
             let world = manifest_world_mut(&mut manifest, &world_id)?;
             let items = ensure_scene_collection(world, collection)?;
             let index = items.len();
@@ -807,6 +894,11 @@ impl StudioApp {
             }
             SceneEditRequest::UpdateProperty { target, key, value } => {
                 (target, SceneEditOperation::UpdateProperty { key, value })
+            }
+            SceneEditRequest::RemoveProperty { .. }
+            | SceneEditRequest::RenameObject { .. }
+            | SceneEditRequest::ReparentObject { .. } => {
+                return Err("this edit requires an authoring scene".to_owned());
             }
         };
         let (world_id, collection, index) = parse_scene_object_target(&target)?;
@@ -1000,12 +1092,16 @@ fn set_authoring_component_property(
             .get_mut(component)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| format!("scene node {} has no {component} component", node.id))?;
-        let nested = object
-            .entry("appearance".to_owned())
-            .or_insert_with(|| Value::Object(serde_json::Map::new()))
-            .as_object_mut()
-            .ok_or_else(|| format!("scene node {} has invalid appearance", node.id))?;
-        nested.insert(nested_key.to_owned(), value);
+        if component == "actor" && matches!(nested_key, "skin" | "shirt" | "pants" | "shoes") {
+            let nested = object
+                .entry("appearance".to_owned())
+                .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                .as_object_mut()
+                .ok_or_else(|| format!("scene node {} has invalid appearance", node.id))?;
+            nested.insert(nested_key.to_owned(), value);
+        } else {
+            object.insert(nested_key.to_owned(), value);
+        }
         return Ok(());
     }
     let matches = node
@@ -1044,6 +1140,20 @@ fn set_authoring_component_property(
         })?
         .insert(key.to_owned(), value);
     Ok(())
+}
+
+fn remove_authoring_component_property(
+    node: &mut AuthoringNode,
+    key: &str,
+) -> Result<Value, String> {
+    let (component, property) = key
+        .split_once('.')
+        .ok_or_else(|| format!("component property path `{key}` is required"))?;
+    node.components
+        .get_mut(component)
+        .and_then(Value::as_object_mut)
+        .and_then(|component| component.remove(property))
+        .ok_or_else(|| format!("scene node {} has no component property `{key}`", node.id))
 }
 
 #[cfg(test)]
@@ -1142,5 +1252,29 @@ mod scene_edit_tests {
         offset_duplicate(&mut block);
 
         assert_eq!(block.transform.position, [6.5, 1.0, 4.0]);
+    }
+
+    #[test]
+    fn structured_component_properties_can_be_added_and_removed() {
+        let mut block = block_node("block-1", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE);
+        set_authoring_component_property(
+            &mut block,
+            "primitive.runtimeMaterial",
+            Value::String("builtin:grass".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            block.components["primitive"]["runtimeMaterial"],
+            "builtin:grass"
+        );
+
+        let removed =
+            remove_authoring_component_property(&mut block, "primitive.runtimeMaterial").unwrap();
+        assert_eq!(removed, "builtin:grass");
+        assert!(
+            block.components["primitive"]
+                .get("runtimeMaterial")
+                .is_none()
+        );
     }
 }

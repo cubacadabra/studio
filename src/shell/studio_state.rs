@@ -140,6 +140,7 @@ impl StudioShell {
             self.preview_stale = true;
         }
         self.scene_editor_target.clear();
+        self.scene_editor_name.clear();
         self.scene_editor_text.clear();
         if self.source_files.contains_key(Path::new("manifest.json")) {
             self.source_files
@@ -201,6 +202,7 @@ impl StudioShell {
             self.source_files.remove(std::path::Path::new("scene.json"));
         }
         self.scene_editor_target.clear();
+        self.scene_editor_name.clear();
         true
     }
 

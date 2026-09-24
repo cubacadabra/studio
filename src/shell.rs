@@ -346,6 +346,7 @@ pub(crate) struct StudioShell {
     selected_scene: String,
     scene_focus_requested: bool,
     scene_editor_target: String,
+    scene_editor_name: String,
     scene_editor_position: [f32; 3],
     scene_editor_rotation: [f32; 3],
     scene_editor_size: [f32; 3],

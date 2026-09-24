@@ -113,7 +113,7 @@ fn scene_outline_exposes_editable_placeable_objects_to_viewport_tools() {
     .unwrap();
 
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), SceneObjectKind::ALL.len());
+    assert_eq!(objects.len(), SceneObjectKind::MANIFEST_KINDS.len() - 1);
     assert_eq!(
         objects
             .iter()

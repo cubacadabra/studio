@@ -69,6 +69,20 @@ impl SceneNode {
         false
     }
 
+    pub(crate) fn collect_group_options(
+        &self,
+        excluded_subtree: Option<&SceneNode>,
+        groups: &mut Vec<(String, String)>,
+    ) {
+        let excluded = excluded_subtree.is_some_and(|root| root.find(&self.id).is_some());
+        if self.kind == "Group" && !excluded {
+            groups.push((self.id.clone(), self.label.clone()));
+        }
+        for child in &self.children {
+            child.collect_group_options(excluded_subtree, groups);
+        }
+    }
+
     fn collect_placeable_objects(
         &self,
         objects: &mut Vec<SceneObjectGeometry>,

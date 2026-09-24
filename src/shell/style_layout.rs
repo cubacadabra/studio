@@ -180,6 +180,9 @@ pub(crate) struct SceneTreeRow {
     pub(crate) detail: Option<String>,
     pub(crate) depth: usize,
     pub(crate) has_children: bool,
+    pub(crate) authoring: bool,
+    pub(crate) placeable: bool,
+    pub(crate) has_parent: bool,
 }
 
 pub(crate) fn flatten_scene_rows(
@@ -199,6 +202,9 @@ pub(crate) fn flatten_scene_rows(
         detail: node.detail.clone(),
         depth,
         has_children: !node.children.is_empty(),
+        authoring: is_authoring_node(node),
+        placeable: is_authoring_placeable(node),
+        has_parent: scene_parent_id_for_row(node).is_some(),
     });
     if expanded_nodes.contains(&node.id) || filter_matches.is_some() {
         for child in &node.children {
@@ -356,8 +362,8 @@ pub(crate) fn show_scene_row(
             ));
             ui.close();
         }
-        if is_scene_object(&row.id) {
-            if ui.button("Duplicate").clicked() {
+        if is_scene_object(&row.id) || (row.authoring && row.has_parent) {
+            if (is_scene_object(&row.id) || row.placeable) && ui.button("Duplicate").clicked() {
                 *edit_request = Some(SceneEditRequest::DuplicateObject {
                     target: row.id.clone(),
                 });
@@ -371,6 +377,13 @@ pub(crate) fn show_scene_row(
             }
         }
     });
+}
+
+fn scene_parent_id_for_row(node: &SceneNode) -> Option<&str> {
+    node.properties
+        .iter()
+        .find(|(label, value)| label == "Parent" && value != "—")
+        .map(|(_, value)| value.as_str())
 }
 
 pub(crate) fn asset_tile(
