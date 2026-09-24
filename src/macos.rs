@@ -7,7 +7,6 @@ use objc2::{
     AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
 };
 use objc2_app_kit::{
-    NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionKey,
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertStyle, NSApplication,
     NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSButton,
     NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSTextField, NSView,
@@ -39,29 +38,9 @@ define_class!(
     impl MenuTarget {
         #[unsafe(method(showAbout:))]
         fn show_about(&self, _sender: Option<&AnyObject>) {
-            let application = NSApplication::sharedApplication(self.mtm());
-            let image = logo_image();
-            let image: &AnyObject = &image;
-            // SAFETY: This is AppKit's immutable, process-wide option-key
-            // constant and is valid while the framework is loaded.
-            let application_icon_key = unsafe { NSAboutPanelOptionApplicationIcon };
-            // Supplying the version explicitly keeps unbundled development
-            // builds consistent with packaged builds, whose Info.plist is
-            // generated from the same Cargo package version.
-            let application_version_key = unsafe { NSAboutPanelOptionApplicationVersion };
-            let version = NSString::from_str(env!("CARGO_PKG_VERSION"));
-            let version: &AnyObject = &version;
-            let options = NSDictionary::<NSAboutPanelOptionKey, AnyObject>::from_slices(
-                &[application_icon_key, application_version_key],
-                &[image, version],
-            );
-
-            // SAFETY: The dictionary maps the documented application-icon key
-            // to an NSImage, which is the type AppKit requires for this option.
-            unsafe { application.orderFrontStandardAboutPanelWithOptions(&options) };
-            // Keep the native panel for macOS's standard About behavior while
-            // opening the shared Studio modal that also plays on every desktop
-            // target.
+            // The About menu item lives in AppKit's application menu, but the
+            // product About surface is the shared Studio modal. Dispatch only
+            // the shared command so macOS does not open a second panel.
             MENU_ACTIONS.with(|actions| actions.borrow_mut().push_back(StudioCommand::ShowAbout));
         }
 
