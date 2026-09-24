@@ -454,7 +454,9 @@ impl StudioApp {
                 .renderer
                 .as_ref()
                 .ok_or_else(|| "Studio renderer is not ready.".to_owned())?;
-            StudioShell::new(window, renderer, &self.manifest_source)
+            let mut shell = StudioShell::new(window, renderer, &self.manifest_source);
+            shell.set_about_preview_texture(renderer.device(), renderer.about_preview_texture());
+            shell
         };
         shell.set_review_camera(review_camera);
         shell.set_project_asset_available(true);
