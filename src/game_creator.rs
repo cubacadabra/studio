@@ -17,7 +17,7 @@ mod tests {
     };
 
     #[test]
-    fn creates_the_starter_letter_wall_with_embedded_sdk() {
+    fn creates_the_starter_letter_puzzle_with_embedded_sdk() {
         let root = std::env::temp_dir().join(format!(
             "cubacadabra-studio-create-game-{}",
             SystemTime::now()
@@ -110,23 +110,39 @@ mod tests {
                 .windows(2)
                 .all(|pair| (pair[1] - pair[0] - 2.0).abs() < 0.0001)
         );
-        let upper_a_stroke = nodes
+        let loose_lines = nodes
             .iter()
-            .find(|node| node["name"] == "Letter 4 Stroke 1")
-            .unwrap();
-        let lower_a_stroke = nodes
-            .iter()
-            .find(|node| node["name"] == "Letter 4 Stroke 2")
-            .unwrap();
-        assert!(
-            (upper_a_stroke["transform"]["position"][1].as_f64().unwrap() - 0.4).abs() < 0.0001
+            .filter(|node| {
+                node["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("Loose Line"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(loose_lines.len(), 21);
+        assert!(loose_lines.iter().all(|node| {
+            node["components"]["primitive"].is_null()
+                && node["components"]["interaction"]["kind"] == "pickup"
+                && node["components"]["interaction"]["visual"]
+                    .as_str()
+                    .is_some_and(|visual| visual.starts_with("letter-line-"))
+        }));
+        assert_eq!(loose_lines[0]["transform"]["position"][1], 0.0);
+        assert_eq!(loose_lines[0]["transform"]["position"][2], 13.0);
+        assert_eq!(manifest["effects"]["version"], 1);
+        assert_eq!(
+            manifest["effects"]["templates"].as_object().unwrap().len(),
+            22
         );
-        assert_eq!(lower_a_stroke["components"]["primitive"]["size"][1], 0.5);
-        let diagonal = nodes
-            .iter()
-            .find(|node| node["name"] == "Letter 10 Stroke 3")
-            .unwrap();
-        assert!((diagonal["transform"]["rotation"][2].as_f64().unwrap() - 0.34).abs() < 0.0001);
+        assert!(
+            manifest["effects"]["templates"]["letter-line-1"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|node| node["animation"]["travelTo"].is_array())
+        );
+        let source = fs::read_to_string(result.project.join("src/main.luau")).unwrap();
+        assert!(source.contains("function Game.on_interaction"));
+        assert!(source.contains("All 21 lines are back on the cubes"));
         assert!(
             result
                 .project
