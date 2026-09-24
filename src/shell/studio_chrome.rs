@@ -7,11 +7,21 @@ impl StudioShell {
             .frame(editor_frame(colors.surface).inner_margin(Margin::symmetric(8, 0)))
             .show(root, |ui| {
                 egui::MenuBar::new().style(menu_bar_style).ui(ui, |ui| {
-                    ui.add(
-                        egui::Image::from_texture(&self.logo_texture)
+                    let logo_texture = self.logo_texture.clone();
+                    ui.menu_image_button(
+                        egui::Image::from_texture(&logo_texture)
                             .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                            .sense(Sense::hover()),
-                    );
+                            .alt_text("Cubacadabra Studio menu"),
+                        |ui| {
+                            ui.set_min_width(220.0);
+                            if ui.button("About Cubacadabra…").clicked() {
+                                self.execute_command(StudioCommand::ShowAbout);
+                                ui.close();
+                            }
+                        },
+                    )
+                    .response
+                    .on_hover_text("Cubacadabra Studio");
 
                     #[cfg(not(target_os = "macos"))]
                     {
@@ -80,11 +90,6 @@ impl StudioShell {
                         });
                         ui.menu_button(RichText::new("Window").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
-                            if ui.button("About Cubacadabra…").clicked() {
-                                self.execute_command(StudioCommand::ShowAbout);
-                                ui.close();
-                            }
-                            ui.separator();
                             if menu_entry(ui, Icon::Stop, "Close Window", "", true).clicked() {
                                 self.execute_command(StudioCommand::CloseWindow);
                                 ui.close();
