@@ -2,6 +2,14 @@ use super::*;
 use cubacadabra_scene::{AuthoringNode, AuthoringScene, EditorMetadata, SourceMetadata, Transform};
 
 #[test]
+fn bundled_about_video_decodes() {
+    let video = AboutVideo::decode().expect("bundled About video should decode");
+    assert!(!video.frames.is_empty());
+    assert!(video.frames[0].image.size[0] > 0);
+    assert!(video.frames[0].image.size[1] > 0);
+}
+
+#[test]
 fn world_is_the_default_workspace() {
     assert_eq!(Workspace::default(), Workspace::World);
 }

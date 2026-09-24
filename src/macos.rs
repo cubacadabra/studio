@@ -59,6 +59,10 @@ define_class!(
             // SAFETY: The dictionary maps the documented application-icon key
             // to an NSImage, which is the type AppKit requires for this option.
             unsafe { application.orderFrontStandardAboutPanelWithOptions(&options) };
+            // Keep the native panel for macOS's standard About behavior while
+            // opening the shared Studio modal that also plays on every desktop
+            // target.
+            MENU_ACTIONS.with(|actions| actions.borrow_mut().push_back(StudioCommand::ShowAbout));
         }
 
         #[unsafe(method(performStudioMenuAction:))]

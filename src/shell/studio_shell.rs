@@ -212,6 +212,9 @@ impl StudioShell {
             #[cfg(not(target_os = "macos"))]
             new_project_title_focus_requested: false,
             logo_texture,
+            about_open: false,
+            about_video: None,
+            about_video_error: None,
             pending_project_action: None,
             exit_requested: false,
             imported_asset_paths: Vec::new(),

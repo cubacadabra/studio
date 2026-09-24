@@ -6,6 +6,15 @@ impl StudioShell {
             return;
         }
         match command {
+            StudioCommand::ShowAbout => {
+                self.about_open = true;
+                if self.about_video.is_none() && self.about_video_error.is_none() {
+                    match AboutVideo::decode() {
+                        Ok(video) => self.about_video = Some(video),
+                        Err(error) => self.about_video_error = Some(error),
+                    }
+                }
+            }
             StudioCommand::NewProject => {
                 if self.project_dirty {
                     self.pending_project_action = Some(PendingProjectAction::NewProject);
@@ -195,9 +204,85 @@ impl StudioShell {
         self.show_project_loading(ui.ctx());
         self.show_project_error(ui.ctx());
         self.show_unsaved_changes(ui.ctx());
+        self.show_about(ui.ctx());
         self.show_add_palette(ui.ctx());
         self.show_performance_monitor(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn show_about(&mut self, context: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        let colors = if context.style_of(context.theme()).visuals.dark_mode {
+            DARK_PALETTE
+        } else {
+            LIGHT_PALETTE
+        };
+        let video_texture = self
+            .about_video
+            .as_mut()
+            .map(|video| video.update_texture(context).clone());
+        let video_error = self.about_video_error.clone();
+        let logo_texture = self.logo_texture.clone();
+        let mut close_requested = false;
+        let response = egui::Modal::new(egui::Id::new("about_cubacadabra"))
+            .backdrop_color(Color32::from_black_alpha(150))
+            .frame(
+                Frame::NONE
+                    .fill(colors.panel_raised)
+                    .stroke(Stroke::new(1.0, colors.border_strong))
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::same(20)),
+            )
+            .show(context, |ui| {
+                ui.set_width(520.0_f32.min(ui.available_width()));
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Image::from_texture(&logo_texture)
+                            .fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                    );
+                    ui.label(
+                        RichText::new("About Cubacadabra")
+                            .font(semibold_font(20.0))
+                            .color(colors.text),
+                    );
+                });
+                ui.add_space(14.0);
+                if let Some(texture) = &video_texture {
+                    let width = ui.available_width().min(512.0);
+                    ui.add(
+                        egui::Image::from_texture(texture)
+                            .fit_to_exact_size(egui::vec2(width, width * 9.0 / 16.0)),
+                    );
+                } else if let Some(error) = &video_error {
+                    ui.label(
+                        RichText::new(error)
+                            .size(TYPE.secondary)
+                            .color(colors.axis_x),
+                    );
+                }
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(format!("Cubacadabra Studio {}", env!("CARGO_PKG_VERSION")))
+                        .font(medium_font(TYPE.secondary))
+                        .color(colors.secondary_text),
+                );
+                ui.label(
+                    RichText::new("An open-source creator tool for building worlds.")
+                        .size(TYPE.secondary)
+                        .color(colors.muted),
+                );
+                ui.add_space(16.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        if close_requested || response.should_close() {
+            self.about_open = false;
+        }
     }
 
     fn show_unsaved_changes(&mut self, context: &egui::Context) {

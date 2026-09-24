@@ -80,6 +80,11 @@ impl StudioShell {
                         });
                         ui.menu_button(RichText::new("Window").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
+                            if ui.button("About Cubacadabra…").clicked() {
+                                self.execute_command(StudioCommand::ShowAbout);
+                                ui.close();
+                            }
+                            ui.separator();
                             if menu_entry(ui, Icon::Stop, "Close Window", "", true).clicked() {
                                 self.execute_command(StudioCommand::CloseWindow);
                                 ui.close();
