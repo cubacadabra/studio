@@ -122,6 +122,7 @@ mod tests {
         assert!(loose_lines.iter().all(|node| {
             node["components"]["primitive"].is_null()
                 && node["components"]["interaction"]["kind"] == "pickup"
+                && node["components"]["interaction"]["label"] == " "
                 && node["components"]["interaction"]["visual"]
                     .as_str()
                     .is_some_and(|visual| visual.starts_with("letter-line-"))
