@@ -23,6 +23,8 @@ const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 const NEW_PROJECT_TAG: isize = 1;
 const OPEN_PROJECT_TAG: isize = 2;
 const SAVE_TAG: isize = 3;
+const IMPORT_ROBLOX_PLACE_TAG: isize = 9;
+const EXPORT_ROBLOX_PLACE_TAG: isize = 10;
 const UNDO_TAG: isize = 4;
 const REDO_TAG: isize = 5;
 const DUPLICATE_TAG: isize = 6;
@@ -353,6 +355,36 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
         None,
     ));
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
+    let import_menu = NSMenu::new(main_thread);
+    import_menu.setTitle(ns_string!("Import From"));
+    import_menu.addItem(&studio_menu_item(
+        main_thread,
+        target,
+        ns_string!("Roblox Place (.rbxlx)…"),
+        ns_string!(""),
+        IMPORT_ROBLOX_PLACE_TAG,
+        None,
+    ));
+    let import_item = NSMenuItem::new(main_thread);
+    import_item.setTitle(ns_string!("Import From"));
+    import_item.setSubmenu(Some(&import_menu));
+    menu.addItem(&import_item);
+
+    let export_menu = NSMenu::new(main_thread);
+    export_menu.setTitle(ns_string!("Export To"));
+    export_menu.addItem(&studio_menu_item(
+        main_thread,
+        target,
+        ns_string!("Roblox Place (.rbxlx)…"),
+        ns_string!(""),
+        EXPORT_ROBLOX_PLACE_TAG,
+        None,
+    ));
+    let export_item = NSMenuItem::new(main_thread);
+    export_item.setTitle(ns_string!("Export To"));
+    export_item.setSubmenu(Some(&export_menu));
+    menu.addItem(&export_item);
+    menu.addItem(&NSMenuItem::separatorItem(main_thread));
     menu.addItem(&standard_menu_item(
         main_thread,
         ns_string!("Close"),
@@ -520,6 +552,8 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         NEW_PROJECT_TAG => Some(StudioCommand::NewProject),
         OPEN_PROJECT_TAG => Some(StudioCommand::OpenProject),
         SAVE_TAG => Some(StudioCommand::Save),
+        IMPORT_ROBLOX_PLACE_TAG => Some(StudioCommand::ImportRobloxPlace),
+        EXPORT_ROBLOX_PLACE_TAG => Some(StudioCommand::ExportRobloxPlace),
         UNDO_TAG => Some(StudioCommand::Undo),
         REDO_TAG => Some(StudioCommand::Redo),
         DUPLICATE_TAG => Some(StudioCommand::Duplicate),

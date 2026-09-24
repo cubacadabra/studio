@@ -1471,12 +1471,15 @@ mod scene_edit_tests {
     #[test]
     fn editing_legacy_primitive_appearance_writes_canonical_fields() {
         let mut block = block_node("block-1", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE);
-        block.components["primitive"] = serde_json::json!({
-            "shape": "box",
-            "size": NEW_BLOCK_SIZE,
-            "material": "#767F91",
-            "runtimeMaterial": "builtin:rock"
-        });
+        block.components.insert(
+            "primitive".to_owned(),
+            serde_json::json!({
+                "shape": "box",
+                "size": NEW_BLOCK_SIZE,
+                "material": "#767F91",
+                "runtimeMaterial": "builtin:rock"
+            }),
+        );
 
         set_authoring_component_property(
             &mut block,

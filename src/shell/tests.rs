@@ -170,7 +170,7 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .any(|(label, value)| label == "Locked" && value == "Yes")
     );
     let objects = outline.placeable_object_geometries();
-    assert_eq!(objects.len(), 2124);
+    assert_eq!(objects.len(), 2127);
     assert_eq!(
         objects
             .iter()
@@ -185,12 +185,17 @@ fn authoring_scene_uses_stable_component_nodes_for_vegas() {
             .count(),
         1864
     );
-    assert!(objects.iter().all(|object| {
-        !matches!(
-            object.id.as_str(),
-            "world-vegas-floor" | "imported-environment" | "signs" | "interactions"
-        )
-    }));
+    assert!(
+        objects
+            .iter()
+            .all(|object| object.id != "world-vegas-floor")
+    );
+    for group in ["imported-environment", "signs", "interactions"] {
+        assert!(
+            objects.iter().any(|object| object.id == group),
+            "editable authoring group {group} should be transformable"
+        );
+    }
     assert_eq!(
         objects
             .iter()

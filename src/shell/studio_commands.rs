@@ -39,6 +39,23 @@ impl StudioShell {
                     self.notice = "This preview is read-only".to_owned();
                 }
             }
+            StudioCommand::ImportRobloxPlace => {
+                if self.project_editable {
+                    self.roblox_import_requested = true;
+                    self.notice = "Choose a Roblox XML place to import…".to_owned();
+                } else {
+                    self.notice =
+                        "Open a source project before importing a Roblox place".to_owned();
+                }
+            }
+            StudioCommand::ExportRobloxPlace => {
+                if self.authoring_scene_source.is_some() {
+                    self.roblox_export_requested = true;
+                    self.notice = "Choose where to export the Roblox place…".to_owned();
+                } else {
+                    self.notice = "This project has no authoring scene to export".to_owned();
+                }
+            }
             StudioCommand::Undo => self.undo_requested = true,
             StudioCommand::Redo => self.redo_requested = true,
             StudioCommand::Duplicate => {

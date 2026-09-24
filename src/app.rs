@@ -290,6 +290,7 @@ impl StudioApp {
         {
             self.choose_and_open_project();
         }
+        self.handle_roblox_interchange_requests();
         if let Some(project) = self
             .shell
             .as_mut()

@@ -198,6 +198,8 @@ impl StudioShell {
             recent_projects: Vec::new(),
             recent_project_requested: None,
             open_project_requested: false,
+            roblox_import_requested: false,
+            roblox_export_requested: false,
             project_loading: None,
             new_project_dialog_open: false,
             new_project_title: String::new(),

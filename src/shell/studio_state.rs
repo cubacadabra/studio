@@ -881,6 +881,14 @@ impl StudioShell {
         std::mem::take(&mut self.open_project_requested)
     }
 
+    pub(crate) fn take_roblox_import_request(&mut self) -> bool {
+        std::mem::take(&mut self.roblox_import_requested)
+    }
+
+    pub(crate) fn take_roblox_export_request(&mut self) -> bool {
+        std::mem::take(&mut self.roblox_export_requested)
+    }
+
     pub(crate) fn begin_project_loading(&mut self) {
         if self.project_loading.is_some() {
             return;

@@ -31,6 +31,37 @@ impl StudioShell {
                                 self.execute_command(StudioCommand::Save);
                                 ui.close();
                             }
+                            ui.separator();
+                            ui.menu_button("Import From", |ui| {
+                                ui.set_min_width(220.0);
+                                if menu_entry(
+                                    ui,
+                                    Icon::Open,
+                                    "Roblox Place (.rbxlx)…",
+                                    "",
+                                    self.project_editable,
+                                )
+                                .clicked()
+                                {
+                                    self.execute_command(StudioCommand::ImportRobloxPlace);
+                                    ui.close();
+                                }
+                            });
+                            ui.menu_button("Export To", |ui| {
+                                ui.set_min_width(220.0);
+                                if menu_entry(
+                                    ui,
+                                    Icon::Save,
+                                    "Roblox Place (.rbxlx)…",
+                                    "",
+                                    self.authoring_scene_source.is_some(),
+                                )
+                                .clicked()
+                                {
+                                    self.execute_command(StudioCommand::ExportRobloxPlace);
+                                    ui.close();
+                                }
+                            });
                         });
                         ui.menu_button(RichText::new("Edit").size(TYPE.primary), |ui| {
                             ui.set_min_width(220.0);
