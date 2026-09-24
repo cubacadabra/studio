@@ -268,9 +268,13 @@ impl StudioShell {
                 }
                 ui.add_space(12.0);
                 ui.label(
-                    RichText::new(format!("Cubacadabra Studio {}", env!("CARGO_PKG_VERSION")))
-                        .font(medium_font(TYPE.secondary))
-                        .color(colors.secondary_text),
+                    RichText::new(format!(
+                        "Cubacadabra Studio {} ({})",
+                        env!("CARGO_PKG_VERSION"),
+                        env!("CUBACADABRA_GIT_SHA")
+                    ))
+                    .font(medium_font(TYPE.secondary))
+                    .color(colors.secondary_text),
                 );
                 ui.label(
                     RichText::new("An open-source creator tool for building worlds.")

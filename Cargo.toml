@@ -3,12 +3,14 @@ name = "cubacadabra-studio"
 version = "0.0.2"
 edition = "2024"
 publish = false
+build = "build.rs"
 
 [[bin]]
 name = "studio"
 path = "src/main.rs"
 
 [dependencies]
+cubacadabra-about-preview = { path = "../tools/crates/about-preview" }
 cubacadabra-morph-authoring = { path = "crates/morph_authoring" }
 cubacadabra-builder = { path = "../tools/crates/builder" }
 cubacadabra-project = { path = "../tools/crates/project" }
