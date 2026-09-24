@@ -37,7 +37,7 @@ mod tests {
         assert_eq!(result.game_id, "the-wild-west");
         assert_eq!(manifest["displayName"], "The Wild West");
         let nodes = scene["nodes"].as_array().unwrap();
-        assert_eq!(nodes.len(), 33);
+        assert_eq!(nodes.len(), 67);
         assert_eq!(
             nodes
                 .iter()
@@ -59,6 +59,43 @@ mod tests {
         assert_eq!(last_cube["transform"]["position"][0], 10.0);
         assert_eq!(first_cube["transform"]["position"][2], -4.0);
         assert_eq!(last_cube["transform"]["position"][2], -4.0);
+        let border_nodes = nodes
+            .iter()
+            .filter(|node| {
+                node["name"]
+                    .as_str()
+                    .is_some_and(|name| name.contains("Border"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(border_nodes.len(), 34);
+        assert_eq!(
+            border_nodes
+                .iter()
+                .filter(|node| node["name"] == "Letter 1 Border Left")
+                .count(),
+            1
+        );
+        assert_eq!(
+            border_nodes
+                .iter()
+                .filter(|node| node["name"]
+                    .as_str()
+                    .is_some_and(|name| name.ends_with("Border Right")))
+                .count(),
+            11
+        );
+        assert!(border_nodes.iter().all(|node| {
+            node["components"]["primitive"]["color"] == "#0B102B"
+                && node["components"]["primitive"]["outline"] == false
+        }));
+        assert!(
+            nodes
+                .iter()
+                .filter(|node| node["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("Letter Cube")))
+                .all(|node| node["components"]["primitive"]["outline"] == false)
+        );
         let cube_xs = nodes
             .iter()
             .filter(|node| {
