@@ -163,7 +163,11 @@ mod tests {
         let report =
             write_roblox_place_with_manifest(&authoring_scene, &manifest, None, &exported_place)
                 .unwrap();
-        assert_eq!(report.added_parts, 46);
+        assert_eq!(report.added_parts, 67);
+        assert_eq!(report.omitted_nodes, 0);
+        assert!(report.warnings.iter().any(|warning| {
+            warning.contains("21 interaction visual(s)") && warning.contains("static Parts")
+        }));
         let exported = load_reference(&ImportOptions {
             place_path: exported_place,
             terrain_path: None,
@@ -179,6 +183,17 @@ mod tests {
         assert_eq!(ground.size, [120.0, 0.16, 120.0]);
         assert_eq!(ground.transform.position, [0.0, -0.08, 0.0]);
         assert!(ground.anchored && ground.can_collide);
+        let loose_lines = exported
+            .geometry
+            .iter()
+            .filter(|geometry| geometry.name.starts_with("Loose Line "))
+            .collect::<Vec<_>>();
+        assert_eq!(loose_lines.len(), 21);
+        assert!(
+            loose_lines
+                .iter()
+                .all(|line| line.anchored && !line.can_collide)
+        );
         assert!(create_game("The Wild West", &root).is_err());
         let _ = fs::remove_dir_all(root);
     }
