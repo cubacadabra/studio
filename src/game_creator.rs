@@ -37,7 +37,7 @@ mod tests {
         assert_eq!(result.game_id, "the-wild-west");
         assert_eq!(manifest["displayName"], "The Wild West");
         let nodes = scene["nodes"].as_array().unwrap();
-        assert_eq!(nodes.len(), 46);
+        assert_eq!(nodes.len(), 33);
         assert_eq!(
             nodes
                 .iter()
@@ -59,6 +59,11 @@ mod tests {
         assert_eq!(last_cube["transform"]["position"][0], 11.25);
         assert_eq!(first_cube["transform"]["position"][2], -4.0);
         assert_eq!(last_cube["transform"]["position"][2], -4.0);
+        let diagonal = nodes
+            .iter()
+            .find(|node| node["name"] == "Letter 10 Stroke 3")
+            .unwrap();
+        assert!((diagonal["transform"]["rotation"][2].as_f64().unwrap() + 0.34).abs() < 0.0001);
         assert!(
             result
                 .project

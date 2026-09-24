@@ -64,7 +64,7 @@ impl StudioApp {
                     ]
                 }) {
                     let (top, bottom) =
-                        scene_box_corners([x, y, z], [width, height, depth], geometry.rotation[1]);
+                        scene_box_corners([x, y, z], [width, height, depth], geometry.rotation);
                     world_points.extend(top);
                     world_points.extend(bottom);
                 }
@@ -90,7 +90,7 @@ impl StudioApp {
                             let (top_corners, _) = scene_box_corners(
                                 [x, y, z],
                                 [width, height, depth],
-                                geometry.rotation[1],
+                                geometry.rotation,
                             );
                             let top_screen = projected
                                 .get(point_index..point_index + 4)?
@@ -384,27 +384,32 @@ impl StudioApp {
 fn scene_box_corners(
     [x, y, z]: [f32; 3],
     [width, height, depth]: [f32; 3],
-    yaw: f32,
+    rotation: [f32; 3],
 ) -> ([[f32; 3]; 4], [[f32; 3]; 4]) {
-    let (sin, cos) = yaw.sin_cos();
-    let rotate = |local_x: f32, local_z: f32, world_y: f32| {
-        [
-            x + local_x * cos + local_z * sin,
-            world_y,
-            z - local_x * sin + local_z * cos,
-        ]
+    let (sin_x, cos_x) = rotation[0].sin_cos();
+    let (sin_y, cos_y) = rotation[1].sin_cos();
+    let (sin_z, cos_z) = rotation[2].sin_cos();
+    let rotate = |local_x: f32, local_y: f32, local_z: f32| {
+        // Match the authoring/runtime XYZ Euler order without introducing a
+        // second transform dependency into Studio's viewport projection.
+        let rotated_x = cos_y * cos_z * local_x + (-cos_y * sin_z) * local_y + sin_y * local_z;
+        let rotated_y = (sin_x * sin_y * cos_z + cos_x * sin_z) * local_x
+            + (-sin_x * sin_y * sin_z + cos_x * cos_z) * local_y
+            + (-sin_x * cos_y) * local_z;
+        let rotated_z = (-cos_x * sin_y * cos_z + sin_x * sin_z) * local_x
+            + (cos_x * sin_y * sin_z + sin_x * cos_z) * local_y
+            + cos_x * cos_y * local_z;
+        [x + rotated_x, y + rotated_y, z + rotated_z]
     };
-    let top_y = y + height * 0.5;
-    let bottom_y = y - height * 0.5;
     let local = [
-        [-width * 0.5, -depth * 0.5],
-        [width * 0.5, -depth * 0.5],
-        [width * 0.5, depth * 0.5],
-        [-width * 0.5, depth * 0.5],
+        [-width * 0.5, -height * 0.5, -depth * 0.5],
+        [width * 0.5, -height * 0.5, -depth * 0.5],
+        [width * 0.5, -height * 0.5, depth * 0.5],
+        [-width * 0.5, -height * 0.5, depth * 0.5],
     ];
     (
-        local.map(|[local_x, local_z]| rotate(local_x, local_z, top_y)),
-        local.map(|[local_x, local_z]| rotate(local_x, local_z, bottom_y)),
+        local.map(|[local_x, _, local_z]| rotate(local_x, height * 0.5, local_z)),
+        local.map(|[local_x, _, local_z]| rotate(local_x, -height * 0.5, local_z)),
     )
 }
 
@@ -445,7 +450,7 @@ mod tests {
         let (top, bottom) = scene_box_corners(
             [4.0, 3.0, 8.0],
             [4.0, 2.0, 2.0],
-            std::f32::consts::FRAC_PI_2,
+            [0.0, std::f32::consts::FRAC_PI_2, 0.0],
         );
         assert!((top[0][0] - 3.0).abs() < 0.0001);
         assert!((top[0][1] - 4.0).abs() < 0.0001);
