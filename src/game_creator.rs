@@ -194,6 +194,9 @@ mod tests {
         assert_eq!(ground.size, [120.0, 0.16, 120.0]);
         assert_eq!(ground.transform.position, [0.0, -0.08, 0.0]);
         assert!(ground.anchored && ground.can_collide);
+        for (actual, expected) in ground.color.into_iter().zip([167, 189, 153]) {
+            assert!((actual - expected as f32 / 255.0).abs() < 0.001);
+        }
         let loose_lines = exported
             .geometry
             .iter()
