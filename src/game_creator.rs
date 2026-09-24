@@ -55,15 +55,41 @@ mod tests {
             .iter()
             .find(|node| node["name"] == "Letter Cube 11")
             .unwrap();
-        assert_eq!(first_cube["transform"]["position"][0], -11.25);
-        assert_eq!(last_cube["transform"]["position"][0], 11.25);
+        assert_eq!(first_cube["transform"]["position"][0], -10.0);
+        assert_eq!(last_cube["transform"]["position"][0], 10.0);
         assert_eq!(first_cube["transform"]["position"][2], -4.0);
         assert_eq!(last_cube["transform"]["position"][2], -4.0);
+        let cube_xs = nodes
+            .iter()
+            .filter(|node| {
+                node["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("Letter Cube"))
+            })
+            .map(|node| node["transform"]["position"][0].as_f64().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            cube_xs
+                .windows(2)
+                .all(|pair| (pair[1] - pair[0] - 2.0).abs() < 0.0001)
+        );
+        let upper_a_stroke = nodes
+            .iter()
+            .find(|node| node["name"] == "Letter 4 Stroke 1")
+            .unwrap();
+        let lower_a_stroke = nodes
+            .iter()
+            .find(|node| node["name"] == "Letter 4 Stroke 2")
+            .unwrap();
+        assert!(
+            (upper_a_stroke["transform"]["position"][1].as_f64().unwrap() - 0.4).abs() < 0.0001
+        );
+        assert_eq!(lower_a_stroke["components"]["primitive"]["size"][1], 0.5);
         let diagonal = nodes
             .iter()
             .find(|node| node["name"] == "Letter 10 Stroke 3")
             .unwrap();
-        assert!((diagonal["transform"]["rotation"][2].as_f64().unwrap() + 0.34).abs() < 0.0001);
+        assert!((diagonal["transform"]["rotation"][2].as_f64().unwrap() - 0.34).abs() < 0.0001);
         assert!(
             result
                 .project
