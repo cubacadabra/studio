@@ -292,6 +292,8 @@ impl StudioShell {
         &mut self,
         id: &str,
         position: [f32; 3],
+        rotation: [f32; 3],
+        local_rotation: [f32; 3],
         scale: [f32; 3],
         size: Option<[f32; 3]>,
     ) {
@@ -302,6 +304,8 @@ impl StudioShell {
             .find(|geometry| geometry.id == id)
         {
             geometry.position = position;
+            geometry.rotation = rotation;
+            geometry.local_rotation = local_rotation;
             geometry.scale = Some(scale);
             if let Some(size) = size {
                 geometry.size = Some(size);
@@ -315,6 +319,14 @@ impl StudioShell {
 
     pub(crate) fn take_scene_viewport_edit_request(&mut self) -> Option<SceneViewportEditRequest> {
         self.scene_viewport_edit_requested.take()
+    }
+
+    pub(crate) fn set_scene_tool(&mut self, tool: SceneTool) {
+        if self.scene_tool == tool {
+            return;
+        }
+        self.scene_tool = tool;
+        self.notice = format!("{} tool — {}", tool.label(), tool.hint(true));
     }
 
     pub(crate) fn scene_editor_hit_test(&self, point: Pos2) -> bool {

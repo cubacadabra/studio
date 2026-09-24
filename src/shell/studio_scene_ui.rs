@@ -158,7 +158,7 @@ impl StudioShell {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
         self.scene_transform_editor(ui, selected, true, false, false);
-        self.scene_manifest_properties(ui, selected, &["Position", "Size"]);
+        self.scene_manifest_properties(ui, selected, &["Position", "Rotation", "Size", "Scale"]);
         if !self.project_editable {
             ui.label(
                 RichText::new("Open a raw source project to edit scene objects.")
@@ -198,7 +198,7 @@ impl StudioShell {
                 self.notice = "Sign text changed — save to keep it".to_owned();
             }
         });
-        self.scene_manifest_properties(ui, selected, &["Position", "Text"]);
+        self.scene_manifest_properties(ui, selected, &["Position", "Rotation", "Text"]);
         ui.label(
             RichText::new(if self.project_editable {
                 "Press Play to see the updated sign in the game."
@@ -218,7 +218,7 @@ impl StudioShell {
             vector_property(selected, "Size").is_some() && (!authoring_node || has_primitive_size);
         let has_scale = authoring_node && !has_primitive_size;
         self.scene_transform_editor(ui, selected, has_size, has_scale, has_primitive_size);
-        self.scene_manifest_properties(ui, selected, &["Position", "Scale"]);
+        self.scene_manifest_properties(ui, selected, &["Position", "Rotation", "Scale"]);
     }
 
     fn sync_scene_editor(&mut self, selected: &SceneNode) {
@@ -227,9 +227,13 @@ impl StudioShell {
         }
         self.scene_editor_target = selected.id.clone();
         self.scene_editor_position = vector_property(selected, "Position").unwrap_or([0.0; 3]);
+        self.scene_editor_rotation = vector_property(selected, "Rotation")
+            .unwrap_or([0.0; 3])
+            .map(f32::to_degrees);
         self.scene_editor_size = vector_property(selected, "Size").unwrap_or([1.0; 3]);
         self.scene_editor_scale = vector_property(selected, "Scale").unwrap_or([1.0; 3]);
         self.scene_editor_position_text = scene_vector_text(self.scene_editor_position);
+        self.scene_editor_rotation_text = scene_vector_text(self.scene_editor_rotation);
         self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
         self.scene_editor_scale_text = scene_vector_text(self.scene_editor_scale);
         self.scene_editor_text = selected
@@ -251,6 +255,7 @@ impl StudioShell {
     ) {
         property_section(ui, "Transform", |ui| {
             let mut position_changed = false;
+            let mut rotation_changed = false;
             let mut size_changed = false;
             let mut scale_changed = false;
             ui.add_enabled_ui(
@@ -261,6 +266,12 @@ impl StudioShell {
                         "Position",
                         &mut self.scene_editor_position,
                         &mut self.scene_editor_position_text,
+                    );
+                    rotation_changed |= vector_editor(
+                        ui,
+                        "Orientation °",
+                        &mut self.scene_editor_rotation,
+                        &mut self.scene_editor_rotation_text,
                     );
                     if has_size {
                         size_changed |= vector_editor(
@@ -300,7 +311,7 @@ impl StudioShell {
                         .color(palette(ui).muted),
                 );
             }
-            if position_changed || size_changed || scale_changed {
+            if position_changed || rotation_changed || size_changed || scale_changed {
                 if has_size {
                     self.scene_editor_size = self.scene_editor_size.map(|value| value.max(0.05));
                     self.scene_editor_size_text = scene_vector_text(self.scene_editor_size);
@@ -321,10 +332,16 @@ impl StudioShell {
                     Some(SceneEditRequest::SetTransform {
                         target: selected.id.clone(),
                         position: self.scene_editor_position,
+                        rotation: rotation_changed
+                            .then(|| self.scene_editor_rotation.map(f32::to_radians)),
                         scale: has_scale.then_some(self.scene_editor_scale),
                     })
                 };
-                self.notice = "Scene object changed — save to keep it".to_owned();
+                self.notice = if rotation_changed {
+                    "Orientation changed — save to keep it".to_owned()
+                } else {
+                    "Scene object changed — save to keep it".to_owned()
+                };
             }
         });
     }

@@ -63,20 +63,10 @@ impl StudioApp {
                         size[2] * transform_scale[2],
                     ]
                 }) {
-                    let top = y + height * 0.5;
-                    world_points.extend([
-                        [x - width * 0.5, top, z - depth * 0.5],
-                        [x + width * 0.5, top, z - depth * 0.5],
-                        [x + width * 0.5, top, z + depth * 0.5],
-                        [x - width * 0.5, top, z + depth * 0.5],
-                    ]);
-                    let bottom = y - height * 0.5;
-                    world_points.extend([
-                        [x - width * 0.5, bottom, z - depth * 0.5],
-                        [x + width * 0.5, bottom, z - depth * 0.5],
-                        [x + width * 0.5, bottom, z + depth * 0.5],
-                        [x - width * 0.5, bottom, z + depth * 0.5],
-                    ]);
+                    let (top, bottom) =
+                        scene_box_corners([x, y, z], [width, height, depth], geometry.rotation[1]);
+                    world_points.extend(top);
+                    world_points.extend(bottom);
                 }
             }
             let projected = renderer.studio_project_world_points(&world_points);
@@ -97,13 +87,11 @@ impl StudioApp {
                     let (world_corners, screen_corners, bottom_screen_corners) =
                         if let Some([width, height, depth]) = visual_size {
                             let [x, y, z] = geometry.position;
-                            let top = y + height * 0.5;
-                            let top_corners = [
-                                [x - width * 0.5, top, z - depth * 0.5],
-                                [x + width * 0.5, top, z - depth * 0.5],
-                                [x + width * 0.5, top, z + depth * 0.5],
-                                [x - width * 0.5, top, z + depth * 0.5],
-                            ];
+                            let (top_corners, _) = scene_box_corners(
+                                [x, y, z],
+                                [width, height, depth],
+                                geometry.rotation[1],
+                            );
                             let top_screen = projected
                                 .get(point_index..point_index + 4)?
                                 .iter()
@@ -132,6 +120,8 @@ impl StudioApp {
                     Some(SceneObjectProjection {
                         id: geometry.id,
                         position: geometry.position,
+                        rotation: geometry.rotation,
+                        local_rotation: geometry.local_rotation,
                         size: visual_size,
                         scale: geometry.scale,
                         base_size: geometry.size,
@@ -191,6 +181,7 @@ impl StudioApp {
                     SceneEditRequest::SetTransform {
                         target,
                         position,
+                        rotation: None,
                         scale: None,
                     },
                     phase,
@@ -212,6 +203,7 @@ impl StudioApp {
                     SceneEditRequest::SetTransform {
                         target,
                         position,
+                        rotation: None,
                         scale: None,
                     },
                     phase,
@@ -223,36 +215,45 @@ impl StudioApp {
                 current_screen,
                 fixed_corner,
                 origin_position,
+                origin_rotation,
                 origin_size,
                 origin_scale,
                 base_size,
                 primitive_size,
             } => {
-                let Some(mut moving) = world_point(current_screen, fixed_corner[1]) else {
+                let Some(moving) = world_point(current_screen, fixed_corner[1]) else {
                     return Ok(None);
                 };
-                moving[0] = snap_scene_value(moving[0]);
-                moving[2] = snap_scene_value(moving[2]);
-                let x_direction = if fixed_corner[0] <= origin_position[0] {
-                    1.0
-                } else {
-                    -1.0
+                let yaw = origin_rotation[1];
+                let (sin, cos) = yaw.sin_cos();
+                let to_local = |point: [f32; 3]| {
+                    let dx = point[0] - origin_position[0];
+                    let dz = point[2] - origin_position[2];
+                    [dx * cos - dz * sin, point[1], dx * sin + dz * cos]
                 };
-                let z_direction = if fixed_corner[2] <= origin_position[2] {
-                    1.0
-                } else {
-                    -1.0
+                let to_world = |point: [f32; 3]| {
+                    [
+                        origin_position[0] + point[0] * cos + point[2] * sin,
+                        point[1],
+                        origin_position[2] - point[0] * sin + point[2] * cos,
+                    ]
                 };
-                if (moving[0] - fixed_corner[0]).abs() < 0.25 {
-                    moving[0] = fixed_corner[0] + 0.25 * x_direction;
+                let fixed_local = to_local(fixed_corner);
+                let mut moving_local = to_local(moving);
+                moving_local[0] = snap_scene_value(moving_local[0]);
+                moving_local[2] = snap_scene_value(moving_local[2]);
+                let x_direction = if fixed_local[0] <= 0.0 { 1.0 } else { -1.0 };
+                let z_direction = if fixed_local[2] <= 0.0 { 1.0 } else { -1.0 };
+                if (moving_local[0] - fixed_local[0]).abs() < 0.25 {
+                    moving_local[0] = fixed_local[0] + 0.25 * x_direction;
                 }
-                if (moving[2] - fixed_corner[2]).abs() < 0.25 {
-                    moving[2] = fixed_corner[2] + 0.25 * z_direction;
+                if (moving_local[2] - fixed_local[2]).abs() < 0.25 {
+                    moving_local[2] = fixed_local[2] + 0.25 * z_direction;
                 }
                 let size = [
-                    (moving[0] - fixed_corner[0]).abs(),
+                    (moving_local[0] - fixed_local[0]).abs(),
                     origin_size[1],
-                    (moving[2] - fixed_corner[2]).abs(),
+                    (moving_local[2] - fixed_local[2]).abs(),
                 ];
                 let desired_scale = match (origin_scale, base_size, primitive_size) {
                     (_, _, true) => None,
@@ -263,11 +264,11 @@ impl StudioApp {
                     ]),
                     _ => None,
                 };
-                let world_position = [
-                    (moving[0] + fixed_corner[0]) * 0.5,
+                let world_position = to_world([
+                    (moving_local[0] + fixed_local[0]) * 0.5,
                     origin_position[1],
-                    (moving[2] + fixed_corner[2]) * 0.5,
-                ];
+                    (moving_local[2] + fixed_local[2]) * 0.5,
+                ]);
                 let (position, scale) = if let Some(desired_scale) = desired_scale {
                     let (position, scale) = self.authoring_local_transform_for_world(
                         &target,
@@ -289,6 +290,7 @@ impl StudioApp {
                         SceneEditRequest::SetTransform {
                             target,
                             position,
+                            rotation: None,
                             scale,
                         }
                     },
@@ -344,8 +346,33 @@ impl StudioApp {
                         SceneEditRequest::SetTransform {
                             target,
                             position,
+                            rotation: None,
                             scale,
                         }
+                    },
+                    phase,
+                )))
+            }
+            SceneViewportEditRequest::RotateYaw {
+                phase,
+                target,
+                origin_screen,
+                current_screen,
+                origin_position,
+                origin_rotation,
+            } => {
+                let delta = current_screen.x - origin_screen.x;
+                let mut rotation = origin_rotation;
+                rotation[1] = snap_scene_angle(origin_rotation[1] + delta * 0.01);
+                let position = self
+                    .authoring_local_position_for_world(&target, origin_position)?
+                    .unwrap_or(origin_position);
+                Ok(Some((
+                    SceneEditRequest::SetTransform {
+                        target,
+                        position,
+                        rotation: Some(rotation),
+                        scale: None,
                     },
                     phase,
                 )))
@@ -354,8 +381,40 @@ impl StudioApp {
     }
 }
 
+fn scene_box_corners(
+    [x, y, z]: [f32; 3],
+    [width, height, depth]: [f32; 3],
+    yaw: f32,
+) -> ([[f32; 3]; 4], [[f32; 3]; 4]) {
+    let (sin, cos) = yaw.sin_cos();
+    let rotate = |local_x: f32, local_z: f32, world_y: f32| {
+        [
+            x + local_x * cos + local_z * sin,
+            world_y,
+            z - local_x * sin + local_z * cos,
+        ]
+    };
+    let top_y = y + height * 0.5;
+    let bottom_y = y - height * 0.5;
+    let local = [
+        [-width * 0.5, -depth * 0.5],
+        [width * 0.5, -depth * 0.5],
+        [width * 0.5, depth * 0.5],
+        [-width * 0.5, depth * 0.5],
+    ];
+    (
+        local.map(|[local_x, local_z]| rotate(local_x, local_z, top_y)),
+        local.map(|[local_x, local_z]| rotate(local_x, local_z, bottom_y)),
+    )
+}
+
 pub(crate) fn snap_scene_value(value: f32) -> f32 {
     (value * 4.0).round() * 0.25
+}
+
+pub(crate) fn snap_scene_angle(value: f32) -> f32 {
+    const STEP: f32 = std::f32::consts::PI / 12.0;
+    (value / STEP).round() * STEP
 }
 
 fn scene_vertical_drag_position(
@@ -373,6 +432,26 @@ fn scene_vertical_drag_position(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turn_angles_snap_to_fifteen_degree_steps() {
+        assert!((snap_scene_angle(8.0_f32.to_radians()) - 15.0_f32.to_radians()).abs() < 0.0001);
+        assert!((snap_scene_angle(22.0_f32.to_radians()) - 15.0_f32.to_radians()).abs() < 0.0001);
+        assert!((snap_scene_angle(-25.0_f32.to_radians()) + 30.0_f32.to_radians()).abs() < 0.0001);
+    }
+
+    #[test]
+    fn projected_box_corners_follow_yaw() {
+        let (top, bottom) = scene_box_corners(
+            [4.0, 3.0, 8.0],
+            [4.0, 2.0, 2.0],
+            std::f32::consts::FRAC_PI_2,
+        );
+        assert!((top[0][0] - 3.0).abs() < 0.0001);
+        assert!((top[0][1] - 4.0).abs() < 0.0001);
+        assert!((top[0][2] - 10.0).abs() < 0.0001);
+        assert!((bottom[0][1] - 2.0).abs() < 0.0001);
+    }
 
     #[test]
     fn vertical_drag_raises_and_lowers_without_changing_the_ground_plane_axes() {

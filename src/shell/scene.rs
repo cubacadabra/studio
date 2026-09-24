@@ -84,6 +84,11 @@ impl SceneNode {
                     .get(&self.id)
                     .map(|transform| transform.position)
                     .unwrap_or(position),
+                rotation: world_transforms
+                    .get(&self.id)
+                    .map(|transform| transform.rotation)
+                    .unwrap_or_else(|| vector_property(self, "Rotation").unwrap_or([0.0; 3])),
+                local_rotation: vector_property(self, "Rotation").unwrap_or([0.0; 3]),
                 size: vector_property(self, "Size"),
                 scale: is_authoring_node(self).then(|| {
                     world_transforms

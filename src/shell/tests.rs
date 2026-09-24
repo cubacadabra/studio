@@ -7,6 +7,23 @@ fn world_is_the_default_workspace() {
 }
 
 #[test]
+fn scene_tools_keep_each_editing_mode_focused() {
+    assert_eq!(SceneTool::default(), SceneTool::Choose);
+    assert!(SceneTool::Place.moves());
+    assert!(!SceneTool::Place.resizes());
+    assert!(SceneTool::Shape.resizes());
+    assert!(!SceneTool::Shape.rotates());
+    assert!(SceneTool::Turn.rotates());
+    assert!(SceneTool::Craft.moves());
+    assert!(SceneTool::Craft.resizes());
+    assert!(SceneTool::Craft.rotates());
+    assert_eq!(
+        SceneTool::ALL.map(SceneTool::shortcut),
+        ["Q", "W", "E", "R", "T"]
+    );
+}
+
+#[test]
 fn scene_outline_uses_artist_facing_manifest_content() {
     let outline = SceneOutline::parse(
         r#"{

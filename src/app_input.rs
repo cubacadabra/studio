@@ -89,6 +89,11 @@ impl StudioApp {
                 }
                 true
             }
+            KeyCode::KeyQ if !event.repeat => self.activate_scene_tool(SceneTool::Choose),
+            KeyCode::KeyW if !event.repeat => self.activate_scene_tool(SceneTool::Place),
+            KeyCode::KeyE if !event.repeat => self.activate_scene_tool(SceneTool::Shape),
+            KeyCode::KeyR if !event.repeat => self.activate_scene_tool(SceneTool::Turn),
+            KeyCode::KeyT if !event.repeat => self.activate_scene_tool(SceneTool::Craft),
             KeyCode::KeyD
                 if !event.repeat
                     && (self.modifiers.super_key() || self.modifiers.control_key()) =>
@@ -103,6 +108,15 @@ impl StudioApp {
             KeyCode::ArrowUp => self.nudge_selected_scene_object(0.0, 1.0),
             KeyCode::ArrowDown => self.nudge_selected_scene_object(0.0, -1.0),
             _ => false,
+        }
+    }
+
+    fn activate_scene_tool(&mut self, tool: SceneTool) -> bool {
+        if let Some(shell) = &mut self.shell {
+            shell.set_scene_tool(tool);
+            true
+        } else {
+            false
         }
     }
 
@@ -140,6 +154,7 @@ impl StudioApp {
         if let Err(message) = self.apply_scene_edit(SceneEditRequest::SetTransform {
             target: selected.id,
             position,
+            rotation: None,
             scale: None,
         }) && let Some(shell) = &mut self.shell
         {

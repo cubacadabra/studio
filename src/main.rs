@@ -55,7 +55,7 @@ use network::{BackendClient, BackendEvent};
 use options::*;
 use project::*;
 use shell::{
-    PreparedShell, SceneEditRequest, SceneObjectKind, SceneObjectProjection,
+    PreparedShell, SceneEditRequest, SceneObjectKind, SceneObjectProjection, SceneTool,
     SceneViewportEditPhase, SceneViewportEditRequest, StudioShell, scene_world_id,
 };
 #[cfg(target_os = "macos")]

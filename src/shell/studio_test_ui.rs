@@ -125,7 +125,6 @@ impl StudioShell {
                 let selected_is_placeable = selected_projection.is_some();
                 let selected_can_resize = selected_projection
                     .is_some_and(|item| item.size.is_some() && item.screen_corners.is_some());
-                let selected_id = selected_projection.map(|item| item.id.clone());
                 let header = editor_header(ui, |ui| {
                     inline_icon(ui, Icon::Camera, colors.muted);
                     ui.label(
@@ -139,6 +138,17 @@ impl StudioShell {
                             .size(TYPE.secondary)
                             .color(colors.secondary_text),
                     );
+                    vertical_separator(ui, 12.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} · {}",
+                            self.scene_tool.label(),
+                            self.scene_tool.shortcut()
+                        ))
+                        .font(medium_font(TYPE.secondary))
+                        .color(colors.accent),
+                    )
+                    .on_hover_text("Right-click an object to change editing mode");
                     if self.project_editable {
                         vertical_separator(ui, 12.0);
                         if ui
@@ -152,17 +162,6 @@ impl StudioShell {
                                 kind: SceneObjectKind::Block,
                             });
                             self.notice = "Adding block…".to_owned();
-                        }
-                        if let Some(target) = selected_id.as_ref()
-                            && ui
-                                .button("Duplicate")
-                                .on_hover_text("Make a copy beside the selected object")
-                                .clicked()
-                        {
-                            self.set_playing(false);
-                            self.scene_edit_requested = Some(SceneEditRequest::DuplicateObject {
-                                target: target.clone(),
-                            });
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -227,13 +226,12 @@ impl StudioShell {
                         semibold_font(TYPE.meta),
                         colors.text,
                     );
-                    let hint = match (selected_can_resize, self.project_editable, self.playing) {
-                        (true, true, false) => {
-                            "Drag to move · arrows nudge 0.25 · handles resize or lift"
-                        }
-                        (false, true, false) => "Drag to move · arrows nudge 0.25",
-                        (_, _, true) => "Stop Play to edit this object",
-                        _ => "Open a source project to edit this object",
+                    let hint = if self.playing {
+                        "Stop Play to edit this object"
+                    } else if !self.project_editable {
+                        "Open a source project to edit this object"
+                    } else {
+                        self.scene_tool.hint(selected_can_resize)
                     };
                     ui.painter().text(
                         badge.min + egui::vec2(10.0, 29.0),
@@ -280,7 +278,11 @@ impl StudioShell {
                 continue;
             }
             let selected = self.selected_scene == projection.id;
-            let sense = if selected && self.project_editable && !self.playing && projection.editable
+            let sense = if selected
+                && self.project_editable
+                && !self.playing
+                && projection.editable
+                && self.scene_tool.moves()
             {
                 Sense::click_and_drag()
             } else {
@@ -307,12 +309,19 @@ impl StudioShell {
                 .is_some_and(|point| projection.contains(point));
             if response.clicked() && pointer_over_shape {
                 self.select_scene_node(&projection.id);
-                self.notice = if projection.size.is_some() {
-                    "Object selected — drag it to move or use the handles to resize"
-                } else {
-                    "Object selected — drag it to move"
-                }
-                .to_owned();
+                let label = self
+                    .scene_outline
+                    .root
+                    .find(&projection.id)
+                    .map(|node| node.label.as_str())
+                    .unwrap_or("Object");
+                self.notice = format!(
+                    "{label} selected — {}",
+                    self.scene_tool.hint(projection.size.is_some())
+                );
+            }
+            if response.secondary_clicked() && pointer_over_shape {
+                self.select_scene_node(&projection.id);
             }
             if response.double_clicked() && pointer_over_shape {
                 self.request_scene_focus();
@@ -376,7 +385,12 @@ impl StudioShell {
                     );
                 }
             }
-            if selected && self.project_editable && !self.playing && projection.editable {
+            if selected
+                && self.project_editable
+                && !self.playing
+                && projection.editable
+                && self.scene_tool.moves()
+            {
                 let drag_id = response.id.with("origin");
                 if response.drag_started()
                     && let Some(current_screen) = response.interact_pointer_pos()
@@ -426,6 +440,23 @@ impl StudioShell {
             }
             response.clone().context_menu(|ui| {
                 if self.project_editable {
+                    ui.label(
+                        RichText::new("Editing mode")
+                            .size(TYPE.meta)
+                            .color(palette(ui).muted),
+                    );
+                    for tool in SceneTool::ALL {
+                        let label = format!("{}    {}", tool.label(), tool.shortcut());
+                        if ui
+                            .selectable_label(self.scene_tool == tool, label)
+                            .on_hover_text(tool.hint(projection.size.is_some()))
+                            .clicked()
+                        {
+                            self.set_scene_tool(tool);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
                     if ui.button("Duplicate").clicked() {
                         self.scene_edit_requested = Some(SceneEditRequest::DuplicateObject {
                             target: projection.id.clone(),
@@ -445,6 +476,7 @@ impl StudioShell {
                 && self.project_editable
                 && !self.playing
                 && projection.editable
+                && self.scene_tool.resizes()
                 && let (Some(screen_corners), Some(world_corners), Some(size)) = (
                     projection.screen_corners,
                     projection.world_corners,
@@ -480,6 +512,7 @@ impl StudioShell {
                                 drag_id,
                                 (
                                     projection.position,
+                                    projection.rotation,
                                     size,
                                     world_corners[(index + 2) % 4],
                                     projection.scale,
@@ -494,6 +527,7 @@ impl StudioShell {
                                 current_screen: center,
                                 fixed_corner: world_corners[(index + 2) % 4],
                                 origin_position: projection.position,
+                                origin_rotation: projection.rotation,
                                 origin_size: size,
                                 origin_scale: projection.scale,
                                 base_size: projection.base_size,
@@ -504,12 +538,14 @@ impl StudioShell {
                         && let Some(current_screen) = handle_response.interact_pointer_pos()
                         && let Some((
                             origin_position,
+                            origin_rotation,
                             origin_size,
                             fixed_corner,
                             origin_scale,
                             base_size,
                         )) = ui.data(|data| {
                             data.get_temp::<(
+                                [f32; 3],
                                 [f32; 3],
                                 [f32; 3],
                                 [f32; 3],
@@ -525,6 +561,7 @@ impl StudioShell {
                                 current_screen,
                                 fixed_corner,
                                 origin_position,
+                                origin_rotation,
                                 origin_size,
                                 origin_scale,
                                 base_size,
@@ -535,12 +572,14 @@ impl StudioShell {
                         if let Some(current_screen) = handle_response.interact_pointer_pos()
                             && let Some((
                                 origin_position,
+                                origin_rotation,
                                 origin_size,
                                 fixed_corner,
                                 origin_scale,
                                 base_size,
                             )) = ui.data(|data| {
                                 data.get_temp::<(
+                                    [f32; 3],
                                     [f32; 3],
                                     [f32; 3],
                                     [f32; 3],
@@ -556,6 +595,7 @@ impl StudioShell {
                                     current_screen,
                                     fixed_corner,
                                     origin_position,
+                                    origin_rotation,
                                     origin_size,
                                     origin_scale,
                                     base_size,
@@ -564,6 +604,7 @@ impl StudioShell {
                         }
                         ui.data_mut(|data| {
                             data.remove::<(
+                                [f32; 3],
                                 [f32; 3],
                                 [f32; 3],
                                 [f32; 3],
@@ -579,6 +620,7 @@ impl StudioShell {
                 && self.project_editable
                 && !self.playing
                 && projection.editable
+                && self.scene_tool.moves()
                 && let Some(screen_corners) = projection.screen_corners
             {
                 let top = screen_corners[0].lerp(screen_corners[1], 0.5);
@@ -657,6 +699,7 @@ impl StudioShell {
                 && self.project_editable
                 && !self.playing
                 && projection.editable
+                && self.scene_tool.resizes()
                 && let (Some(screen_corners), Some(base_size)) =
                     (projection.screen_corners, projection.base_size)
             {
@@ -742,6 +785,102 @@ impl StudioShell {
                     });
                 }
             }
+
+            if selected
+                && self.project_editable
+                && !self.playing
+                && projection.editable
+                && self.scene_tool.rotates()
+            {
+                let bounds = projection.bounds();
+                let center = projection.center_screen;
+                let radius = (bounds.width().max(bounds.height()) * 0.5 + 18.0).clamp(28.0, 112.0);
+                let handle_center = center + egui::vec2(radius, 0.0);
+                let handle = Rect::from_center_size(handle_center, Vec2::splat(14.0));
+                let handle_response = ui
+                    .interact(
+                        handle,
+                        ui.id().with(("scene-object-turn", &projection.id)),
+                        Sense::drag(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+                    .on_hover_text("Turn around the vertical axis");
+                ui.painter().circle_stroke(
+                    center,
+                    radius,
+                    Stroke::new(1.5, colors.accent.gamma_multiply(0.72)),
+                );
+                let fill = if handle_response.hovered() || handle_response.dragged() {
+                    colors.accent
+                } else {
+                    colors.panel_raised
+                };
+                ui.painter()
+                    .circle(handle_center, 6.0, fill, Stroke::new(1.5, colors.accent));
+                ui.painter().text(
+                    handle_center + egui::vec2(10.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    format!("{:.0}°", projection.local_rotation[1].to_degrees()),
+                    medium_font(TYPE.meta),
+                    colors.accent,
+                );
+                let drag_id = handle_response.id.with("origin");
+                if handle_response.drag_started() {
+                    ui.data_mut(|data| {
+                        data.insert_temp(
+                            drag_id,
+                            (
+                                handle_center,
+                                projection.position,
+                                projection.local_rotation,
+                            ),
+                        );
+                    });
+                    self.scene_viewport_edit_requested =
+                        Some(SceneViewportEditRequest::RotateYaw {
+                            phase: SceneViewportEditPhase::Begin,
+                            target: projection.id.clone(),
+                            origin_screen: handle_center,
+                            current_screen: handle_center,
+                            origin_position: projection.position,
+                            origin_rotation: projection.local_rotation,
+                        });
+                }
+                if handle_response.dragged()
+                    && let Some(current_screen) = handle_response.interact_pointer_pos()
+                    && let Some((origin_screen, origin_position, origin_rotation)) =
+                        ui.data(|data| data.get_temp::<(Pos2, [f32; 3], [f32; 3])>(drag_id))
+                {
+                    self.scene_viewport_edit_requested =
+                        Some(SceneViewportEditRequest::RotateYaw {
+                            phase: SceneViewportEditPhase::Update,
+                            target: projection.id.clone(),
+                            origin_screen,
+                            current_screen,
+                            origin_position,
+                            origin_rotation,
+                        });
+                }
+                if handle_response.drag_stopped() {
+                    if let Some(current_screen) = handle_response.interact_pointer_pos()
+                        && let Some((origin_screen, origin_position, origin_rotation)) =
+                            ui.data(|data| data.get_temp::<(Pos2, [f32; 3], [f32; 3])>(drag_id))
+                    {
+                        self.scene_viewport_edit_requested =
+                            Some(SceneViewportEditRequest::RotateYaw {
+                                phase: SceneViewportEditPhase::Commit,
+                                target: projection.id.clone(),
+                                origin_screen,
+                                current_screen,
+                                origin_position,
+                                origin_rotation,
+                            });
+                    }
+                    ui.data_mut(|data| {
+                        data.remove::<(Pos2, [f32; 3], [f32; 3])>(drag_id);
+                    });
+                }
+            }
         }
         self.scene_object_projections = projections;
     }
@@ -791,6 +930,8 @@ mod tests {
         SceneObjectProjection {
             id: "block".to_owned(),
             position: [0.0, 1.0, 0.0],
+            rotation: [0.0; 3],
+            local_rotation: [0.0; 3],
             size: Some([4.0, 1.0, 4.0]),
             scale: None,
             base_size: Some([4.0, 1.0, 4.0]),

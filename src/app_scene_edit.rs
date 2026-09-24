@@ -147,6 +147,12 @@ impl StudioApp {
             return Ok(());
         };
         let world = scene.world_transform(target)?;
+        let local_rotation = self
+            .authoring_scene_indices
+            .get(target)
+            .and_then(|index| scene.nodes.get(*index))
+            .map(|node| node.transform.rotation)
+            .unwrap_or(world.rotation);
         let primitive_size = self
             .authoring_scene_indices
             .get(target)
@@ -156,7 +162,14 @@ impl StudioApp {
             .and_then(|component| component.get("size"))
             .and_then(crate::shell::vector_value);
         if let Some(shell) = &mut self.shell {
-            shell.update_scene_object_geometry(target, world.position, world.scale, primitive_size);
+            shell.update_scene_object_geometry(
+                target,
+                world.position,
+                world.rotation,
+                local_rotation,
+                world.scale,
+                primitive_size,
+            );
         }
         Ok(())
     }
@@ -206,7 +219,10 @@ impl StudioApp {
             .ok_or_else(|| format!("scene node {target} was not found"))?;
         match request {
             SceneEditRequest::SetTransform {
-                position, scale, ..
+                position,
+                rotation,
+                scale,
+                ..
             } => {
                 let node = scene
                     .nodes
@@ -221,6 +237,14 @@ impl StudioApp {
                     ));
                 }
                 node.transform.position = *position;
+                if let Some(rotation) = rotation {
+                    if rotation.iter().any(|value| !value.is_finite()) {
+                        return Err(format!(
+                            "scene node {target} rotation must contain finite values"
+                        ));
+                    }
+                    node.transform.rotation = *rotation;
+                }
                 if let Some(scale) = scale {
                     if scale
                         .iter()
@@ -267,6 +291,14 @@ impl StudioApp {
             shell.set_notice(
                 if matches!(request, SceneEditRequest::SetPrimitiveSize { .. }) {
                     "Primitive size changed — save to keep it".to_owned()
+                } else if matches!(
+                    request,
+                    SceneEditRequest::SetTransform {
+                        rotation: Some(_),
+                        ..
+                    }
+                ) {
+                    "Orientation changed — save to keep it".to_owned()
                 } else {
                     "Position changed — save to keep it".to_owned()
                 },
@@ -504,7 +536,7 @@ impl StudioApp {
                     });
                     let updated = serialize_authoring_scene(&scene)?;
                     let notice = if *kind == SceneObjectKind::Block {
-                        "Block added — drag to move, use the handles to resize".to_owned()
+                        "Block added — Craft mode is ready; right-click to switch tools".to_owned()
                     } else {
                         format!("{} added — press Play to preview it", kind.label())
                     };
@@ -513,17 +545,30 @@ impl StudioApp {
                         && let Some(shell) = &mut self.shell
                     {
                         shell.set_playing(false);
+                        shell.set_scene_tool(SceneTool::Craft);
                     }
                     return Ok(());
                 }
                 SceneEditRequest::SetTransform {
                     target,
                     position,
+                    rotation,
                     scale,
                 } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
                     if scene.node(target).is_some() {
                         scene.set_position(target, *position)?;
+                        if let Some(rotation) = rotation {
+                            let node = scene
+                                .node_mut(target)
+                                .expect("scene node existed before transform update");
+                            if rotation.iter().any(|value| !value.is_finite()) {
+                                return Err(format!(
+                                    "scene node {target} rotation must contain finite values"
+                                ));
+                            }
+                            node.transform.rotation = *rotation;
+                        }
                         if let Some(scale) = scale {
                             scene.set_scale(target, *scale)?;
                         }
@@ -721,8 +766,9 @@ impl StudioApp {
                 shell.select_scene_node(&scene_id);
                 if kind == SceneObjectKind::Block {
                     shell.set_playing(false);
+                    shell.set_scene_tool(SceneTool::Craft);
                     shell.set_notice(
-                        "Block added — drag to move, use the handles to resize".to_owned(),
+                        "Block added — Craft mode is ready; right-click to switch tools".to_owned(),
                     );
                 } else {
                     shell.set_notice(format!("{} added — press Play to preview it", kind.label()));
@@ -740,10 +786,11 @@ impl StudioApp {
             SceneEditRequest::SetTransform {
                 target,
                 position,
+                rotation: None,
                 scale: None,
             } => (target, SceneEditOperation::SetTransform { position }),
-            SceneEditRequest::SetTransform { scale: Some(_), .. } => {
-                return Err("non-uniform transform edits require an authoring scene".to_owned());
+            SceneEditRequest::SetTransform { .. } => {
+                return Err("rotation and scale edits require an authoring scene".to_owned());
             }
             SceneEditRequest::SetPrimitiveSize {
                 target,

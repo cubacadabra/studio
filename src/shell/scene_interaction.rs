@@ -12,6 +12,7 @@ pub(crate) enum SceneEditRequest {
     SetTransform {
         target: String,
         position: [f32; 3],
+        rotation: Option<[f32; 3]>,
         scale: Option<[f32; 3]>,
     },
     SetPrimitiveSize {
@@ -34,6 +35,70 @@ pub(crate) enum SceneEditRequest {
     DeleteObject {
         target: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SceneTool {
+    #[default]
+    Choose,
+    Place,
+    Shape,
+    Turn,
+    Craft,
+}
+
+impl SceneTool {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Choose,
+        Self::Place,
+        Self::Shape,
+        Self::Turn,
+        Self::Craft,
+    ];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Choose => "Choose",
+            Self::Place => "Place",
+            Self::Shape => "Shape",
+            Self::Turn => "Turn",
+            Self::Craft => "Craft",
+        }
+    }
+
+    pub(crate) const fn shortcut(self) -> &'static str {
+        match self {
+            Self::Choose => "Q",
+            Self::Place => "W",
+            Self::Shape => "E",
+            Self::Turn => "R",
+            Self::Craft => "T",
+        }
+    }
+
+    pub(crate) const fn hint(self, can_resize: bool) -> &'static str {
+        match self {
+            Self::Choose => "Click objects to choose · double-click to frame",
+            Self::Place => "Drag the object to place · drag the upper handle to lift",
+            Self::Shape if can_resize => "Drag corner and height handles to reshape",
+            Self::Shape => "This object has no editable shape",
+            Self::Turn => "Drag the ring handle to turn in 15° steps",
+            Self::Craft if can_resize => "Drag to place · handles reshape, lift, or turn",
+            Self::Craft => "Drag to place · upper handles lift or turn",
+        }
+    }
+
+    pub(crate) const fn moves(self) -> bool {
+        matches!(self, Self::Place | Self::Craft)
+    }
+
+    pub(crate) const fn resizes(self) -> bool {
+        matches!(self, Self::Shape | Self::Craft)
+    }
+
+    pub(crate) const fn rotates(self) -> bool {
+        matches!(self, Self::Turn | Self::Craft)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +152,8 @@ impl SceneObjectKind {
 pub(crate) struct SceneObjectGeometry {
     pub(crate) id: String,
     pub(crate) position: [f32; 3],
+    pub(crate) rotation: [f32; 3],
+    pub(crate) local_rotation: [f32; 3],
     pub(crate) size: Option<[f32; 3]>,
     pub(crate) scale: Option<[f32; 3]>,
     pub(crate) primitive_size: bool,
@@ -97,6 +164,8 @@ pub(crate) struct SceneObjectGeometry {
 pub(crate) struct SceneObjectProjection {
     pub(crate) id: String,
     pub(crate) position: [f32; 3],
+    pub(crate) rotation: [f32; 3],
+    pub(crate) local_rotation: [f32; 3],
     pub(crate) size: Option<[f32; 3]>,
     pub(crate) scale: Option<[f32; 3]>,
     pub(crate) base_size: Option<[f32; 3]>,
@@ -196,6 +265,7 @@ pub(crate) enum SceneViewportEditRequest {
         current_screen: Pos2,
         fixed_corner: [f32; 3],
         origin_position: [f32; 3],
+        origin_rotation: [f32; 3],
         origin_size: [f32; 3],
         origin_scale: Option<[f32; 3]>,
         base_size: Option<[f32; 3]>,
@@ -210,5 +280,13 @@ pub(crate) enum SceneViewportEditRequest {
         origin_scale: Option<[f32; 3]>,
         base_size: [f32; 3],
         primitive_size: bool,
+    },
+    RotateYaw {
+        phase: SceneViewportEditPhase,
+        target: String,
+        origin_screen: Pos2,
+        current_screen: Pos2,
+        origin_position: [f32; 3],
+        origin_rotation: [f32; 3],
     },
 }
