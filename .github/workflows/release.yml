@@ -23,6 +23,7 @@ jobs:
       archive_prefix: cubacadabra-studio
       cargo_manifest: studio/Cargo.toml
       binary_name: studio
+      bundle_builder: false
       rust_repository: cubacadabra/rust
       rust_ref: main
       tools_repository: cubacadabra/tools
