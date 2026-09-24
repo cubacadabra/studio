@@ -57,6 +57,8 @@ mod tests {
             .unwrap();
         assert_eq!(first_cube["transform"]["position"][0], -11.25);
         assert_eq!(last_cube["transform"]["position"][0], 11.25);
+        assert_eq!(first_cube["transform"]["position"][2], -4.0);
+        assert_eq!(last_cube["transform"]["position"][2], -4.0);
         assert!(
             result
                 .project
