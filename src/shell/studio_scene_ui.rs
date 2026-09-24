@@ -5,6 +5,7 @@ impl StudioShell {
             return;
         }
         let previous_selection = self.selected_scene.clone();
+        let previous_selections = self.selected_scenes.clone();
         let mut add_requested = false;
         panel_header(ui, Icon::World, "Scene", |ui| {
             if self.project_editable {
@@ -96,6 +97,7 @@ impl StudioShell {
                             &row,
                             &mut self.expanded_scene,
                             &mut self.selected_scene,
+                            &mut self.selected_scenes,
                             self.project_editable && !self.playing,
                             &mut self.scene_edit_requested,
                             &mut self.add_palette,
@@ -106,7 +108,12 @@ impl StudioShell {
         if self.expanded_scene != expanded_before {
             self.scene_tree_rows_dirty = true;
         }
-        if self.selected_scene != previous_selection
+        if self.selected_scenes != previous_selections {
+            self.scene_editor_target.clear();
+        }
+        if self.selected_scenes.len() > 1 {
+            self.notice = format!("{} objects selected", self.selected_scenes.len());
+        } else if self.selected_scene != previous_selection
             && let Some(selected) = self.scene_outline.root.find(&self.selected_scene)
         {
             self.notice = format!("Selected {}", selected.label);
@@ -115,6 +122,10 @@ impl StudioShell {
 
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
         panel_header(ui, Icon::Sliders, "Inspector", |_| {});
+        if self.selected_scenes.len() > 1 {
+            self.multi_selection_inspector(ui);
+            return;
+        }
         let selected = self
             .scene_outline
             .root
@@ -164,14 +175,62 @@ impl StudioShell {
         });
     }
 
+    fn multi_selection_inspector(&mut self, ui: &mut egui::Ui) {
+        let selected = self
+            .selected_scenes
+            .iter()
+            .filter_map(|id| self.scene_outline.root.find(id))
+            .cloned()
+            .collect::<Vec<_>>();
+        content_frame().show(ui, |ui| {
+            selected_object_header(ui, &format!("{} objects", selected.len()), "Selection");
+            property_section(ui, "Selected", |ui| {
+                for node in selected.iter().take(8) {
+                    ui.horizontal(|ui| {
+                        inline_icon(ui, node.icon, palette(ui).faint);
+                        ui.label(
+                            RichText::new(&node.label)
+                                .size(TYPE.secondary)
+                                .color(palette(ui).secondary_text),
+                        );
+                    });
+                }
+                if selected.len() > 8 {
+                    ui.label(
+                        RichText::new(format!("and {} more", selected.len() - 8))
+                            .size(TYPE.meta)
+                            .color(palette(ui).muted),
+                    );
+                }
+            });
+            let targets = selected
+                .iter()
+                .filter(|node| is_authoring_node(node) && scene_parent_id(node).is_some())
+                .map(|node| node.id.clone())
+                .collect::<Vec<_>>();
+            if self.project_editable && !self.playing && !targets.is_empty() {
+                property_section(ui, "Actions", |ui| {
+                    if ui.button("Group selection").clicked() {
+                        self.scene_edit_requested =
+                            Some(SceneEditRequest::GroupObjects { targets });
+                        self.notice = "Grouping selection…".to_owned();
+                    }
+                    ui.label(
+                        RichText::new("Drag any selected row onto a Group to move the selection.")
+                            .size(TYPE.meta)
+                            .color(palette(ui).muted),
+                    );
+                });
+            }
+        });
+    }
+
     pub(crate) fn block_inspector(&mut self, ui: &mut egui::Ui, selected: &SceneNode) {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
         self.scene_identity_editor(ui, selected);
-        self.scene_transform_editor(ui, selected, true, false, false);
-        if is_authoring_node(selected) {
-            self.block_appearance_editor(ui, selected);
-        }
+        self.scene_transform_editor(ui, selected, true, false, false, false);
+        self.block_appearance_editor(ui, selected);
         self.scene_manifest_properties(
             ui,
             selected,
@@ -192,7 +251,7 @@ impl StudioShell {
         let colors = palette(ui);
         self.sync_scene_editor(selected);
         self.scene_identity_editor(ui, selected);
-        self.scene_transform_editor(ui, selected, false, false, false);
+        self.scene_transform_editor(ui, selected, false, false, false, false);
 
         property_section(ui, "Content", |ui| {
             ui.label(
@@ -238,8 +297,9 @@ impl StudioShell {
         let has_primitive_size = selected.kind == "Block" && authoring_node;
         let has_size =
             vector_property(selected, "Size").is_some() && (!authoring_node || has_primitive_size);
-        let has_scale = authoring_node && !has_primitive_size;
-        self.scene_transform_editor(ui, selected, has_size, has_scale, has_primitive_size);
+        let actor = selected.kind == "Actor";
+        let has_scale = authoring_node && !has_primitive_size && !actor;
+        self.scene_transform_editor(ui, selected, has_size, has_scale, has_primitive_size, actor);
         self.scene_manifest_properties(ui, selected, &["Name", "Position", "Rotation", "Scale"]);
     }
 
@@ -309,12 +369,11 @@ impl StudioShell {
             ("Magic", "#B04CFF", Color32::from_rgb(176, 76, 255)),
             ("Gold", "#F4C95D", Color32::from_rgb(244, 201, 93)),
         ];
-        const MATERIALS: [(&str, &str); 7] = [
+        const MATERIALS: [(&str, &str); 6] = [
             ("Grass", "builtin:grass"),
             ("Ground", "builtin:ground"),
             ("Stone", "builtin:rock"),
             ("Sand", "builtin:sand"),
-            ("Wood", "builtin:mud"),
             ("Snow", "builtin:snow"),
             ("Leafy grass", "builtin:leafygrass"),
         ];
@@ -350,7 +409,7 @@ impl StudioShell {
                         if response.clicked() {
                             self.scene_edit_requested = Some(SceneEditRequest::UpdateProperty {
                                 target: selected.id.clone(),
-                                key: "primitive.material".to_owned(),
+                                key: "primitive.color".to_owned(),
                                 value: Value::String(value.to_owned()),
                             });
                             self.notice = format!("{label} color applied — save to keep it");
@@ -371,7 +430,7 @@ impl StudioShell {
                         .find(|(_, material)| value == *material)
                         .map(|(label, _)| *label)
                 })
-                .unwrap_or("Color only");
+                .unwrap_or_else(|| current_material.unwrap_or("Color only"));
             ui.add_enabled_ui(enabled, |ui| {
                 egui::ComboBox::from_id_salt(("block-material", &selected.id))
                     .selected_text(material_label)
@@ -384,7 +443,7 @@ impl StudioShell {
                         {
                             self.scene_edit_requested = Some(SceneEditRequest::RemoveProperty {
                                 target: selected.id.clone(),
-                                key: "primitive.runtimeMaterial".to_owned(),
+                                key: "primitive.material".to_owned(),
                             });
                         }
                         for (label, value) in MATERIALS {
@@ -395,7 +454,7 @@ impl StudioShell {
                                 self.scene_edit_requested =
                                     Some(SceneEditRequest::UpdateProperty {
                                         target: selected.id.clone(),
-                                        key: "primitive.runtimeMaterial".to_owned(),
+                                        key: "primitive.material".to_owned(),
                                         value: Value::String(value.to_owned()),
                                     });
                             }
@@ -412,6 +471,7 @@ impl StudioShell {
         has_size: bool,
         has_scale: bool,
         has_primitive_size: bool,
+        yaw_only: bool,
     ) {
         property_section(ui, "Transform", |ui| {
             let mut position_changed = false;
@@ -427,12 +487,39 @@ impl StudioShell {
                         &mut self.scene_editor_position,
                         &mut self.scene_editor_position_text,
                     );
-                    rotation_changed |= vector_editor(
-                        ui,
-                        "Orientation °",
-                        &mut self.scene_editor_rotation,
-                        &mut self.scene_editor_rotation_text,
-                    );
+                    if yaw_only {
+                        ui.label(
+                            RichText::new("Yaw °")
+                                .size(TYPE.secondary)
+                                .color(palette(ui).secondary_text),
+                        );
+                        let response = ui.add_sized(
+                            [ui.available_width(), CONTROL_HEIGHT],
+                            egui::TextEdit::singleline(&mut self.scene_editor_rotation_text[1])
+                                .id_salt(("scene-yaw", &selected.id))
+                                .horizontal_align(Align::RIGHT),
+                        );
+                        if response.lost_focus()
+                            && let Ok(value) =
+                                self.scene_editor_rotation_text[1].trim().parse::<f32>()
+                            && value.is_finite()
+                            && self.scene_editor_rotation[1] != value
+                        {
+                            self.scene_editor_rotation = [0.0, value, 0.0];
+                            rotation_changed = true;
+                        }
+                        if response.lost_focus() {
+                            self.scene_editor_rotation_text[1] =
+                                format_scene_number(self.scene_editor_rotation[1]);
+                        }
+                    } else {
+                        rotation_changed |= vector_editor(
+                            ui,
+                            "Orientation °",
+                            &mut self.scene_editor_rotation,
+                            &mut self.scene_editor_rotation_text,
+                        );
+                    }
                     if has_size {
                         size_changed |= vector_editor(
                             ui,
@@ -534,8 +621,8 @@ impl StudioShell {
                                 && id != current_parent
                             {
                                 self.scene_edit_requested =
-                                    Some(SceneEditRequest::ReparentObject {
-                                        target: selected.id.clone(),
+                                    Some(SceneEditRequest::ReparentObjects {
+                                        targets: vec![selected.id.clone()],
                                         parent_id: id.clone(),
                                     });
                                 self.notice = format!("Moving {} into {label}…", selected.label);
@@ -545,7 +632,7 @@ impl StudioShell {
                 ui.add_space(4.0);
             }
             ui.horizontal(|ui| {
-                if is_authoring_placeable(selected) && ui.button("Duplicate").clicked() {
+                if is_authoring_transformable(selected) && ui.button("Duplicate").clicked() {
                     self.scene_edit_requested = Some(SceneEditRequest::DuplicateObject {
                         target: selected.id.clone(),
                     });
@@ -648,7 +735,7 @@ fn scene_property<'a>(node: &'a SceneNode, label: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
-fn scene_parent_id(node: &SceneNode) -> Option<&str> {
+pub(crate) fn scene_parent_id(node: &SceneNode) -> Option<&str> {
     scene_property(node, "Parent").filter(|parent| *parent != "—")
 }
 

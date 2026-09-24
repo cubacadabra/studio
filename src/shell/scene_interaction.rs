@@ -37,9 +37,12 @@ pub(crate) enum SceneEditRequest {
         target: String,
         name: String,
     },
-    ReparentObject {
-        target: String,
+    ReparentObjects {
+        targets: Vec<String>,
         parent_id: String,
+    },
+    GroupObjects {
+        targets: Vec<String>,
     },
     DuplicateObject {
         target: String,
@@ -207,6 +210,11 @@ pub(crate) struct SceneObjectProjection {
     pub(crate) world_corners: Option<[[f32; 3]; 4]>,
     pub(crate) screen_corners: Option<[Pos2; 4]>,
     pub(crate) bottom_screen_corners: Option<[Pos2; 4]>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SceneTreeDragPayload {
+    pub(crate) targets: Vec<String>,
 }
 
 impl SceneObjectProjection {

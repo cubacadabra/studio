@@ -127,7 +127,14 @@ pub(crate) fn authoring_scene_node(
                     continue;
                 }
                 if let Some(value) = compact_value(value) {
-                    properties.push((format_component_property(component, key), value));
+                    properties.push((
+                        format_component_property(
+                            component,
+                            key,
+                            component == "primitive" && object.contains_key("color"),
+                        ),
+                        value,
+                    ));
                 }
             }
         }
@@ -249,6 +256,21 @@ pub(crate) fn is_authoring_placeable(node: &SceneNode) -> bool {
         )
 }
 
+pub(crate) fn is_authoring_transformable(node: &SceneNode) -> bool {
+    is_authoring_placeable(node)
+        || (is_authoring_node(node)
+            && node.kind == "Group"
+            && scene_parent_id_value(node).is_some()
+            && !node.properties.iter().any(|(label, _)| label == "Source"))
+}
+
+pub(crate) fn scene_parent_id_value(node: &SceneNode) -> Option<&str> {
+    node.properties
+        .iter()
+        .find(|(label, value)| label == "Parent" && value != "—")
+        .map(|(_, value)| value.as_str())
+}
+
 pub(crate) fn scene_node_locked(node: &SceneNode) -> bool {
     node.properties
         .iter()
@@ -273,10 +295,16 @@ pub(crate) fn vector_value(value: &Value) -> Option<[f32; 3]> {
     ])
 }
 
-pub(crate) fn format_component_property(component: &str, key: &str) -> String {
+pub(crate) fn format_component_property(
+    component: &str,
+    key: &str,
+    canonical_primitive_appearance: bool,
+) -> String {
     let label = humanize_identifier(key);
     match component {
         "primitive" => match key {
+            "color" => "Color".to_owned(),
+            "material" if canonical_primitive_appearance => "Material".to_owned(),
             "material" => "Color".to_owned(),
             "runtimeMaterial" => "Material".to_owned(),
             _ => label,

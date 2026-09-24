@@ -135,6 +135,7 @@ impl StudioShell {
         self.scene_search_matches.clear();
         self.scene_search_result_count = 0;
         self.selected_scene = selected;
+        self.selected_scenes = BTreeSet::from([self.selected_scene.clone()]);
         self.project_dirty = dirty;
         if dirty {
             self.preview_stale = true;
@@ -179,6 +180,18 @@ impl StudioShell {
             .find(&previous_selection)
             .map(|node| node.id.clone())
             .unwrap_or_else(|| outline.initial_selection.clone());
+        self.selected_scenes
+            .retain(|id| outline.root.find(id).is_some());
+        if self.selected_scenes.is_empty() {
+            self.selected_scenes.insert(self.selected_scene.clone());
+        } else if !self.selected_scenes.contains(&self.selected_scene) {
+            self.selected_scene = self
+                .selected_scenes
+                .iter()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| outline.initial_selection.clone());
+        }
         self.expanded_scene = previous_expanded
             .into_iter()
             .filter(|id| outline.root.find(id).is_some())
@@ -218,6 +231,7 @@ impl StudioShell {
         }
         if self.scene_outline.root.find(&self.selected_scene).is_none() {
             self.selected_scene = self.scene_outline.initial_selection.clone();
+            self.selected_scenes = BTreeSet::from([self.selected_scene.clone()]);
         }
     }
 
@@ -244,6 +258,7 @@ impl StudioShell {
             previous_outline: self.scene_outline.clone(),
             previous_expanded: self.expanded_scene.clone(),
             previous_selection: self.selected_scene.clone(),
+            previous_selections: self.selected_scenes.clone(),
             previous_world_asset: self.selected_world_asset.clone(),
             previous_workspace: self.workspace,
         });
@@ -346,6 +361,8 @@ impl StudioShell {
             return false;
         }
         self.selected_scene = id.to_owned();
+        self.selected_scenes.clear();
+        self.selected_scenes.insert(id.to_owned());
         let previous_expanded = self.expanded_scene.clone();
         self.expanded_scene.insert("game".to_owned());
         let mut path = Vec::new();
@@ -353,6 +370,62 @@ impl StudioShell {
             self.expanded_scene.extend(path);
         }
         if self.expanded_scene != previous_expanded {
+            self.scene_tree_rows_dirty = true;
+        }
+        true
+    }
+
+    pub(crate) fn toggle_scene_node_selection(&mut self, id: &str) -> bool {
+        if self.scene_outline.root.find(id).is_none() {
+            return false;
+        }
+        if !self.selected_scenes.remove(id) {
+            self.selected_scenes.insert(id.to_owned());
+            self.selected_scene = id.to_owned();
+        } else if self.selected_scene == id {
+            self.selected_scene = self
+                .selected_scenes
+                .iter()
+                .next_back()
+                .cloned()
+                .unwrap_or_else(|| self.scene_outline.initial_selection.clone());
+        }
+        if self.selected_scenes.is_empty() {
+            self.selected_scenes.insert(self.selected_scene.clone());
+        }
+        let mut path = Vec::new();
+        if self
+            .scene_outline
+            .root
+            .collect_ancestor_ids(&self.selected_scene, &mut path)
+        {
+            self.expanded_scene.extend(path);
+            self.scene_tree_rows_dirty = true;
+        }
+        true
+    }
+
+    pub(crate) fn select_scene_nodes(&mut self, ids: &[String]) -> bool {
+        let selected = ids
+            .iter()
+            .filter(|id| self.scene_outline.root.find(id).is_some())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let Some(primary) = ids.iter().rev().find(|id| selected.contains(*id)).cloned() else {
+            return false;
+        };
+        self.selected_scene = primary;
+        self.selected_scenes = selected;
+        let mut expanded = false;
+        for id in &self.selected_scenes {
+            let mut path = Vec::new();
+            if self.scene_outline.root.collect_ancestor_ids(id, &mut path) {
+                let before = self.expanded_scene.len();
+                self.expanded_scene.extend(path);
+                expanded |= before != self.expanded_scene.len();
+            }
+        }
+        if expanded {
             self.scene_tree_rows_dirty = true;
         }
         true
@@ -814,6 +887,7 @@ impl StudioShell {
         }
         let empty = SceneOutline::empty();
         let empty_selection = empty.initial_selection.clone();
+        let empty_selections = BTreeSet::from([empty_selection.clone()]);
         let empty_expanded = empty.initial_expanded.clone();
         self.project_loading = Some(ProjectLoadingState {
             progress: 0.0,
@@ -822,6 +896,7 @@ impl StudioShell {
             previous_outline: std::mem::replace(&mut self.scene_outline, empty),
             previous_expanded: std::mem::replace(&mut self.expanded_scene, empty_expanded),
             previous_selection: std::mem::replace(&mut self.selected_scene, empty_selection),
+            previous_selections: std::mem::replace(&mut self.selected_scenes, empty_selections),
             previous_world_asset: std::mem::take(&mut self.selected_world_asset),
             previous_workspace: std::mem::replace(&mut self.workspace, Workspace::World),
         });
@@ -841,6 +916,7 @@ impl StudioShell {
         self.scene_outline = loading.previous_outline;
         self.expanded_scene = loading.previous_expanded;
         self.selected_scene = loading.previous_selection;
+        self.selected_scenes = loading.previous_selections;
         self.selected_world_asset = loading.previous_world_asset;
         self.workspace = loading.previous_workspace;
         if !loading.rebuilding {

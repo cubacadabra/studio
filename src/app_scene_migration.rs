@@ -54,7 +54,7 @@ pub(crate) fn migrate_manifest_to_scene(source: &str) -> Result<ManifestSceneMig
                 ),
             ]);
             if let Some(color) = object.get("color") {
-                primitive.insert("material".to_owned(), color.clone());
+                primitive.insert("color".to_owned(), color.clone());
             }
             let mut components =
                 BTreeMap::from([("primitive".to_owned(), Value::Object(primitive))]);
@@ -70,7 +70,7 @@ pub(crate) fn migrate_manifest_to_scene(source: &str) -> Result<ManifestSceneMig
                 .and_then(Value::as_object_mut)
             {
                 if let Some(material) = object.get("material") {
-                    primitive.insert("runtimeMaterial".to_owned(), material.clone());
+                    primitive.insert("material".to_owned(), material.clone());
                 }
                 if let Some(outline) = object.get("outline") {
                     primitive.insert("outline".to_owned(), outline.clone());
@@ -359,8 +359,16 @@ pub(crate) fn retarget_migrated_scene_edit(
         | SceneEditRequest::UpdateSignText { target, .. }
         | SceneEditRequest::UpdateProperty { target, .. }
         | SceneEditRequest::RemoveProperty { target, .. }
-        | SceneEditRequest::RenameObject { target, .. }
-        | SceneEditRequest::ReparentObject { target, .. } => target,
+        | SceneEditRequest::RenameObject { target, .. } => target,
+        SceneEditRequest::ReparentObjects { targets, .. }
+        | SceneEditRequest::GroupObjects { targets } => {
+            for target in targets {
+                if let Some(migrated_target) = target_map.get(target) {
+                    *target = migrated_target.clone();
+                }
+            }
+            return;
+        }
         SceneEditRequest::AddObject { .. } | SceneEditRequest::UseImageAsFloor { .. } => return,
     };
     if let Some(migrated_target) = target_map.get(target) {

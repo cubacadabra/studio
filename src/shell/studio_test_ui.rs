@@ -222,7 +222,11 @@ impl StudioShell {
                     ui.painter().text(
                         badge.min + egui::vec2(10.0, 13.0),
                         Align2::LEFT_CENTER,
-                        format!("Selected · {}", selected.label),
+                        if self.selected_scenes.len() > 1 {
+                            format!("Selected · {} objects", self.selected_scenes.len())
+                        } else {
+                            format!("Selected · {}", selected.label)
+                        },
                         semibold_font(TYPE.meta),
                         colors.text,
                     );
@@ -293,8 +297,9 @@ impl StudioShell {
             if !bounds.intersects(viewport) {
                 continue;
             }
-            let selected = self.selected_scene == projection.id;
-            let sense = if selected
+            let selected = self.selected_scenes.contains(&projection.id);
+            let primary = self.selected_scene == projection.id;
+            let sense = if primary
                 && self.project_editable
                 && !self.playing
                 && projection.editable
@@ -304,7 +309,7 @@ impl StudioShell {
             } else {
                 Sense::click()
             };
-            let interaction_bounds = if selected
+            let interaction_bounds = if primary
                 && projection.screen_corners.is_some()
                 && bounds.width() > 20.0
                 && bounds.height() > 20.0
@@ -324,7 +329,12 @@ impl StudioShell {
                 .interact_pointer_pos()
                 .is_some_and(|point| projection.contains(point));
             if response.clicked() && pointer_over_shape {
-                self.select_scene_node(&projection.id);
+                let additive = ui.input(|input| input.modifiers.shift || input.modifiers.command);
+                if additive {
+                    self.toggle_scene_node_selection(&projection.id);
+                } else {
+                    self.select_scene_node(&projection.id);
+                }
                 let label = self
                     .scene_outline
                     .root
@@ -337,7 +347,9 @@ impl StudioShell {
                 );
             }
             if response.secondary_clicked() && pointer_over_shape {
-                self.select_scene_node(&projection.id);
+                if !selected {
+                    self.select_scene_node(&projection.id);
+                }
             }
             if response.double_clicked() && pointer_over_shape {
                 self.request_scene_focus();
@@ -401,7 +413,7 @@ impl StudioShell {
                     );
                 }
             }
-            if selected
+            if primary
                 && self.project_editable
                 && !self.playing
                 && projection.editable

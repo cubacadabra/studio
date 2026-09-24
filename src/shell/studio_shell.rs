@@ -44,6 +44,7 @@ impl StudioShell {
         let scene_outline =
             SceneOutline::parse(manifest_source).unwrap_or_else(|_| SceneOutline::empty());
         let selected_scene = scene_outline.initial_selection.clone();
+        let selected_scenes = BTreeSet::from([selected_scene.clone()]);
         let expanded_scene = scene_outline.initial_expanded.clone();
         let selected_world_asset = scene_outline
             .assets
@@ -64,6 +65,7 @@ impl StudioShell {
             runtime_ui_nodes: Vec::new(),
             expanded_scene,
             selected_scene,
+            selected_scenes,
             scene_focus_requested: false,
             scene_editor_target: String::new(),
             scene_editor_name: String::new(),

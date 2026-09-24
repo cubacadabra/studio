@@ -183,6 +183,8 @@ pub(crate) struct SceneTreeRow {
     pub(crate) authoring: bool,
     pub(crate) placeable: bool,
     pub(crate) has_parent: bool,
+    pub(crate) group: bool,
+    pub(crate) ancestors: Vec<String>,
 }
 
 pub(crate) fn flatten_scene_rows(
@@ -191,6 +193,24 @@ pub(crate) fn flatten_scene_rows(
     expanded_nodes: &BTreeSet<String>,
     filter_matches: Option<&BTreeSet<String>>,
     rows: &mut Vec<SceneTreeRow>,
+) {
+    flatten_scene_rows_with_ancestors(
+        node,
+        depth,
+        expanded_nodes,
+        filter_matches,
+        rows,
+        &mut Vec::new(),
+    );
+}
+
+fn flatten_scene_rows_with_ancestors(
+    node: &SceneNode,
+    depth: usize,
+    expanded_nodes: &BTreeSet<String>,
+    filter_matches: Option<&BTreeSet<String>>,
+    rows: &mut Vec<SceneTreeRow>,
+    ancestors: &mut Vec<String>,
 ) {
     if filter_matches.is_some_and(|matches| !matches.contains(&node.id)) {
         return;
@@ -205,11 +225,22 @@ pub(crate) fn flatten_scene_rows(
         authoring: is_authoring_node(node),
         placeable: is_authoring_placeable(node),
         has_parent: scene_parent_id_for_row(node).is_some(),
+        group: node.kind == "Group" && is_authoring_transformable(node),
+        ancestors: ancestors.clone(),
     });
     if expanded_nodes.contains(&node.id) || filter_matches.is_some() {
+        ancestors.push(node.id.clone());
         for child in &node.children {
-            flatten_scene_rows(child, depth + 1, expanded_nodes, filter_matches, rows);
+            flatten_scene_rows_with_ancestors(
+                child,
+                depth + 1,
+                expanded_nodes,
+                filter_matches,
+                rows,
+                ancestors,
+            );
         }
+        ancestors.pop();
     }
 }
 
@@ -217,7 +248,8 @@ pub(crate) fn show_scene_row(
     ui: &mut egui::Ui,
     row: &SceneTreeRow,
     expanded_nodes: &mut BTreeSet<String>,
-    selected: &mut String,
+    primary_selection: &mut String,
+    selected: &mut BTreeSet<String>,
     editable: bool,
     edit_request: &mut Option<SceneEditRequest>,
     add_palette: &mut Option<AddPaletteState>,
@@ -225,9 +257,13 @@ pub(crate) fn show_scene_row(
     let expanded = expanded_nodes.contains(&row.id);
     let has_children = row.has_children;
     let colors = palette(ui);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
-    let is_selected = *selected == row.id;
+    let sense = if editable && row.authoring && row.has_parent {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), sense);
+    let is_selected = selected.contains(&row.id);
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,
@@ -246,6 +282,40 @@ pub(crate) fn show_scene_row(
                 colors.panel_raised
             },
         );
+    }
+    let drag_targets = if is_selected && selected.len() > 1 {
+        selected.iter().cloned().collect::<Vec<_>>()
+    } else {
+        vec![row.id.clone()]
+    };
+    if editable && row.authoring && row.has_parent {
+        response.dnd_set_drag_payload(SceneTreeDragPayload {
+            targets: drag_targets,
+        });
+    }
+    let valid_drop_target = row.group
+        && response
+            .dnd_hover_payload::<SceneTreeDragPayload>()
+            .is_some_and(|payload| {
+                !payload.targets.iter().any(|target| {
+                    target == &row.id || row.ancestors.iter().any(|ancestor| ancestor == target)
+                })
+            });
+    if valid_drop_target {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            2.0,
+            Stroke::new(2.0, colors.accent),
+            StrokeKind::Inside,
+        );
+    }
+    if valid_drop_target
+        && let Some(payload) = response.dnd_release_payload::<SceneTreeDragPayload>()
+    {
+        *edit_request = Some(SceneEditRequest::ReparentObjects {
+            targets: payload.targets.clone(),
+            parent_id: row.id.clone(),
+        });
     }
     paint_focus(ui, &response);
     let x = rect.min.x + UI.inset + row.depth as f32 * 12.0;
@@ -342,7 +412,27 @@ pub(crate) fn show_scene_row(
             expanded_nodes.insert(row.id.clone());
         }
     } else if response.clicked() {
-        *selected = row.id.clone();
+        let additive = ui.input(|input| input.modifiers.shift || input.modifiers.command);
+        if additive {
+            if !selected.remove(&row.id) {
+                selected.insert(row.id.clone());
+                *primary_selection = row.id.clone();
+            } else if *primary_selection == row.id {
+                *primary_selection = selected
+                    .iter()
+                    .next_back()
+                    .cloned()
+                    .unwrap_or_else(|| row.id.clone());
+            }
+            if selected.is_empty() {
+                selected.insert(row.id.clone());
+                *primary_selection = row.id.clone();
+            }
+        } else {
+            selected.clear();
+            selected.insert(row.id.clone());
+            *primary_selection = row.id.clone();
+        }
         if has_children && response.double_clicked() {
             if expanded {
                 expanded_nodes.remove(&row.id);
@@ -363,7 +453,9 @@ pub(crate) fn show_scene_row(
             ui.close();
         }
         if is_scene_object(&row.id) || (row.authoring && row.has_parent) {
-            if (is_scene_object(&row.id) || row.placeable) && ui.button("Duplicate").clicked() {
+            if (is_scene_object(&row.id) || row.placeable || row.group)
+                && ui.button("Duplicate").clicked()
+            {
                 *edit_request = Some(SceneEditRequest::DuplicateObject {
                     target: row.id.clone(),
                 });

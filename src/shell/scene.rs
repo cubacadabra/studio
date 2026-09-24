@@ -88,7 +88,7 @@ impl SceneNode {
         objects: &mut Vec<SceneObjectGeometry>,
         world_transforms: &BTreeMap<String, AuthoringWorldTransform>,
     ) {
-        if (is_scene_object(&self.id) || is_authoring_placeable(self))
+        if (is_scene_object(&self.id) || is_authoring_transformable(self))
             && !scene_node_locked(self)
             && let Some(position) = vector_property(self, "Position")
         {
@@ -137,6 +137,7 @@ pub(crate) struct ProjectLoadingState {
     pub(crate) previous_outline: SceneOutline,
     pub(crate) previous_expanded: BTreeSet<String>,
     pub(crate) previous_selection: String,
+    pub(crate) previous_selections: BTreeSet<String>,
     pub(crate) previous_world_asset: String,
     pub(crate) previous_workspace: Workspace,
 }

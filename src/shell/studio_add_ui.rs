@@ -247,10 +247,28 @@ impl StudioShell {
             });
 
         if let Some(kind) = chosen {
-            self.scene_edit_requested = Some(SceneEditRequest::AddObject {
-                world_id: state.world_id.take(),
-                kind,
-            });
+            let group_targets = (kind == SceneObjectKind::Group)
+                .then(|| {
+                    self.selected_scenes
+                        .iter()
+                        .filter_map(|id| self.scene_outline.root.find(id))
+                        .filter(|node| {
+                            is_authoring_node(node) && scene_parent_id_value(node).is_some()
+                        })
+                        .map(|node| node.id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            self.scene_edit_requested = if group_targets.is_empty() {
+                Some(SceneEditRequest::AddObject {
+                    world_id: state.world_id.take(),
+                    kind,
+                })
+            } else {
+                Some(SceneEditRequest::GroupObjects {
+                    targets: group_targets,
+                })
+            };
             self.notice = format!("Adding {}…", kind.label());
             close_requested = true;
         }

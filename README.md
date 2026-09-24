@@ -83,8 +83,10 @@ Controls:
   or return to the preserved Build-mode camera
 - `Add` or `Shift-A`: open the searchable Add palette; creating a Block places
   it in the nearest open space, selects it, and enters Craft mode
-- add a Group to organize scene nodes, then use the selected node's Parent
-  control to move it in the hierarchy without changing its world placement
+- Shift-click or Command/Ctrl-click objects in the Scene tree or viewport, then
+  add a Group to group them in one transaction; drag selected tree rows onto a
+  Group to reparent them without changing world placement
+- move or duplicate a Group to transform or copy its complete authored subtree
 - rename authoring nodes and change a Block's color or portable built-in
   surface material in the Inspector
 - add a stationary Actor for an authored character/NPC and edit its transform

@@ -146,30 +146,37 @@ impl StudioApp {
         let Some(scene) = self.authoring_scene.as_ref() else {
             return Ok(());
         };
-        let world = scene.world_transform(target)?;
-        let local_rotation = self
-            .authoring_scene_indices
-            .get(target)
-            .and_then(|index| scene.nodes.get(*index))
-            .map(|node| node.transform.rotation)
-            .unwrap_or(world.rotation);
-        let primitive_size = self
-            .authoring_scene_indices
-            .get(target)
-            .and_then(|index| scene.nodes.get(*index))
-            .and_then(|node| node.components.get("primitive"))
-            .and_then(Value::as_object)
-            .and_then(|component| component.get("size"))
-            .and_then(crate::shell::vector_value);
+        let affected = scene
+            .nodes
+            .iter()
+            .filter(|node| node.id == target || scene_node_has_ancestor(scene, node, target))
+            .map(|node| {
+                let world = scene.world_transform(&node.id)?;
+                let primitive_size = node
+                    .components
+                    .get("primitive")
+                    .and_then(Value::as_object)
+                    .and_then(|component| component.get("size"))
+                    .and_then(crate::shell::vector_value);
+                Ok((
+                    node.id.clone(),
+                    world,
+                    node.transform.rotation,
+                    primitive_size,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         if let Some(shell) = &mut self.shell {
-            shell.update_scene_object_geometry(
-                target,
-                world.position,
-                world.rotation,
-                local_rotation,
-                world.scale,
-                primitive_size,
-            );
+            for (id, world, local_rotation, primitive_size) in affected {
+                shell.update_scene_object_geometry(
+                    &id,
+                    world.position,
+                    world.rotation,
+                    local_rotation,
+                    world.scale,
+                    primitive_size,
+                );
+            }
         }
         Ok(())
     }
@@ -414,7 +421,7 @@ impl StudioApp {
                                 serde_json::json!({
                                     "shape": "box",
                                     "size": [2, 2, 2],
-                                    "material": "signal"
+                                    "color": "signal"
                                 }),
                                 next_block_position(&scene),
                             ),
@@ -544,6 +551,8 @@ impl StudioApp {
                         }
                         if component_name == "interaction" {
                             object.insert("label".to_owned(), Value::String(display_name.clone()));
+                        } else if component_name == "actor" {
+                            object.insert("name".to_owned(), Value::String(display_name.clone()));
                         }
                     }
                     let mut component_map = BTreeMap::new();
@@ -716,15 +725,87 @@ impl StudioApp {
                         return Ok(());
                     }
                 }
-                SceneEditRequest::ReparentObject { target, parent_id } => {
+                SceneEditRequest::ReparentObjects { targets, parent_id } => {
                     let mut scene = parse_authoring_scene(&scene_source)?;
-                    scene.reparent_preserving_world_transform(target, parent_id)?;
+                    let targets = top_level_scene_targets(&scene, targets);
+                    if targets.is_empty() {
+                        return Err("Select at least one movable scene object".to_owned());
+                    }
+                    for target in &targets {
+                        if scene
+                            .node(target)
+                            .and_then(|node| node.parent_id.as_deref())
+                            != Some(parent_id)
+                        {
+                            scene.reparent_preserving_world_transform(target, parent_id)?;
+                        }
+                    }
+                    let updated = serialize_authoring_scene(&scene)?;
+                    let primary = targets.last().expect("targets are not empty").clone();
+                    self.commit_authoring_scene_transaction(
+                        scene_source,
+                        updated,
+                        &primary,
+                        "Scene object moved in the hierarchy — save to keep it",
+                    );
+                    if let Some(shell) = &mut self.shell {
+                        shell.select_scene_nodes(&targets);
+                    }
+                    return Ok(());
+                }
+                SceneEditRequest::GroupObjects { targets } => {
+                    let mut scene = parse_authoring_scene(&scene_source)?;
+                    let targets = top_level_scene_targets(&scene, targets);
+                    if targets.is_empty() {
+                        return Err("Select at least one movable scene object".to_owned());
+                    }
+                    let root_id = scene
+                        .nodes
+                        .iter()
+                        .find(|node| node.parent_id.is_none())
+                        .map(|node| node.id.clone())
+                        .ok_or_else(|| "component scene has no world root".to_owned())?;
+                    let world_positions = targets
+                        .iter()
+                        .map(|target| scene.world_transform(target).map(|world| world.position))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let count = world_positions.len() as f32;
+                    let center = world_positions
+                        .iter()
+                        .fold([0.0; 3], |mut center, position| {
+                            for axis in 0..3 {
+                                center[axis] += position[axis] / count;
+                            }
+                            center
+                        });
+                    let mut number = 1;
+                    let group_id = loop {
+                        let candidate = format!("group-{number}");
+                        if scene.node(&candidate).is_none() {
+                            break candidate;
+                        }
+                        number += 1;
+                    };
+                    scene.nodes.push(AuthoringNode {
+                        id: group_id.clone(),
+                        parent_id: Some(root_id),
+                        name: format!("Group {number}"),
+                        transform: Transform::default(),
+                        components: BTreeMap::new(),
+                        editor: EditorMetadata::default(),
+                        source: None,
+                    });
+                    let local_center = scene.local_position_for_world(&group_id, center)?;
+                    scene.set_position(&group_id, local_center)?;
+                    for target in &targets {
+                        scene.reparent_preserving_world_transform(target, &group_id)?;
+                    }
                     let updated = serialize_authoring_scene(&scene)?;
                     self.commit_authoring_scene_transaction(
                         scene_source,
                         updated,
-                        target,
-                        "Scene object moved in the hierarchy — save to keep it",
+                        &group_id,
+                        "Selection grouped — save to keep it",
                     );
                     return Ok(());
                 }
@@ -734,28 +815,73 @@ impl StudioApp {
                         if node.editor.locked {
                             return Err(format!("scene node {target} is locked"));
                         }
+                        let subtree = scene
+                            .nodes
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.id == node.id
+                                    || scene_node_has_ancestor(&scene, candidate, &node.id)
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
                         let mut number = 1;
-                        let id = loop {
-                            let candidate = format!("{}-copy-{number}", node.id);
-                            if scene.node(&candidate).is_none() {
-                                break candidate;
+                        let mapping = loop {
+                            let mapping = subtree
+                                .iter()
+                                .map(|candidate| {
+                                    (
+                                        candidate.id.clone(),
+                                        format!("{}-copy-{number}", candidate.id),
+                                    )
+                                })
+                                .collect::<BTreeMap<_, _>>();
+                            if mapping.values().all(|id| scene.node(id).is_none()) {
+                                break mapping;
                             }
                             number += 1;
                         };
-                        let mut copy = node;
-                        copy.id = id.clone();
-                        copy.name = format!("{} Copy {number}", copy.name);
-                        offset_duplicate(&mut copy);
-                        for component in copy.components.values_mut() {
-                            if let Some(component) = component.as_object_mut() {
-                                for key in ["id", "runtimeId"] {
-                                    if component.contains_key(key) {
-                                        component.insert(key.to_owned(), Value::String(id.clone()));
+                        let id = mapping[&node.id].clone();
+                        let mut copies = subtree
+                            .into_iter()
+                            .map(|mut copy| {
+                                let source_id = copy.id.clone();
+                                copy.id = mapping[&source_id].clone();
+                                if source_id == node.id {
+                                    copy.name = format!("{} Copy {number}", copy.name);
+                                    offset_duplicate(&mut copy);
+                                }
+                                if let Some(parent_id) = copy.parent_id.as_deref()
+                                    && let Some(remapped) = mapping.get(parent_id)
+                                {
+                                    copy.parent_id = Some(remapped.clone());
+                                }
+                                for component in copy.components.values_mut() {
+                                    if let Some(component) = component.as_object_mut() {
+                                        for key in ["id", "runtimeId"] {
+                                            if component.contains_key(key) {
+                                                component.insert(
+                                                    key.to_owned(),
+                                                    Value::String(copy.id.clone()),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        scene.nodes.push(copy);
+                                if source_id == node.id
+                                    && let Some(actor) = copy
+                                        .components
+                                        .get_mut("actor")
+                                        .and_then(Value::as_object_mut)
+                                {
+                                    actor.insert(
+                                        "name".to_owned(),
+                                        Value::String(copy.name.clone()),
+                                    );
+                                }
+                                copy
+                            })
+                            .collect::<Vec<_>>();
+                        scene.nodes.append(&mut copies);
                         let updated = serialize_authoring_scene(&scene)?;
                         self.commit_authoring_scene_transaction(
                             scene_source,
@@ -897,7 +1023,8 @@ impl StudioApp {
             }
             SceneEditRequest::RemoveProperty { .. }
             | SceneEditRequest::RenameObject { .. }
-            | SceneEditRequest::ReparentObject { .. } => {
+            | SceneEditRequest::ReparentObjects { .. }
+            | SceneEditRequest::GroupObjects { .. } => {
                 return Err("this edit requires an authoring scene".to_owned());
             }
         };
@@ -1064,6 +1191,52 @@ fn offset_duplicate(node: &mut AuthoringNode) {
     node.transform.position[0] += offset;
 }
 
+fn top_level_scene_targets(scene: &AuthoringScene, targets: &[String]) -> Vec<String> {
+    let selected = targets
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    targets
+        .iter()
+        .filter(|target| {
+            let Some(node) = scene.node(target) else {
+                return false;
+            };
+            if node.parent_id.is_none() {
+                return false;
+            }
+            let mut ancestor = node.parent_id.as_deref();
+            while let Some(id) = ancestor {
+                if selected.contains(id) {
+                    return false;
+                }
+                ancestor = scene
+                    .node(id)
+                    .and_then(|candidate| candidate.parent_id.as_deref());
+            }
+            true
+        })
+        .cloned()
+        .collect()
+}
+
+fn scene_node_has_ancestor(
+    scene: &AuthoringScene,
+    node: &AuthoringNode,
+    ancestor_id: &str,
+) -> bool {
+    let mut parent = node.parent_id.as_deref();
+    while let Some(id) = parent {
+        if id == ancestor_id {
+            return true;
+        }
+        parent = scene
+            .node(id)
+            .and_then(|candidate| candidate.parent_id.as_deref());
+    }
+    false
+}
+
 fn record_scene_history(
     undo: &mut Vec<SceneHistoryEntry>,
     redo: &mut Vec<SceneHistoryEntry>,
@@ -1092,6 +1265,9 @@ fn set_authoring_component_property(
             .get_mut(component)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| format!("scene node {} has no {component} component", node.id))?;
+        if component == "primitive" && matches!(nested_key, "color" | "material") {
+            normalize_legacy_primitive_appearance(object);
+        }
         if component == "actor" && matches!(nested_key, "skin" | "shirt" | "pants" | "shoes") {
             let nested = object
                 .entry("appearance".to_owned())
@@ -1149,11 +1325,32 @@ fn remove_authoring_component_property(
     let (component, property) = key
         .split_once('.')
         .ok_or_else(|| format!("component property path `{key}` is required"))?;
-    node.components
+    let component = node
+        .components
         .get_mut(component)
         .and_then(Value::as_object_mut)
-        .and_then(|component| component.remove(property))
+        .ok_or_else(|| format!("scene node {} has no component `{component}`", node.id))?;
+    if component.contains_key("shape") && matches!(property, "color" | "material") {
+        normalize_legacy_primitive_appearance(component);
+    }
+    component
+        .remove(property)
         .ok_or_else(|| format!("scene node {} has no component property `{key}`", node.id))
+}
+
+fn normalize_legacy_primitive_appearance(primitive: &mut serde_json::Map<String, Value>) {
+    if primitive.contains_key("color") {
+        return;
+    }
+    let legacy_color = primitive.remove("material");
+    let legacy_surface = primitive.remove("runtimeMaterial");
+    primitive.insert(
+        "color".to_owned(),
+        legacy_color.unwrap_or_else(|| Value::String("#FFFFFF".to_owned())),
+    );
+    if let Some(material) = legacy_surface {
+        primitive.insert("material".to_owned(), material);
+    }
 }
 
 #[cfg(test)]
@@ -1259,22 +1456,62 @@ mod scene_edit_tests {
         let mut block = block_node("block-1", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE);
         set_authoring_component_property(
             &mut block,
-            "primitive.runtimeMaterial",
+            "primitive.material",
             Value::String("builtin:grass".to_owned()),
         )
         .unwrap();
-        assert_eq!(
-            block.components["primitive"]["runtimeMaterial"],
-            "builtin:grass"
-        );
+        assert_eq!(block.components["primitive"]["material"], "builtin:grass");
 
         let removed =
-            remove_authoring_component_property(&mut block, "primitive.runtimeMaterial").unwrap();
+            remove_authoring_component_property(&mut block, "primitive.material").unwrap();
         assert_eq!(removed, "builtin:grass");
+        assert!(block.components["primitive"].get("material").is_none());
+    }
+
+    #[test]
+    fn editing_legacy_primitive_appearance_writes_canonical_fields() {
+        let mut block = block_node("block-1", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE);
+        block.components["primitive"] = serde_json::json!({
+            "shape": "box",
+            "size": NEW_BLOCK_SIZE,
+            "material": "#767F91",
+            "runtimeMaterial": "builtin:rock"
+        });
+
+        set_authoring_component_property(
+            &mut block,
+            "primitive.color",
+            Value::String("#62A85A".to_owned()),
+        )
+        .unwrap();
+
+        assert_eq!(block.components["primitive"]["color"], "#62A85A");
+        assert_eq!(block.components["primitive"]["material"], "builtin:rock");
         assert!(
             block.components["primitive"]
                 .get("runtimeMaterial")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn multi_selection_keeps_only_top_level_targets() {
+        let mut parent = block_node("parent", [0.0, 1.0, 0.0], NEW_BLOCK_SIZE);
+        parent.parent_id = Some("world".to_owned());
+        let mut child = block_node("child", [1.0, 0.0, 0.0], NEW_BLOCK_SIZE);
+        child.parent_id = Some("parent".to_owned());
+        let sibling = block_node("sibling", [4.0, 1.0, 0.0], NEW_BLOCK_SIZE);
+        let scene = scene_with(vec![parent, child, sibling]);
+
+        let targets = top_level_scene_targets(
+            &scene,
+            &[
+                "parent".to_owned(),
+                "child".to_owned(),
+                "sibling".to_owned(),
+            ],
+        );
+
+        assert_eq!(targets, vec!["parent", "sibling"]);
     }
 }
