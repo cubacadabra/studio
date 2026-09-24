@@ -942,6 +942,7 @@ impl StudioShell {
             .is_some_and(|loading| loading.rebuilding)
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn set_new_project_parent(&mut self, parent: PathBuf) {
         self.new_project_parent = parent;
     }

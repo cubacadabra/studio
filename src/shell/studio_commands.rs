@@ -15,6 +15,7 @@ impl StudioShell {
                 }
                 self.new_project_dialog_open = true;
                 self.new_project_title.clear();
+                self.new_project_parent = crate::default_new_project_parent();
                 self.new_project_error = None;
                 #[cfg(not(target_os = "macos"))]
                 {

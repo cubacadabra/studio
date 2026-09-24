@@ -473,9 +473,6 @@ impl StudioApp {
         if let Err(message) = self.codex.set_project_root(&self.project_root) {
             shell.set_codex_chat_error(message);
         }
-        if let Some(parent) = self.project_root.parent() {
-            shell.set_new_project_parent(parent.to_path_buf());
-        }
         shell.set_recent_projects(self.recent_projects.clone());
         self.shell = Some(shell);
         if let Some(local_catalog) = self.local_morph_catalog.take() {

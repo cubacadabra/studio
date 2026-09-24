@@ -185,9 +185,6 @@ impl StudioApp {
         shell.set_source_files(load_source_files(&self.project_root));
         shell.set_source_directories(load_source_directories(&self.project_root));
         shell.set_codex_project_root(self.project_root.clone());
-        if let Ok(parent) = env::current_dir() {
-            shell.set_new_project_parent(parent);
-        }
         if self.standalone_preview {
             shell.set_start_screen(true);
             shell.set_recent_projects(self.recent_projects.clone());

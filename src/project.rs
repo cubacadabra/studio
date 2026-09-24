@@ -10,6 +10,12 @@ const MAX_RECENT_PROJECTS: usize = 8;
 const MAX_PROJECT_IMAGE_ASSETS: usize = 16;
 const MAX_SOURCE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
+pub(crate) fn default_new_project_parent() -> PathBuf {
+    dirs::document_dir()
+        .or_else(|| env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 pub(crate) fn load_recent_projects() -> Vec<PathBuf> {
     let Some(path) = recent_projects_file() else {
         warn!("recent projects: no platform config directory is available");
