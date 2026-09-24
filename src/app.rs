@@ -36,6 +36,7 @@ impl StudioApp {
             )
         };
         let mut client = ClientSession::load(&manifest_source, &script_source)?;
+        let about_preview = about_preview::AboutPreview::new().map_err(StudioError)?;
         if standalone_preview {
             let position = client
                 .engine()
@@ -83,6 +84,7 @@ impl StudioApp {
             codex,
             network,
             client,
+            about_preview,
             recent_projects,
             window: None,
             renderer: None,
@@ -726,6 +728,9 @@ impl StudioApp {
         if playing {
             self.client.step(delta);
         }
+        if self.shell.as_ref().is_some_and(StudioShell::about_is_open) {
+            self.about_preview.step();
+        }
         let client_step_ms = client_step_started.elapsed().as_secs_f32() * 1_000.0;
         self.drain_ui_events();
         self.refresh_runtime_ui_outline();
@@ -767,8 +772,8 @@ impl StudioApp {
             let renderer_sync_started = Instant::now();
             renderer.sync(self.client.engine());
             renderer_sync_ms = renderer_sync_started.elapsed().as_secs_f32() * 1_000.0;
-            if let Some(elapsed) = self.shell.as_ref().and_then(StudioShell::about_elapsed) {
-                renderer.render_about_preview(elapsed);
+            if self.shell.as_ref().is_some_and(StudioShell::about_is_open) {
+                renderer.render_about_preview(self.about_preview.engine());
             }
             let renderer_draw_started = Instant::now();
             match (&mut self.shell, prepared_shell) {

@@ -8,7 +8,6 @@ impl StudioShell {
         match command {
             StudioCommand::ShowAbout => {
                 self.about_open = true;
-                self.about_started_at = Some(Instant::now());
             }
             StudioCommand::NewProject => {
                 if self.project_dirty {
@@ -103,11 +102,8 @@ impl StudioShell {
         ));
     }
 
-    pub(crate) fn about_elapsed(&self) -> Option<f32> {
-        self.about_open.then(|| {
-            self.about_started_at
-                .map_or(0.0, |started| started.elapsed().as_secs_f32())
-        })
+    pub(crate) const fn about_is_open(&self) -> bool {
+        self.about_open
     }
 
     pub(crate) fn prepare(&mut self, window: &Window, project_name: &str) -> PreparedShell {

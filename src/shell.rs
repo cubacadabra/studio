@@ -489,7 +489,6 @@ pub(crate) struct StudioShell {
     logo_texture: egui::TextureHandle,
     about_open: bool,
     about_texture: Option<egui::TextureId>,
-    about_started_at: Option<Instant>,
     pending_project_action: Option<PendingProjectAction>,
     exit_requested: bool,
     imported_asset_paths: Vec<PathBuf>,

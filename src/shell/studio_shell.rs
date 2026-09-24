@@ -214,7 +214,6 @@ impl StudioShell {
             logo_texture,
             about_open: false,
             about_texture: None,
-            about_started_at: None,
             pending_project_action: None,
             exit_requested: false,
             imported_asset_paths: Vec::new(),

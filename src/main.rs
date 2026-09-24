@@ -13,6 +13,7 @@ use std::{
     thread,
     time::Instant,
 };
+mod about_preview;
 mod app;
 mod app_events;
 mod app_input;
@@ -259,6 +260,7 @@ struct StudioApp {
     codex: CodexClient,
     network: BackendClient,
     client: ClientSession,
+    about_preview: about_preview::AboutPreview,
     recent_projects: Vec<PathBuf>,
     image_atlas: Option<ImageAtlas>,
     world_models: Vec<ModelAsset>,
