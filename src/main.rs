@@ -460,7 +460,14 @@ mod tests {
             .as_deref()
             .and_then(|source| cubacadabra_scene::parse_authoring_scene(source).ok())
             .expect("starter scene");
-        assert_eq!(scene.nodes.len(), 1);
+        assert_eq!(
+            scene
+                .nodes
+                .iter()
+                .filter(|node| node.name.starts_with("Letter Cube"))
+                .count(),
+            11
+        );
         assert_eq!(scene.nodes[0].id, "world-starter-world");
         assert!(scene.nodes[0].components.is_empty());
         let client = cubacadabra_client::ClientSession::load(

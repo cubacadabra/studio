@@ -17,7 +17,7 @@ mod tests {
     };
 
     #[test]
-    fn creates_the_shared_blank_starter_with_embedded_sdk() {
+    fn creates_the_starter_letter_wall_with_embedded_sdk() {
         let root = std::env::temp_dir().join(format!(
             "cubacadabra-studio-create-game-{}",
             SystemTime::now()
@@ -36,7 +36,27 @@ mod tests {
 
         assert_eq!(result.game_id, "the-wild-west");
         assert_eq!(manifest["displayName"], "The Wild West");
-        assert_eq!(scene["nodes"].as_array().map(Vec::len), Some(1));
+        let nodes = scene["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 35);
+        assert_eq!(
+            nodes
+                .iter()
+                .filter(|node| node["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("Letter Cube")))
+                .count(),
+            11
+        );
+        let first_cube = nodes
+            .iter()
+            .find(|node| node["name"] == "Letter Cube 1")
+            .unwrap();
+        let last_cube = nodes
+            .iter()
+            .find(|node| node["name"] == "Letter Cube 11")
+            .unwrap();
+        assert_eq!(first_cube["transform"]["position"][0], -11.25);
+        assert_eq!(last_cube["transform"]["position"][0], 11.25);
         assert!(
             result
                 .project
