@@ -5,15 +5,17 @@ impl StudioShell {
             return;
         }
         let previous_selection = self.selected_scene.clone();
+        let mut add_requested = false;
         panel_header(ui, Icon::World, "Scene", |ui| {
             if self.project_editable {
-                let world_id = scene_world_id(&self.selected_scene).map(str::to_owned);
-                scene_add_menu(
-                    ui,
-                    world_id,
-                    self.authoring_scene_source.is_some(),
-                    &mut self.scene_edit_requested,
-                );
+                add_requested = ui
+                    .add_enabled(!self.playing, egui::Button::new("Add"))
+                    .on_hover_text(if self.playing {
+                        "Stop Preview to add objects"
+                    } else {
+                        "Add object (Shift+A)"
+                    })
+                    .clicked();
             } else {
                 ui.label(
                     RichText::new("Read-only")
@@ -23,6 +25,10 @@ impl StudioShell {
                 .on_hover_text("Open a raw source project to edit the scene");
             }
         });
+        if add_requested {
+            let world_id = scene_world_id(&self.selected_scene).map(str::to_owned);
+            self.open_add_palette(world_id);
+        }
         search_field_with_hint(
             ui,
             &mut self.scene_search_query,
@@ -90,8 +96,9 @@ impl StudioShell {
                             &row,
                             &mut self.expanded_scene,
                             &mut self.selected_scene,
-                            self.project_editable,
+                            self.project_editable && !self.playing,
                             &mut self.scene_edit_requested,
+                            &mut self.add_palette,
                         );
                     }
                 });
@@ -496,25 +503,6 @@ fn editable_scene_property(label: &str) -> Option<(&'static str, ScenePropertyKi
         "Framed" => ("framed", ScenePropertyKind::Boolean),
         _ => return None,
     })
-}
-
-fn scene_add_menu(
-    ui: &mut egui::Ui,
-    world_id: Option<String>,
-    _component_scene: bool,
-    request: &mut Option<SceneEditRequest>,
-) {
-    ui.menu_button("Add", |ui| {
-        for kind in SceneObjectKind::ALL {
-            if ui.button(kind.label()).clicked() {
-                *request = Some(SceneEditRequest::AddObject {
-                    world_id: world_id.clone(),
-                    kind,
-                });
-                ui.close();
-            }
-        }
-    });
 }
 
 #[cfg(test)]

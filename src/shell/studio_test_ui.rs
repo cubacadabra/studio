@@ -151,17 +151,17 @@ impl StudioShell {
                     .on_hover_text("Right-click an object to change editing mode");
                     if self.project_editable {
                         vertical_separator(ui, 12.0);
-                        if ui
-                            .button("+ Block")
-                            .on_hover_text("Add a block beside the existing blocks")
-                            .clicked()
-                        {
-                            self.set_playing(false);
-                            self.scene_edit_requested = Some(SceneEditRequest::AddObject {
-                                world_id: scene_world_id(&self.selected_scene).map(str::to_owned),
-                                kind: SceneObjectKind::Block,
+                        let add = ui
+                            .add_enabled(!self.playing, egui::Button::new("Add"))
+                            .on_hover_text(if self.playing {
+                                "Stop Preview to add objects"
+                            } else {
+                                "Add object (Shift+A)"
                             });
-                            self.notice = "Adding block…".to_owned();
+                        if add.clicked() {
+                            self.open_add_palette(
+                                scene_world_id(&self.selected_scene).map(str::to_owned),
+                            );
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -263,6 +263,22 @@ impl StudioShell {
                     });
                 if clicked_empty {
                     self.deselect_scene_object();
+                }
+                let right_clicked_empty = !self.playing
+                    && self.project_editable
+                    && ui.input(|input| {
+                        input.pointer.secondary_clicked()
+                            && input.pointer.latest_pos().is_some_and(|point| {
+                                self.runtime_viewport.contains(point)
+                                    && !self.scene_object_projections.iter().any(|projection| {
+                                        projection.bounds().contains(point)
+                                    })
+                            })
+                    });
+                if right_clicked_empty {
+                    self.open_add_palette(
+                        scene_world_id(&self.selected_scene).map(str::to_owned),
+                    );
                 }
                 ui.allocate_rect(self.runtime_viewport, Sense::hover());
             });
@@ -439,7 +455,14 @@ impl StudioShell {
                 }
             }
             response.clone().context_menu(|ui| {
-                if self.project_editable {
+                if self.project_editable && !self.playing {
+                    if ui.button("Add…").clicked() {
+                        self.add_palette = Some(AddPaletteState::new(
+                            scene_world_id(&projection.id).map(str::to_owned),
+                        ));
+                        ui.close();
+                    }
+                    ui.separator();
                     ui.label(
                         RichText::new("Editing mode")
                             .size(TYPE.meta)

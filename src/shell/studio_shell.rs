@@ -92,6 +92,7 @@ impl StudioShell {
             preview_stale: false,
             project_error: None,
             scene_edit_requested: None,
+            add_palette: None,
             undo_requested: false,
             redo_requested: false,
             save_requested: false,

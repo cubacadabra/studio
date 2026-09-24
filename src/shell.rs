@@ -49,6 +49,8 @@ mod scene;
 mod scene_interaction;
 #[path = "shell/scene_manifest.rs"]
 mod scene_manifest;
+#[path = "shell/studio_add_ui.rs"]
+mod studio_add_ui;
 #[path = "shell/studio_chrome.rs"]
 mod studio_chrome;
 #[path = "shell/studio_codex_ui.rs"]
@@ -95,6 +97,7 @@ pub(crate) use morph_preview::projected_triangle_area;
 pub(crate) use scene::*;
 pub(crate) use scene_interaction::*;
 pub(crate) use scene_manifest::*;
+pub(crate) use studio_add_ui::AddPaletteState;
 use style::*;
 use style_controls::*;
 use style_icons::*;
@@ -366,6 +369,7 @@ pub(crate) struct StudioShell {
     preview_stale: bool,
     project_error: Option<String>,
     scene_edit_requested: Option<SceneEditRequest>,
+    add_palette: Option<AddPaletteState>,
     undo_requested: bool,
     redo_requested: bool,
     save_requested: bool,

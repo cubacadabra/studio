@@ -214,6 +214,7 @@ pub(crate) fn show_scene_row(
     selected: &mut String,
     editable: bool,
     edit_request: &mut Option<SceneEditRequest>,
+    add_palette: &mut Option<AddPaletteState>,
 ) {
     let expanded = expanded_nodes.contains(&row.id);
     let has_children = row.has_children;
@@ -346,21 +347,14 @@ pub(crate) fn show_scene_row(
     }
     response.clone().context_menu(|ui| {
         if !editable {
-            ui.label(RichText::new("Read-only preview").color(palette(ui).muted));
+            ui.label(RichText::new("Editing unavailable").color(palette(ui).muted));
             return;
         }
-        if let Some(world_id) = scene_world_id(&row.id).map(str::to_owned) {
-            ui.menu_button("Add", |ui| {
-                for kind in SceneObjectKind::ALL {
-                    if ui.button(kind.label()).clicked() {
-                        *edit_request = Some(SceneEditRequest::AddObject {
-                            world_id: Some(world_id.clone()),
-                            kind,
-                        });
-                        ui.close();
-                    }
-                }
-            });
+        if ui.button("Add…").clicked() {
+            *add_palette = Some(AddPaletteState::new(
+                scene_world_id(&row.id).map(str::to_owned),
+            ));
+            ui.close();
         }
         if is_scene_object(&row.id) {
             if ui.button("Duplicate").clicked() {

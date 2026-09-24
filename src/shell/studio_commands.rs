@@ -177,6 +177,7 @@ impl StudioShell {
         self.show_project_loading(ui.ctx());
         self.show_project_error(ui.ctx());
         self.show_unsaved_changes(ui.ctx());
+        self.show_add_palette(ui.ctx());
         self.show_performance_monitor(ui.ctx());
         ui.ctx().request_repaint_after(Duration::from_millis(16));
     }

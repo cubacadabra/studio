@@ -7,6 +7,7 @@ pub(crate) struct PreviewProbe {
     directory: PathBuf,
     frame: u32,
     review: bool,
+    add_palette: bool,
     world: Option<String>,
     gameplay_camera: [f32; 3],
     projected: Option<[f32; 2]>,
@@ -32,6 +33,7 @@ impl PreviewProbe {
             directory,
             frame: 0,
             review: env::var_os("CUBA_STUDIO_PROBE_REVIEW").is_some(),
+            add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
             world: env::var("CUBA_STUDIO_PROBE_WORLD").ok(),
             gameplay_camera: [0.0; 3],
             projected: None,
@@ -63,6 +65,20 @@ impl PreviewProbe {
         }
         if self.frame == 2 && self.review {
             app.shell.as_mut().unwrap().set_playing(true);
+        }
+        if self.add_palette {
+            if self.frame == 60 {
+                let shell = app.shell.as_mut().unwrap();
+                shell.set_playing(false);
+                assert!(
+                    shell.open_add_palette(None),
+                    "probe could not open Add palette"
+                );
+            }
+            if self.frame == 81 {
+                eprintln!("add palette probe passed");
+            }
+            return;
         }
         if !self.review {
             return;
@@ -137,33 +153,37 @@ impl PreviewProbe {
     }
 
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
-        let name = match (self.review, self.frame) {
-            (false, 120) => {
-                if self.reference {
-                    "current"
-                } else {
-                    "gameplay"
+        let name = if self.add_palette && self.frame == 80 {
+            "add-palette"
+        } else {
+            match (self.review, self.frame) {
+                (false, 120) => {
+                    if self.reference {
+                        "current"
+                    } else {
+                        "gameplay"
+                    }
                 }
-            }
-            (true, 50) => {
-                if self.reference {
-                    "current"
-                } else {
-                    "gameplay"
+                (true, 50) => {
+                    if self.reference {
+                        "current"
+                    } else {
+                        "gameplay"
+                    }
                 }
+                (true, 80) => "showcase",
+                (true, 90) => "orbit",
+                (true, 100) => "pan",
+                (true, 110) => "zoom",
+                (true, 120) => "reset",
+                _ => return None,
             }
-            (true, 80) => "showcase",
-            (true, 90) => "orbit",
-            (true, 100) => "pan",
-            (true, 110) => "zoom",
-            (true, 120) => "reset",
-            _ => return None,
         };
         Some(self.directory.join(format!("{name}.png")))
     }
 
     pub(crate) fn finished(&self) -> bool {
-        self.frame >= 121
+        self.frame >= if self.add_palette { 81 } else { 121 }
     }
 }
 

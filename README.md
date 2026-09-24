@@ -81,7 +81,8 @@ Controls:
 - `ChatGPT · <plan>`: open the in-window Codex chat for the current project
 - `Play` / `Stop`: save and rebuild stale source, enter the gameplay preview,
   or return to the preserved Build-mode camera
-- `+ Block`: stop playback, add a block in the nearest open space, and select it
+- `Add` or `Shift-A`: open the searchable Add palette; creating a Block places
+  it in the nearest open space, selects it, and enters Craft mode
 - drag a selected block to move it across the ground; drag its corner and top
   handles to resize it, or its raised handle to move it up and down
 - click empty viewport space or press `Escape` to clear selection
@@ -108,6 +109,9 @@ CUBA_STUDIO_PROBE_DIR=/tmp/maze-gameplay \
 CUBA_STUDIO_PROBE_DIR=/tmp/maze-review CUBA_STUDIO_PROBE_REVIEW=1 \
   CUBA_STUDIO_PROBE_WORLD=maze-world \
   cargo run -- --path ../examples/maze-101
+
+CUBA_STUDIO_PROBE_DIR=/tmp/add-palette CUBA_STUDIO_PROBE_ADD=1 \
+  cargo run -- --path ../examples/survival-101
 ```
 
 For a fixed source-reference comparison, also provide the target screenshot.
@@ -127,6 +131,10 @@ zoom, and preset reset, asserting that the gameplay camera stays unchanged.
 It does not test OS event delivery, physical trackpad gestures, or presentation
 to the window surface. The probe and texture readback support are omitted from
 release builds.
+
+The Add probe opens the production palette from a stopped editable project,
+captures `add-palette.png`, and verifies that the shared palette entry point
+honors Studio's edit-mode checks.
 
 ## ChatGPT connection
 

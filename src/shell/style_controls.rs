@@ -62,7 +62,7 @@ pub(crate) fn navigation_row(
 }
 
 pub(crate) fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
-    search_field_with_hint(ui, query, width, "Search assets…", "Search assets");
+    let _ = search_field_with_hint(ui, query, width, "Search assets…", "Search assets");
 }
 
 pub(crate) fn search_field_with_hint(
@@ -71,7 +71,7 @@ pub(crate) fn search_field_with_hint(
     width: f32,
     hint: &str,
     accessible_label: &str,
-) {
+) -> egui::Response {
     let colors = palette(ui);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(width.min(ui.available_width()).max(80.0), CONTROL_HEIGHT),
@@ -103,6 +103,7 @@ pub(crate) fn search_field_with_hint(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, accessible_label)
     });
+    response
 }
 
 pub(crate) fn drop_target(ui: &mut egui::Ui, label: &str) {

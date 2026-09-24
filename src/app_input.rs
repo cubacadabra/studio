@@ -89,6 +89,10 @@ impl StudioApp {
                 }
                 true
             }
+            KeyCode::KeyA if !event.repeat && self.modifiers.shift_key() => self
+                .shell
+                .as_mut()
+                .is_some_and(|shell| shell.open_add_palette(None)),
             KeyCode::KeyQ if !event.repeat => self.activate_scene_tool(SceneTool::Choose),
             KeyCode::KeyW if !event.repeat => self.activate_scene_tool(SceneTool::Place),
             KeyCode::KeyE if !event.repeat => self.activate_scene_tool(SceneTool::Shape),
