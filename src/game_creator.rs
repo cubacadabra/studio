@@ -179,6 +179,8 @@ mod tests {
             21
         );
         assert!(exported_xml.contains("part.Touched:Connect"));
+        assert!(exported_xml.contains("<token name=\"TopSurface\">0</token>"));
+        assert!(exported_xml.contains("<token name=\"BottomSurface\">0</token>"));
         let exported = load_reference(&ImportOptions {
             place_path: exported_place,
             terrain_path: None,
