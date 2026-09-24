@@ -1,7 +1,7 @@
 use super::*;
 use crate::app_scene_migration::migrate_manifest_to_scene;
 use cubacadabra_reference_import::{
-    import_roblox_authoring_scene, roblox_source_file, write_roblox_place,
+    import_roblox_authoring_scene, roblox_source_files, write_roblox_place,
 };
 use cubacadabra_scene::serialize_authoring_scene;
 use sha2::{Digest, Sha256};
@@ -141,8 +141,9 @@ impl StudioApp {
         if output_path.extension().is_none() {
             output_path.set_extension("rbxlx");
         }
-        let preserved_source = match roblox_source_file(scene) {
-            Some(relative) => match safe_project_path(&self.project_root, relative) {
+        let source_files = roblox_source_files(scene);
+        let preserved_source = match source_files.as_slice() {
+            [relative] => match safe_project_path(&self.project_root, relative) {
                 Ok(path) if path.is_file() => Some(path),
                 Ok(path) => {
                     self.set_roblox_error(&format!(
@@ -156,7 +157,13 @@ impl StudioApp {
                     return;
                 }
             },
-            None => None,
+            [] => None,
+            _ => {
+                self.set_roblox_error(
+                    "This scene contains multiple preserved Roblox places; export one imported place at a time",
+                );
+                return;
+            }
         };
         match write_roblox_place(scene, preserved_source.as_deref(), &output_path) {
             Ok(report) => {
