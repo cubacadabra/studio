@@ -165,9 +165,20 @@ mod tests {
                 .unwrap();
         assert_eq!(report.added_parts, 67);
         assert_eq!(report.omitted_nodes, 0);
-        assert!(report.warnings.iter().any(|warning| {
-            warning.contains("21 interaction visual(s)") && warning.contains("static Parts")
-        }));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("static Parts"))
+        );
+        let exported_xml = fs::read_to_string(&exported_place).unwrap();
+        assert_eq!(
+            exported_xml
+                .matches("<BinaryString name=\"AttributesSerialize\">")
+                .count(),
+            21
+        );
+        assert!(exported_xml.contains("part.Touched:Connect"));
         let exported = load_reference(&ImportOptions {
             place_path: exported_place,
             terrain_path: None,
@@ -194,6 +205,10 @@ mod tests {
                 .iter()
                 .all(|line| line.anchored && !line.can_collide)
         );
+        assert_eq!(exported.class_counts.get("Script"), Some(&1));
+        assert!(exported.instances.iter().any(|instance| {
+            instance.class == "Script" && instance.name == "Cubacadabra Interaction Runtime"
+        }));
         assert!(create_game("The Wild West", &root).is_err());
         let _ = fs::remove_dir_all(root);
     }
