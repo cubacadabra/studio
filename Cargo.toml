@@ -15,7 +15,7 @@ cubacadabra-project = { path = "../tools/crates/project" }
 cubacadabra-reference-import = { path = "../tools/crates/reference-import" }
 cubacadabra-scene = { path = "../tools/crates/scene" }
 cubacadabra-morphs = { path = "../rust/crates/morphs" }
-cubacadabra-client = { path = "../rust/crates/client", features = ["desktop-backends", "studio-ui"] }
+cubacadabra-client = { path = "../rust/crates/client", features = ["about-animation", "desktop-backends", "studio-ui"] }
 dirs = "6"
 egui = "0.35"
 egui_code_editor = "=0.3.7"
@@ -23,7 +23,7 @@ egui-wgpu = { version = "0.35", default-features = false }
 egui-winit = "0.35"
 env_logger = "0.11"
 getrandom = "0.3"
-image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log = "0.4"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }

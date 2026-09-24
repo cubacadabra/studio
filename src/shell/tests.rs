@@ -3,10 +3,14 @@ use cubacadabra_scene::{AuthoringNode, AuthoringScene, EditorMetadata, SourceMet
 
 #[test]
 fn bundled_about_video_decodes() {
-    let video = AboutVideo::decode().expect("bundled About video should decode");
-    assert!(!video.frames.is_empty());
-    assert!(video.frames[0].image.size[0] > 0);
-    assert!(video.frames[0].image.size[1] > 0);
+    let mut video = AboutVideo::decode().expect("bundled About video should decode");
+    let frame = video
+        .animation
+        .current_frame()
+        .expect("bundled About video should have a first frame");
+    assert!(frame.width > 0);
+    assert!(frame.height > 0);
+    assert!(!frame.pixels.is_empty());
 }
 
 #[test]

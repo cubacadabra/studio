@@ -7,7 +7,7 @@ use crate::{
     },
     project::{SourceAsset, SourceAssetKind},
 };
-use cubacadabra_client::native::Renderer as GameRenderer;
+use cubacadabra_client::{AboutAnimation, native::Renderer as GameRenderer};
 use cubacadabra_morph_authoring::{MorphAttachment, MorphAttachmentMode};
 use cubacadabra_morphs::{MorphAssetId, MorphAssetKind, MorphCatalog, parse_catalog};
 use cubacadabra_scene::{AuthoringNode, AuthoringScene, parse_authoring_scene};
@@ -23,14 +23,12 @@ use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
 pub(crate) use egui_wgpu::wgpu;
 use egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor};
 use egui_winit::State as EguiState;
-use image::AnimationDecoder;
 use serde_json::Value;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
-    io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -178,82 +176,42 @@ pub(crate) enum StudioCommand {
     ShowTest,
 }
 
-const ABOUT_VIDEO_BYTES: &[u8] = include_bytes!("../assets/about.gif");
-
 struct AboutVideo {
-    frames: Vec<AboutVideoFrame>,
-    started_at: Instant,
+    animation: AboutAnimation,
     texture: Option<egui::TextureHandle>,
-    displayed_frame: usize,
-}
-
-struct AboutVideoFrame {
-    image: egui::ColorImage,
-    duration: Duration,
+    displayed_frame: u64,
 }
 
 impl AboutVideo {
     fn decode() -> Result<Self, String> {
-        let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(ABOUT_VIDEO_BYTES))
-            .map_err(|error| format!("could not decode the bundled About video: {error}"))?;
-        let frames = decoder
-            .into_frames()
-            .collect_frames()
-            .map_err(|error| format!("could not read the bundled About video: {error}"))?
-            .into_iter()
-            .map(|frame| {
-                let (numerator, denominator) = frame.delay().numer_denom_ms();
-                let duration =
-                    Duration::from_secs_f64(numerator as f64 / denominator.max(1) as f64 / 1_000.0);
-                let image = frame.into_buffer();
-                AboutVideoFrame {
-                    image: egui::ColorImage::from_rgba_unmultiplied(
-                        [image.width() as usize, image.height() as usize],
-                        image.as_raw(),
-                    ),
-                    duration: duration.max(Duration::from_millis(1)),
-                }
-            })
-            .collect::<Vec<_>>();
-        if frames.is_empty() {
-            return Err("the bundled About video contains no frames".to_owned());
-        }
+        let animation = AboutAnimation::decode()?;
         Ok(Self {
-            frames,
-            started_at: Instant::now(),
+            animation,
             texture: None,
-            displayed_frame: usize::MAX,
+            displayed_frame: u64::MAX,
         })
     }
 
     fn update_texture(&mut self, context: &egui::Context) -> &egui::TextureHandle {
-        let elapsed = self.started_at.elapsed();
-        let total = self
-            .frames
-            .iter()
-            .map(|frame| frame.duration)
-            .sum::<Duration>();
-        let elapsed = if total.is_zero() {
-            Duration::ZERO
-        } else {
-            Duration::from_nanos((elapsed.as_nanos() % total.as_nanos()) as u64)
+        let (frame_id, width, height, pixels) = {
+            let frame = self
+                .animation
+                .current_frame()
+                .expect("bundled About animation should provide a frame");
+            (frame.id, frame.width, frame.height, frame.pixels.clone())
         };
-        let mut cursor = Duration::ZERO;
-        let frame_index = self
-            .frames
-            .iter()
-            .position(|frame| {
-                cursor += frame.duration;
-                elapsed < cursor
-            })
-            .unwrap_or(self.frames.len() - 1);
-        if self.displayed_frame != frame_index {
-            self.texture = Some(context.load_texture(
-                "cubacadabra-about-video",
-                self.frames[frame_index].image.clone(),
-                egui::TextureOptions::LINEAR,
-            ));
-            self.displayed_frame = frame_index;
+        if self.displayed_frame != frame_id {
+            let image = egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels);
+            if let Some(texture) = &mut self.texture {
+                texture.set(image, egui::TextureOptions::LINEAR);
+            } else {
+                self.texture = Some(context.load_texture(
+                    "cubacadabra-about-video",
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
+            self.displayed_frame = frame_id;
         }
         self.texture
             .as_ref()
