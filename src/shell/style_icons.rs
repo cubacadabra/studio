@@ -320,6 +320,15 @@ pub(crate) fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color:
                 StrokeKind::Inside,
             );
         }
+        Icon::Copy => {
+            let back = Rect::from_min_max(
+                egui::pos2(left + r * 0.25, top),
+                egui::pos2(right, bottom - r * 0.25),
+            );
+            let front = back.translate(egui::vec2(-r * 0.25, r * 0.25));
+            painter.rect_stroke(back, 1.0, stroke, StrokeKind::Inside);
+            painter.rect_stroke(front, 1.0, stroke, StrokeKind::Inside);
+        }
         #[cfg(not(target_os = "macos"))]
         Icon::Undo | Icon::Redo => {
             let direction = if matches!(icon, Icon::Redo) {
