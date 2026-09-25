@@ -142,7 +142,7 @@ impl StudioApp {
                 )),
         )?;
         let size = window.inner_size();
-        let display_handle = window.display_handle()?.as_raw();
+        let display_handle = event_loop.owned_display_handle();
         let window_handle = window.window_handle()?.as_raw();
         let mut renderer = Renderer::new(
             display_handle,

@@ -67,7 +67,7 @@ use winit::{
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
-    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+    raw_window_handle::HasWindowHandle,
     window::{Window, WindowAttributes},
 };
 
