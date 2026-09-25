@@ -318,6 +318,7 @@ struct StudioApp {
 struct PendingRobloxImport {
     source: PathBuf,
     project: Option<PathBuf>,
+    prepared_counts: Option<(usize, usize)>,
 }
 
 #[cfg(test)]

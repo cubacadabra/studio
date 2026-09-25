@@ -2,9 +2,10 @@ use super::*;
 use crate::app_scene_migration::migrate_manifest_to_scene;
 use crate::shell::StudioCommand;
 use cubacadabra_reference_import::{
-    import_roblox_authoring_scene, roblox_source_files, write_roblox_place_with_manifest,
+    RobloxAuthoringImport, import_roblox_authoring_scene, roblox_source_files,
+    write_roblox_place_with_manifest,
 };
-use cubacadabra_scene::serialize_authoring_scene;
+use cubacadabra_scene::{AuthoringScene, parse_authoring_scene, serialize_authoring_scene};
 use sha2::{Digest, Sha256};
 
 impl StudioApp {
@@ -43,6 +44,7 @@ impl StudioApp {
             self.pending_roblox_import = Some(PendingRobloxImport {
                 source: source_path.clone(),
                 project: None,
+                prepared_counts: None,
             });
             if let Some(shell) = &mut self.shell {
                 shell.execute_command(StudioCommand::NewProject);
@@ -82,23 +84,37 @@ impl StudioApp {
             self.pending_roblox_import = Some(pending);
             return;
         }
+        if let Some((editable_parts, preserved_instances)) = pending.prepared_counts {
+            if let Some(shell) = &mut self.shell {
+                shell.set_notice(format!(
+                    "Imported {editable_parts} editable Parts; preserved {preserved_instances} other Roblox objects"
+                ));
+            }
+            return;
+        }
         if let Err(error) = self.import_roblox_place(&pending.source) {
             self.set_roblox_error(&format!("Could not import Roblox place: {error}"));
         }
     }
 
-    fn import_roblox_place(&mut self, source_path: &Path) -> Result<(), String> {
-        let bytes = fs::read(source_path)
-            .map_err(|error| format!("could not read {}: {error}", source_path.display()))?;
-        let hash = format!("{:x}", Sha256::digest(&bytes));
-        let stem = source_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .and_then(|stem| project_asset_slug(stem).ok())
-            .filter(|stem| !stem.is_empty())
-            .unwrap_or_else(|| "roblox-place".to_owned());
-        let relative_source = format!("imports/roblox/{}-{}/source.rbxlx", stem, &hash[..8]);
+    pub(crate) fn import_roblox_place_into_project(
+        source_path: &Path,
+        project_root: &Path,
+    ) -> Result<(usize, usize), String> {
+        let scene_path = project_root.join("scene.json");
+        let base_scene = parse_authoring_scene(
+            &fs::read_to_string(&scene_path)
+                .map_err(|error| format!("could not read {}: {error}", scene_path.display()))?,
+        )?;
+        let (imported, _, _) = prepare_roblox_import(source_path, project_root, &base_scene)?;
+        write_atomic(
+            &scene_path,
+            serialize_authoring_scene(&imported.scene)?.as_bytes(),
+        )?;
+        Ok((imported.editable_parts, imported.preserved_instances))
+    }
 
+    fn import_roblox_place(&mut self, source_path: &Path) -> Result<(), String> {
         let (base_scene, migrated_manifest) = match self.authoring_scene.clone() {
             Some(scene) => (scene, None),
             None => {
@@ -110,20 +126,9 @@ impl StudioApp {
                 (migrated.scene, Some(manifest))
             }
         };
-        let imported = import_roblox_authoring_scene(source_path, &base_scene, &relative_source)?;
+        let (imported, destination, destination_was_new) =
+            prepare_roblox_import(source_path, &self.project_root, &base_scene)?;
         let scene_source = serialize_authoring_scene(&imported.scene)?;
-        let destination = self.project_root.join(Path::new(&relative_source));
-        let destination_was_new = !destination.exists();
-        if !destination_was_new && fs::read(&destination).ok().as_deref() != Some(bytes.as_slice())
-        {
-            return Err(format!(
-                "the preserved source path already contains different data: {}",
-                destination.display()
-            ));
-        }
-        if destination_was_new {
-            write_atomic(&destination, &bytes)?;
-        }
 
         self.authoring_scene = Some(imported.scene.clone());
         self.authoring_scene_indices = authoring_scene_indices(&imported.scene);
@@ -248,6 +253,36 @@ impl StudioApp {
     }
 }
 
+fn prepare_roblox_import(
+    source_path: &Path,
+    project_root: &Path,
+    base_scene: &AuthoringScene,
+) -> Result<(RobloxAuthoringImport, PathBuf, bool), String> {
+    let bytes = fs::read(source_path)
+        .map_err(|error| format!("could not read {}: {error}", source_path.display()))?;
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let stem = source_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| project_asset_slug(stem).ok())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "roblox-place".to_owned());
+    let relative_source = format!("imports/roblox/{}-{}/source.rbxlx", stem, &hash[..8]);
+    let imported = import_roblox_authoring_scene(source_path, base_scene, &relative_source)?;
+    let destination = project_root.join(&relative_source);
+    let destination_was_new = !destination.exists();
+    if !destination_was_new && fs::read(&destination).ok().as_deref() != Some(bytes.as_slice()) {
+        return Err(format!(
+            "the preserved source path already contains different data: {}",
+            destination.display()
+        ));
+    }
+    if destination_was_new {
+        write_atomic(&destination, &bytes)?;
+    }
+    Ok((imported, destination, destination_was_new))
+}
+
 fn safe_project_path(project_root: &Path, relative: &str) -> Result<PathBuf, String> {
     let relative = Path::new(relative);
     if relative.is_absolute()
@@ -258,4 +293,51 @@ fn safe_project_path(project_root: &Path, relative: &str) -> Result<PathBuf, Str
         return Err("The Roblox source reference is not a safe project-relative path".to_owned());
     }
     Ok(project_root.join(relative))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn new_import_project_builds_the_selected_place_without_starter_objects() {
+        let root = std::env::temp_dir().join(format!(
+            "cubacadabra-studio-roblox-import-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let created = game_creator::create_import_game("Imported Place", &root).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../tools/crates/reference-import/tests/fixtures/roblox-roundtrip/kitchen-sink.rbxlx",
+        );
+        let (editable, preserved) =
+            StudioApp::import_roblox_place_into_project(&fixture, &created.project).unwrap();
+        assert!(editable > 0);
+        assert!(preserved > 0);
+
+        let sources = load_game_sources(Some(created.project.clone())).unwrap();
+        let scene = parse_authoring_scene(sources.authored_scene_source.as_ref().unwrap()).unwrap();
+        assert!(scene.nodes.iter().any(|node| {
+            node.source
+                .as_ref()
+                .is_some_and(|source| source.format == "roblox")
+        }));
+        assert!(!scene.nodes.iter().any(
+            |node| node.name.starts_with("Letter Cube") || node.name.starts_with("Loose Line")
+        ));
+        let manifest: serde_json::Value = serde_json::from_str(&sources.manifest_source).unwrap();
+        let blocks = manifest["worlds"]["starter-world"]["blocks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(blocks.len(), editable);
+        let preserved_source = cubacadabra_reference_import::roblox_source_file(&scene).unwrap();
+        assert!(created.project.join(preserved_source).is_file());
+        if let Some(package) = sources.temporary_package {
+            fs::remove_dir_all(package).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }

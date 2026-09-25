@@ -2,14 +2,35 @@ use super::*;
 use cubacadabra_scene::parse_authoring_scene;
 impl StudioApp {
     pub(crate) fn create_new_project(&mut self, title: &str, parent: &Path) {
-        let result = game_creator::create_game(title, parent);
-        match result {
-            Ok(created) => {
-                if let Some(pending) = &mut self.pending_roblox_import {
-                    if pending.project.is_none() {
-                        pending.project = Some(created.project.clone());
+        let import_source = self
+            .pending_roblox_import
+            .as_ref()
+            .filter(|pending| pending.project.is_none())
+            .map(|pending| pending.source.clone());
+        let result = if import_source.is_some() {
+            game_creator::create_import_game(title, parent)
+        } else {
+            game_creator::create_game(title, parent)
+        }
+        .and_then(|created| {
+            if let Some(source) = &import_source {
+                match Self::import_roblox_place_into_project(source, &created.project) {
+                    Ok(counts) => {
+                        if let Some(pending) = &mut self.pending_roblox_import {
+                            pending.project = Some(created.project.clone());
+                            pending.prepared_counts = Some(counts);
+                        }
+                    }
+                    Err(error) => {
+                        let _ = fs::remove_dir_all(&created.project);
+                        return Err(error);
                     }
                 }
+            }
+            Ok(created)
+        });
+        match result {
+            Ok(created) => {
                 if let Some(shell) = &mut self.shell {
                     shell.set_new_project_created(&created.project);
                 }

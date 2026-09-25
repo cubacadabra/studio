@@ -8,6 +8,10 @@ pub(crate) fn create_game(title: &str, parent: &Path) -> Result<CreateResult, St
     cubacadabra_project::create_game(title, parent, true)
 }
 
+pub(crate) fn create_import_game(title: &str, parent: &Path) -> Result<CreateResult, String> {
+    cubacadabra_project::create_import_game(title, parent, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::create_game;
