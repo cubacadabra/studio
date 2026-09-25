@@ -282,6 +282,7 @@ struct StudioApp {
         bool,
         Result<PreparedProjectLoad, String>,
     )>,
+    pending_roblox_import: Option<PendingRobloxImport>,
     renderer_uses_base_package_generation: bool,
     codex_checkpoint: Option<ProjectFileSnapshot>,
     codex_changes: Option<Vec<CodexFileChange>>,
@@ -312,6 +313,11 @@ struct StudioApp {
     pan_delta: (f32, f32),
     zoom_delta: f32,
     last_frame: Instant,
+}
+
+struct PendingRobloxImport {
+    source: PathBuf,
+    project: Option<PathBuf>,
 }
 
 #[cfg(test)]

@@ -132,6 +132,7 @@ impl StudioApp {
                 });
             }
             Err(error) => {
+                self.cancel_pending_roblox_import_for_project(&project);
                 if let Some(shell) = &mut self.shell {
                     shell.cancel_project_loading();
                     if codex_rebuild {
@@ -263,8 +264,10 @@ impl StudioApp {
                         shell.set_codex_preview_rebuilt();
                     }
                 }
+                self.finish_pending_roblox_import(&project);
             }
             Err(message) => {
+                self.cancel_pending_roblox_import_for_project(&project);
                 if let Some(shell) = &mut self.shell {
                     shell.cancel_project_loading();
                 }

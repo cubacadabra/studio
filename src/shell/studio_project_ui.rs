@@ -156,6 +156,9 @@ impl StudioShell {
         // Windows, where the native folder picker can leave users returning to
         // a dialog with no obvious close affordance if its contents overflow.
         if close_requested || response.should_close() {
+            if !self.new_project_create_requested {
+                self.new_project_cancelled = true;
+            }
             self.new_project_dialog_open = false;
         }
     }

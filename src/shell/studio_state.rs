@@ -889,6 +889,15 @@ impl StudioShell {
         std::mem::take(&mut self.roblox_export_requested)
     }
 
+    pub(crate) fn set_new_project_title(&mut self, title: String) {
+        self.new_project_title = title;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn take_new_project_cancelled(&mut self) -> bool {
+        std::mem::take(&mut self.new_project_cancelled)
+    }
+
     pub(crate) fn begin_project_loading(&mut self) {
         if self.project_loading.is_some() {
             return;

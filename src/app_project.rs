@@ -5,6 +5,11 @@ impl StudioApp {
         let result = game_creator::create_game(title, parent);
         match result {
             Ok(created) => {
+                if let Some(pending) = &mut self.pending_roblox_import {
+                    if pending.project.is_none() {
+                        pending.project = Some(created.project.clone());
+                    }
+                }
                 if let Some(shell) = &mut self.shell {
                     shell.set_new_project_created(&created.project);
                 }

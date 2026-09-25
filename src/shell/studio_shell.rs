@@ -202,6 +202,8 @@ impl StudioShell {
             roblox_export_requested: false,
             project_loading: None,
             new_project_dialog_open: false,
+            #[cfg(not(target_os = "macos"))]
+            new_project_cancelled: false,
             new_project_title: String::new(),
             new_project_parent: crate::default_new_project_parent(),
             #[cfg(not(target_os = "macos"))]

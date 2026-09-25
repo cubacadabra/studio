@@ -1,5 +1,6 @@
 use super::*;
 use crate::app_scene_migration::migrate_manifest_to_scene;
+use crate::shell::StudioCommand;
 use cubacadabra_reference_import::{
     import_roblox_authoring_scene, roblox_source_files, write_roblox_place_with_manifest,
 };
@@ -25,24 +26,63 @@ impl StudioApp {
     }
 
     fn choose_and_import_roblox_place(&mut self) {
-        if !self
-            .shell
-            .as_ref()
-            .is_some_and(StudioShell::project_is_editable)
-        {
-            self.set_roblox_error("Open a source project before importing a Roblox place");
-            return;
-        }
         let mut dialog = rfd::FileDialog::new()
             .set_title("Import from Roblox")
-            .add_filter("Roblox XML place", &["rbxlx"]);
+            .add_filter("Roblox XML place", &["rbxlx", "xml"]);
         if let Some(window) = &self.window {
             dialog = dialog.set_parent(window);
         }
         let Some(source_path) = dialog.pick_file() else {
             return;
         };
+        if !self
+            .shell
+            .as_ref()
+            .is_some_and(StudioShell::project_is_editable)
+        {
+            self.pending_roblox_import = Some(PendingRobloxImport {
+                source: source_path.clone(),
+                project: None,
+            });
+            if let Some(shell) = &mut self.shell {
+                shell.execute_command(StudioCommand::NewProject);
+                let title = source_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .filter(|stem| !stem.is_empty())
+                    .unwrap_or("Roblox Place");
+                shell.set_new_project_title(title.to_owned());
+            }
+            return;
+        }
         if let Err(error) = self.import_roblox_place(&source_path) {
+            self.set_roblox_error(&format!("Could not import Roblox place: {error}"));
+        }
+    }
+
+    pub(crate) fn cancel_pending_roblox_import(&mut self) {
+        self.pending_roblox_import = None;
+    }
+
+    pub(crate) fn cancel_pending_roblox_import_for_project(&mut self, project: &Path) {
+        if self
+            .pending_roblox_import
+            .as_ref()
+            .is_some_and(|pending| pending.project.as_deref() == Some(project))
+        {
+            self.cancel_pending_roblox_import();
+        }
+    }
+
+    pub(crate) fn finish_pending_roblox_import(&mut self, project: &Path) {
+        let Some(pending) = self.pending_roblox_import.take() else {
+            return;
+        };
+        if pending.project.as_deref() != Some(project) {
+            self.pending_roblox_import = Some(pending);
+            return;
+        }
+        if let Err(error) = self.import_roblox_place(&pending.source) {
             self.set_roblox_error(&format!("Could not import Roblox place: {error}"));
         }
     }

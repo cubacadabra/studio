@@ -477,6 +477,8 @@ pub(crate) struct StudioShell {
     roblox_export_requested: bool,
     project_loading: Option<ProjectLoadingState>,
     new_project_dialog_open: bool,
+    #[cfg(not(target_os = "macos"))]
+    new_project_cancelled: bool,
     new_project_title: String,
     new_project_parent: PathBuf,
     #[cfg(not(target_os = "macos"))]

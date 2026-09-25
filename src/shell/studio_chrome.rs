@@ -49,7 +49,7 @@ impl StudioShell {
                                     Icon::Open,
                                     "Roblox Place (.rbxlx)…",
                                     "",
-                                    self.project_editable,
+                                    true,
                                 )
                                 .clicked()
                                 {

@@ -17,6 +17,10 @@ impl StudioShell {
                     return;
                 }
                 self.new_project_dialog_open = true;
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.new_project_cancelled = false;
+                }
                 self.new_project_title.clear();
                 self.new_project_parent = crate::default_new_project_parent();
                 self.new_project_error = None;
@@ -44,13 +48,8 @@ impl StudioShell {
                 }
             }
             StudioCommand::ImportRobloxPlace => {
-                if self.project_editable {
-                    self.roblox_import_requested = true;
-                    self.notice = "Choose a Roblox XML place to import…".to_owned();
-                } else {
-                    self.notice =
-                        "Open a source project before importing a Roblox place".to_owned();
-                }
+                self.roblox_import_requested = true;
+                self.notice = "Choose a Roblox XML place to import…".to_owned();
             }
             StudioCommand::ExportRobloxPlace => {
                 if self.authoring_scene_source.is_some() {

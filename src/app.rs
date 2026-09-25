@@ -93,6 +93,7 @@ impl StudioApp {
             pending_project_load: None,
             background_project_ready: None,
             prepared_project_ready: None,
+            pending_roblox_import: None,
             renderer_uses_base_package_generation: true,
             codex_checkpoint: None,
             codex_changes: None,
@@ -327,13 +328,17 @@ impl StudioApp {
             .shell
             .as_mut()
             .and_then(StudioShell::take_native_new_project_dialog)
-            && let Some((title, parent)) =
-                macos::show_new_project_dialog(&title, &parent, error.as_deref())
         {
-            if let Some(shell) = &mut self.shell {
-                shell.set_new_project_draft(title.clone(), parent.clone());
+            if let Some((title, parent)) =
+                macos::show_new_project_dialog(&title, &parent, error.as_deref())
+            {
+                if let Some(shell) = &mut self.shell {
+                    shell.set_new_project_draft(title.clone(), parent.clone());
+                }
+                self.create_new_project(&title, &parent);
+            } else {
+                self.cancel_pending_roblox_import();
             }
-            self.create_new_project(&title, &parent);
         }
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
@@ -592,6 +597,14 @@ impl StudioApp {
             .is_some_and(StudioShell::take_morph_sidecar_import_request);
         if sidecar_import_requested {
             self.import_morph_sidecar();
+        }
+        #[cfg(not(target_os = "macos"))]
+        if self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_new_project_cancelled)
+        {
+            self.cancel_pending_roblox_import();
         }
         #[cfg(not(target_os = "macos"))]
         let new_project_folder_requested = self
