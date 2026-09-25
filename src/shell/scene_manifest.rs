@@ -19,8 +19,15 @@ pub(crate) fn authoring_scene_node(
     children_by_parent: &BTreeMap<&str, Vec<&AuthoringNode>>,
     asset_bounds: &BTreeMap<String, [f32; 3]>,
 ) -> SceneNode {
-    let (kind, icon) = if node.components.contains_key("primitive") {
-        ("Block", Icon::Object)
+    let (kind, icon) = if let Some(primitive) = node.components.get("primitive") {
+        (
+            if primitive.get("shape").and_then(Value::as_str) == Some("sphere") {
+                "Sphere"
+            } else {
+                "Block"
+            },
+            Icon::Object,
+        )
     } else if node.components.contains_key("render") {
         ("Mesh", Icon::Object)
     } else if node.components.contains_key("text") {
