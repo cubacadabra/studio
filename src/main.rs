@@ -478,12 +478,48 @@ mod tests {
         );
         assert_eq!(scene.nodes[0].id, "world-starter-world");
         assert!(scene.nodes[0].components.is_empty());
-        let client = cubacadabra_client::ClientSession::load(
+        let mut client = cubacadabra_client::ClientSession::load(
             &sources.manifest_source,
             &sources.script_source,
         )
         .expect("starter package should compile");
         assert_eq!(client.game_id(), "jump-course");
+        let ui_nodes = client.engine().studio_ui_nodes();
+        for (id, kind) in [
+            ("player-joystick", "Joystick"),
+            ("player-jump", "Button"),
+            ("player-run", "Button"),
+        ] {
+            assert!(
+                ui_nodes
+                    .iter()
+                    .any(|node| node.id == id && node.kind == kind),
+                "starter package should render {id} on iPad"
+            );
+        }
+        let engine = client.engine_mut();
+        engine.set_ui_viewport_values(768.0, 1024.0, 1.0, 24.0, 0.0, 20.0, 0.0);
+        assert!(engine.ui_pointer_event(1, 0, 80.0, 920.0));
+        assert!(engine.ui_pointer_event(1, 1, 110.0, 890.0));
+        let move_event: serde_json::Value =
+            serde_json::from_slice(&engine.poll_ui_event_json().expect("move event")).unwrap();
+        assert_eq!(move_event["action"], "player.move");
+        assert_eq!(move_event["x"], 0.5);
+        assert_eq!(move_event["y"], -0.5);
+        assert!(engine.ui_pointer_event(1, 2, 110.0, 890.0));
+        let release_event: serde_json::Value =
+            serde_json::from_slice(&engine.poll_ui_event_json().expect("release event")).unwrap();
+        assert_eq!(release_event["x"], 0.0);
+        assert_eq!(release_event["y"], 0.0);
+        for (pointer, y, action) in [(2, 898.0, "player.jump"), (3, 950.0, "player.run")] {
+            assert!(engine.ui_pointer_event(pointer, 0, 700.0, y));
+            assert!(engine.ui_pointer_event(pointer, 2, 700.0, y));
+            let event: serde_json::Value =
+                serde_json::from_slice(&engine.poll_ui_event_json().expect("button event"))
+                    .unwrap();
+            assert_eq!(event["action"], action);
+            assert_eq!(event["phase"], "activate");
+        }
         if let Some(package) = sources.temporary_package {
             let _ = fs::remove_dir_all(package);
         }
