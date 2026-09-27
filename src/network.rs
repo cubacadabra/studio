@@ -2,8 +2,10 @@ use std::{
     collections::VecDeque,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread,
@@ -19,6 +21,8 @@ use url::Url;
 const WEB_URL_ENV: &str = "CUBACADABRA_WEB_URL";
 const AUTH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const AUTH_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const MAX_CUBE_ZIP_BYTES: u64 = 25 * 1024 * 1024;
+static PUBLISH_BUILD_SERIAL: AtomicU64 = AtomicU64::new(0);
 
 const DEFAULT_BACKEND_URL: &str = match option_env!("CUBACADABRA_BACKEND_URL") {
     Some(url) => url,
@@ -56,6 +60,8 @@ pub enum BackendEvent {
         user: AuthUser,
     },
     AuthError(String),
+    AuthExpired,
+    GamePublished(Result<String, String>),
 }
 
 #[allow(dead_code)]
@@ -96,6 +102,7 @@ enum Command {
     },
     FetchMorphThumbnail(String),
     BeginBrowserAuth,
+    PublishGame(PathBuf),
     Shutdown,
 }
 
@@ -187,6 +194,10 @@ impl BackendClient {
 
     pub fn begin_browser_auth(&self) {
         let _ = self.commands.send(Command::BeginBrowserAuth);
+    }
+
+    pub fn publish_game(&self, project_root: PathBuf) {
+        let _ = self.commands.send(Command::PublishGame(project_root));
     }
 
     #[allow(dead_code)]
@@ -352,6 +363,30 @@ fn run_worker(
                     let events = events.clone();
                     let auth = Arc::clone(&auth);
                     thread::spawn(move || run_browser_auth(&backend_url, &events, &auth));
+                }
+                Ok(Command::PublishGame(project_root)) => {
+                    let backend_url = backend_url.clone();
+                    let events = events.clone();
+                    let auth = Arc::clone(&auth);
+                    thread::spawn(move || {
+                        let token = auth.lock().ok().and_then(|session| {
+                            session.as_ref().map(|session| session.access_token.clone())
+                        });
+                        let result = token
+                            .ok_or_else(|| "Sign in before publishing a game.".to_owned())
+                            .map_err(PublishError::from)
+                            .and_then(|token| publish_game(&backend_url, &project_root, &token));
+                        let result = result.map_err(|error| {
+                            if error.auth_expired {
+                                if let Ok(mut session) = auth.lock() {
+                                    session.take();
+                                }
+                                let _ = events.send(BackendEvent::AuthExpired);
+                            }
+                            error.message
+                        });
+                        let _ = events.send(BackendEvent::GamePublished(result));
+                    });
                 }
                 Ok(Command::Shutdown) | Err(TryRecvError::Disconnected) => {
                     running = false;
@@ -605,6 +640,131 @@ fn fetch_http_bytes(base_url: &Url, raw_url: &str) -> Result<Vec<u8>, String> {
         .body_mut()
         .read_to_vec()
         .map_err(|error| format!("morph pack response failed: {error}"))
+}
+
+#[derive(Debug)]
+struct PublishError {
+    message: String,
+    auth_expired: bool,
+}
+
+impl From<String> for PublishError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            auth_expired: false,
+        }
+    }
+}
+
+impl From<&str> for PublishError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+fn publish_game(
+    backend_url: &Url,
+    project_root: &std::path::Path,
+    token: &str,
+) -> Result<String, PublishError> {
+    let working_dir = std::env::temp_dir().join(format!(
+        "cubacadabra-publish-{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("Could not prepare game build: {error}"))?
+            .as_nanos(),
+        PUBLISH_BUILD_SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let zip_path = working_dir.join("game.zip");
+        cubacadabra_builder::build_game(&cubacadabra_builder::BuildOptions {
+            source_root: project_root.join("src"),
+            manifest_path: project_root.join("manifest.json"),
+            output: working_dir.join("package"),
+            zip_path: Some(zip_path.clone()),
+        })
+        .map_err(|error| format!("Could not build game: {error}"))?;
+        let size = std::fs::metadata(&zip_path)
+            .map_err(|error| format!("Could not read built ZIP: {error}"))?
+            .len();
+        if size > MAX_CUBE_ZIP_BYTES {
+            return Err("The built ZIP is larger than the 25 MiB upload limit.".into());
+        }
+        let archive = std::fs::read(&zip_path)
+            .map_err(|error| format!("Could not read built ZIP: {error}"))?;
+        let endpoint = http_url(backend_url, "/cubes/upload")?;
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(Duration::from_secs(120)))
+                .build(),
+        );
+        let mut response = agent
+            .post(endpoint.as_str())
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/zip")
+            .header("Authorization", &format!("Bearer {token}"))
+            .send(archive.as_slice())
+            .map_err(|error| format!("Could not upload game: {error}"))?;
+        let source = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|error| format!("Could not read upload response: {error}"))?;
+        let value: serde_json::Value = serde_json::from_str(&source)
+            .map_err(|error| format!("Upload response was invalid: {error}"))?;
+        if !response.status().is_success() {
+            let code = value
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            return Err(PublishError {
+                message: cube_upload_error(code),
+                auth_expired: code == "not_authenticated",
+            });
+        }
+        let cube = value
+            .get("cube")
+            .ok_or("Upload response did not include a game.")?;
+        let name = cube
+            .get("displayName")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("Upload response did not include a game name.")?;
+        let version = cube
+            .get("version")
+            .ok_or("Upload response did not include a game version.")?;
+        let version = version
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| version.to_string());
+        Ok(format!("{name} {version} was published successfully."))
+    })();
+    let _ = std::fs::remove_dir_all(&working_dir);
+    result
+}
+
+fn cube_upload_error(code: &str) -> String {
+    match code {
+        "not_authenticated" => "Your session has expired. Sign in again.".to_owned(),
+        "uploads_not_allowed_in_free_plan" => {
+            "Publishing requires a Creator Pro or Studio developer plan.".to_owned()
+        }
+        "cube_zip_too_large" => "The built ZIP is larger than the 25 MiB upload limit.".to_owned(),
+        "cube_already_exists" => {
+            "This game version is already published to your account.".to_owned()
+        }
+        "cube_id_taken" => {
+            "This game ID belongs to another creator. Change the ID in manifest.json.".to_owned()
+        }
+        "invalid_cube_id" => "The game ID in manifest.json is invalid.".to_owned(),
+        "invalid_cube_version" => "The game version in manifest.json is invalid.".to_owned(),
+        "invalid_display_name" => "The game display name in manifest.json is invalid.".to_owned(),
+        "cube_upload_unavailable" => {
+            "Publishing is temporarily unavailable. Try again later.".to_owned()
+        }
+        _ => "The game ZIP was rejected. Check the project and try again.".to_owned(),
+    }
 }
 
 fn run_browser_auth(
@@ -868,6 +1028,134 @@ fn disconnect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publish_game_builds_zip_and_uploads_with_studio_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("upload request did not arrive: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0u8; 8192];
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+                if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    break end + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            assert!(headers.starts_with("post /cubes/upload http/1.1"));
+            assert!(headers.contains("authorization: bearer test-token\r\n"));
+            assert!(headers.contains("content-type: application/zip\r\n"));
+            let length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length: "))
+                .unwrap()
+                .trim()
+                .parse::<usize>()
+                .unwrap();
+            while request.len() - header_end < length {
+                let mut chunk = [0u8; 8192];
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+            }
+            assert_eq!(&request[header_end..header_end + 2], b"PK");
+            let body = br#"{"ok":true,"cube":{"id":"conformance-game","displayName":"Conformance Fixture","version":"0.3.0"}}"#;
+            write!(stream, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tools/tests/fixtures/conformance-game");
+        let backend_url = Url::parse(&format!("http://{server_addr}")).unwrap();
+        let result = publish_game(&backend_url, &fixture, "test-token");
+        let message = result.unwrap();
+        assert_eq!(
+            message,
+            "Conformance Fixture 0.3.0 was published successfully."
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn publish_game_shows_backend_plan_rejection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("upload request did not arrive: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0u8; 8192];
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+                if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    break end + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length: "))
+                .unwrap()
+                .trim()
+                .parse::<usize>()
+                .unwrap();
+            while request.len() - header_end < length {
+                let mut chunk = [0u8; 8192];
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+            }
+            let body = br#"{"error":"uploads_not_allowed_in_free_plan"}"#;
+            write!(stream, "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tools/tests/fixtures/conformance-game");
+        let backend_url = Url::parse(&format!("http://{server_addr}")).unwrap();
+        let result = publish_game(&backend_url, &fixture, "test-token");
+        let message = result.unwrap_err().message;
+        assert_eq!(
+            message,
+            "Publishing requires a Creator Pro or Studio developer plan."
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn published_packs_require_both_the_expected_hash_and_length() {

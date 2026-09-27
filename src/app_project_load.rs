@@ -479,6 +479,9 @@ impl StudioApp {
             shell.set_codex_chat_error(message);
         }
         shell.set_recent_projects(self.recent_projects.clone());
+        if let Some(session) = self.network.auth_session() {
+            shell.set_auth_completed(session.user);
+        }
         self.shell = Some(shell);
         if let Some(local_catalog) = self.local_morph_catalog.take() {
             self.install_local_morphs(local_catalog)?;

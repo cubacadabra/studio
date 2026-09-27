@@ -150,6 +150,8 @@ impl StudioShell {
             auth_requested: false,
             auth_pending: false,
             auth_user: None,
+            publish_game_requested: false,
+            publish_game_pending: false,
             chatgpt_auth_requested: false,
             chatgpt_pending: false,
             chatgpt_available: true,

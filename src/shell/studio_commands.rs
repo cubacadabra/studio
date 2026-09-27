@@ -47,6 +47,11 @@ impl StudioShell {
                     self.notice = "This preview is read-only".to_owned();
                 }
             }
+            StudioCommand::PublishGame => {
+                if self.can_publish_game() {
+                    self.publish_game_requested = true;
+                }
+            }
             StudioCommand::ImportRobloxPlace => {
                 self.roblox_import_requested = true;
                 self.notice = "Choose a Roblox XML place to import…".to_owned();

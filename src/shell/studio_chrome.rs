@@ -41,6 +41,10 @@ impl StudioShell {
                                 self.execute_command(StudioCommand::Save);
                                 ui.close();
                             }
+                            if menu_entry(ui, Icon::Save, "Publish Game", "", self.can_publish_game()).clicked() {
+                                self.execute_command(StudioCommand::PublishGame);
+                                ui.close();
+                            }
                             ui.separator();
                             ui.menu_button("Import From", |ui| {
                                 ui.set_min_width(220.0);

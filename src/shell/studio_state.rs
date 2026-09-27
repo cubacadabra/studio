@@ -450,6 +450,21 @@ impl StudioShell {
         std::mem::take(&mut self.save_requested)
     }
 
+    pub(crate) fn take_publish_game_request(&mut self) -> bool {
+        std::mem::take(&mut self.publish_game_requested)
+    }
+
+    pub(crate) fn set_publish_game_pending(&mut self, pending: bool) {
+        self.publish_game_pending = pending;
+    }
+
+    pub(crate) fn can_publish_game(&self) -> bool {
+        self.auth_user.is_some()
+            && self.project_editable
+            && self.project_loading.is_none()
+            && !self.publish_game_pending
+    }
+
     pub(crate) fn take_undo_request(&mut self) -> bool {
         std::mem::take(&mut self.undo_requested)
     }
@@ -533,6 +548,10 @@ impl StudioShell {
     pub(crate) fn set_auth_error(&mut self, message: String) {
         self.auth_pending = false;
         self.notice = message;
+    }
+
+    pub(crate) fn clear_auth_user(&mut self) {
+        self.auth_user = None;
     }
 
     pub(crate) fn take_chatgpt_auth_request(&mut self) -> bool {

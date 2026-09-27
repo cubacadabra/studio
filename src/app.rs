@@ -279,6 +279,12 @@ impl StudioApp {
         self.prepare_ready_project_runtime();
         self.poll_project_load();
         #[cfg(target_os = "macos")]
+        macos::set_publish_game_enabled(
+            self.shell
+                .as_ref()
+                .is_some_and(StudioShell::can_publish_game),
+        );
+        #[cfg(target_os = "macos")]
         while let Some(command) = macos::take_menu_action() {
             if let Some(shell) = &mut self.shell {
                 shell.execute_command(command);
@@ -554,6 +560,18 @@ impl StudioApp {
                     shell.apply_pending_project_action(action);
                 }
             }
+        }
+        if self
+            .shell
+            .as_mut()
+            .is_some_and(StudioShell::take_publish_game_request)
+            && self.save_project_source()
+        {
+            if let Some(shell) = &mut self.shell {
+                shell.set_publish_game_pending(true);
+                shell.set_notice("Building and publishing game…".to_owned());
+            }
+            self.network.publish_game(self.project_root.clone());
         }
         let rebuild_requested = self
             .shell

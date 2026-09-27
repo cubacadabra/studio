@@ -61,6 +61,19 @@ impl StudioApp {
                         shell.set_auth_error(message);
                     }
                 }
+                BackendEvent::AuthExpired => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.clear_auth_user();
+                    }
+                }
+                BackendEvent::GamePublished(result) => {
+                    if let Some(shell) = &mut self.shell {
+                        shell.set_publish_game_pending(false);
+                        shell.set_notice(match result {
+                            Ok(message) | Err(message) => message,
+                        });
+                    }
+                }
             }
         }
     }

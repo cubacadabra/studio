@@ -141,7 +141,11 @@ mod tests {
         assert_eq!(manifest["effects"]["version"], 1);
         assert_eq!(
             manifest["effects"]["templates"].as_object().unwrap().len(),
-            22
+            42
+        );
+        assert_eq!(
+            manifest["effects"]["templates"]["letter-line-1"]["nodes"][1]["attachedTo"],
+            "starter-cube-1"
         );
         assert!(
             manifest["effects"]["templates"]["letter-line-1"]["nodes"]

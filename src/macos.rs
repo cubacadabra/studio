@@ -1,4 +1,4 @@
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::VecDeque;
 
 use objc2::rc::Retained;
@@ -22,6 +22,7 @@ const LOGO_BYTES: &[u8] = include_bytes!("../assets/logo.png");
 const NEW_PROJECT_TAG: isize = 1;
 const OPEN_PROJECT_TAG: isize = 2;
 const SAVE_TAG: isize = 3;
+const PUBLISH_GAME_TAG: isize = 11;
 const IMPORT_ROBLOX_PLACE_TAG: isize = 9;
 const EXPORT_ROBLOX_PLACE_TAG: isize = 10;
 const UNDO_TAG: isize = 4;
@@ -49,6 +50,11 @@ define_class!(
             if let Some(command) = command_for_tag(sender.tag()) {
                 MENU_ACTIONS.with(|actions| actions.borrow_mut().push_back(command));
             }
+        }
+
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            item.tag() != PUBLISH_GAME_TAG || PUBLISH_GAME_ENABLED.with(Cell::get)
         }
     }
 );
@@ -88,6 +94,7 @@ define_class!(
 thread_local! {
     static MENU_TARGET: OnceCell<Retained<MenuTarget>> = const { OnceCell::new() };
     static MENU_ACTIONS: RefCell<VecDeque<StudioCommand>> = const { RefCell::new(VecDeque::new()) };
+    static PUBLISH_GAME_ENABLED: Cell<bool> = const { Cell::new(false) };
 }
 
 impl MenuTarget {
@@ -285,6 +292,19 @@ pub(crate) fn install_native_menu() {
     });
 }
 
+pub(crate) fn set_publish_game_enabled(enabled: bool) {
+    PUBLISH_GAME_ENABLED.with(|state| state.set(enabled));
+    let application = NSApplication::sharedApplication(main_thread_marker());
+    if let Some(item) = application
+        .mainMenu()
+        .and_then(|menu| menu.itemAtIndex(1))
+        .and_then(|item| item.submenu())
+        .and_then(|menu| menu.itemWithTag(PUBLISH_GAME_TAG))
+    {
+        item.setEnabled(enabled);
+    }
+}
+
 fn configure_application_menu(menu: &NSMenu, _main_thread: MainThreadMarker, target: &AnyObject) {
     let Some(about_item) = menu.itemAtIndex(0) else {
         log::warn!("macOS menu installation skipped: application menu has no About item");
@@ -337,6 +357,16 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
         SAVE_TAG,
         None,
     ));
+    let publish_item = studio_menu_item(
+        main_thread,
+        target,
+        ns_string!("Publish Game"),
+        ns_string!(""),
+        PUBLISH_GAME_TAG,
+        None,
+    );
+    publish_item.setEnabled(false);
+    menu.addItem(&publish_item);
     menu.addItem(&NSMenuItem::separatorItem(main_thread));
     let import_menu = NSMenu::new(main_thread);
     import_menu.setTitle(ns_string!("Import From"));
@@ -535,6 +565,7 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         NEW_PROJECT_TAG => Some(StudioCommand::NewProject),
         OPEN_PROJECT_TAG => Some(StudioCommand::OpenProject),
         SAVE_TAG => Some(StudioCommand::Save),
+        PUBLISH_GAME_TAG => Some(StudioCommand::PublishGame),
         IMPORT_ROBLOX_PLACE_TAG => Some(StudioCommand::ImportRobloxPlace),
         EXPORT_ROBLOX_PLACE_TAG => Some(StudioCommand::ExportRobloxPlace),
         UNDO_TAG => Some(StudioCommand::Undo),
