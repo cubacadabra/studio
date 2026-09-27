@@ -955,38 +955,6 @@ impl StudioShell {
 }
 
 fn play_grid_rects(viewport: Rect, players: usize) -> Vec<Rect> {
-    if players == 9 {
-        let side = viewport.width().min(viewport.height());
-        let gap = 2.0_f32.min(side / 10.0);
-        let small = (side - 4.0 * gap) / 5.0;
-        let large = 3.0 * small + 2.0 * gap;
-        let origin = viewport.center() - Vec2::splat(side / 2.0);
-        let center = origin + Vec2::splat(small + gap);
-        let mut tiles = vec![Rect::from_min_size(center, Vec2::splat(large))];
-        for column in 0..3 {
-            tiles.push(Rect::from_min_size(
-                egui::pos2(center.x + column as f32 * (small + gap), origin.y),
-                Vec2::splat(small),
-            ));
-        }
-        for column in 0..3 {
-            tiles.push(Rect::from_min_size(
-                egui::pos2(
-                    center.x + column as f32 * (small + gap),
-                    center.y + large + gap,
-                ),
-                Vec2::splat(small),
-            ));
-        }
-        for x in [origin.x, center.x + large + gap] {
-            tiles.push(Rect::from_min_size(
-                egui::pos2(x, center.y + (large - small) / 2.0),
-                Vec2::splat(small),
-            ));
-        }
-        return tiles;
-    }
-
     let columns = 3;
     let rows = players.div_ceil(columns);
     let gap = 2.0;
@@ -994,11 +962,29 @@ fn play_grid_rects(viewport: Rect, players: usize) -> Vec<Rect> {
     let height = (viewport.height() - gap * (rows - 1) as f32) / rows as f32;
     (0..players)
         .map(|index| {
-            let column = index % columns;
-            let row = index / columns;
+            // Keep Player 1 in the center while filling all nine grid cells.
+            let cell = if players == 9 {
+                [4, 0, 1, 2, 6, 7, 8, 3, 5][index]
+            } else {
+                index
+            };
+            let column = cell % columns;
+            let row = cell / columns;
             let min = viewport.min
                 + egui::vec2(column as f32 * (width + gap), row as f32 * (height + gap));
-            Rect::from_min_size(min, egui::vec2(width, height))
+            let max = egui::pos2(
+                if column == columns - 1 {
+                    viewport.max.x
+                } else {
+                    min.x + width
+                },
+                if row == rows - 1 {
+                    viewport.max.y
+                } else {
+                    min.y + height
+                },
+            );
+            Rect::from_min_max(min, max)
         })
         .collect()
 }
@@ -1062,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn nine_player_layout_surrounds_a_large_center_square() {
+    fn nine_player_layout_fills_three_equal_columns_and_rows() {
         for size in [
             egui::vec2(390.0, 844.0),
             egui::vec2(768.0, 1024.0),
@@ -1072,16 +1058,20 @@ mod tests {
             let viewport = Rect::from_min_size(Pos2::ZERO, size);
             let tiles = play_grid_rects(viewport, 9);
             let center = tiles[0];
-            assert!(center.width() > tiles[1].width());
-            assert!((center.width() - center.height()).abs() < 0.001);
             assert!((center.center() - viewport.center()).length() < 0.001);
             assert!(tiles.iter().all(|tile| {
-                viewport.contains_rect(*tile) && (tile.width() - tile.height()).abs() < 0.001
+                viewport.contains_rect(*tile)
+                    && (tile.width() - center.width()).abs() < 0.001
+                    && (tile.height() - center.height()).abs() < 0.001
             }));
             assert!(tiles[1..4].iter().all(|tile| tile.max.y < center.min.y));
             assert!(tiles[4..7].iter().all(|tile| tile.min.y > center.max.y));
             assert!(tiles[7].max.x < center.min.x);
             assert!(tiles[8].min.x > center.max.x);
+            assert_eq!(tiles[7].min.x, viewport.min.x);
+            assert_eq!(tiles[8].max.x, viewport.max.x);
+            assert_eq!(tiles[1].min.y, viewport.min.y);
+            assert_eq!(tiles[4].max.y, viewport.max.y);
         }
     }
 

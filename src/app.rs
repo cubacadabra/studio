@@ -714,6 +714,14 @@ impl StudioApp {
             .as_ref()
             .is_some_and(StudioShell::is_project_loading);
         let playing = !project_loading && self.shell.as_ref().is_none_or(StudioShell::is_playing);
+        self.client
+            .engine_mut()
+            .set_studio_play_controls_hidden(playing);
+        for peer in &mut self.preview_peers {
+            peer.client
+                .engine_mut()
+                .set_studio_play_controls_hidden(playing);
+        }
         let morph_preview = !project_loading
             && self
                 .shell
