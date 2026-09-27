@@ -1,5 +1,143 @@
 use super::*;
 
+#[derive(Default)]
+pub(crate) struct PreviewBotInput {
+    forward: f32,
+    strafe: f32,
+    sprint: bool,
+    jump: bool,
+    look_x: f32,
+}
+
+impl PreviewBotInput {
+    pub(crate) fn apply(self, client: &mut ClientSession) {
+        client.engine_mut().set_input_values(
+            self.forward,
+            self.strafe,
+            self.sprint,
+            self.jump,
+            false,
+            self.look_x,
+            0.0,
+            0.0,
+        );
+    }
+}
+
+pub(crate) struct PreviewAutopilot {
+    random_state: u64,
+    decision_in: f32,
+    jump_in: f32,
+    probe_in: f32,
+    probe_position: Option<[f32; 2]>,
+    forward: f32,
+    strafe: f32,
+    sprint: bool,
+    look_rate: f32,
+}
+
+impl PreviewAutopilot {
+    pub(crate) fn new(index: usize) -> Self {
+        Self {
+            random_state: 0x9e37_79b9_7f4a_7c15_u64
+                ^ (index as u64 + 1).wrapping_mul(0xbf58_476d_1ce4_e5b9),
+            decision_in: 0.0,
+            jump_in: 1.5 + index as f32 * 0.3,
+            probe_in: 1.0,
+            probe_position: None,
+            forward: 0.0,
+            strafe: 0.0,
+            sprint: false,
+            look_rate: 0.0,
+        }
+    }
+
+    pub(crate) fn reset_after_control(&mut self) {
+        self.decision_in = 0.0;
+        self.jump_in = 1.5;
+        self.probe_in = 1.0;
+        self.probe_position = None;
+        self.forward = 0.0;
+        self.strafe = 0.0;
+        self.sprint = false;
+        self.look_rate = 0.0;
+    }
+
+    pub(crate) fn moving(&self) -> bool {
+        self.forward.abs() + self.strafe.abs() > 0.01
+    }
+
+    pub(crate) fn sprinting(&self) -> bool {
+        self.moving() && self.sprint
+    }
+
+    pub(crate) fn next_input(&mut self, delta: f32, snapshot: &[f32]) -> PreviewBotInput {
+        let delta = delta.clamp(0.0, 0.1);
+        self.decision_in -= delta;
+        self.jump_in -= delta;
+        self.probe_in -= delta;
+
+        let mut blocked = false;
+        if let [x, _, z, ..] = snapshot {
+            let position = [*x, *z];
+            if self.probe_in <= 0.0 {
+                if let Some(previous) = self.probe_position {
+                    let distance = (position[0] - previous[0]).hypot(position[1] - previous[1]);
+                    blocked = self.moving() && distance < 0.25;
+                }
+                self.probe_position = Some(position);
+                self.probe_in = 1.0;
+            } else if self.probe_position.is_none() {
+                self.probe_position = Some(position);
+            }
+        }
+
+        if self.decision_in <= 0.0 || blocked {
+            if !blocked && self.random_unit() < 0.12 {
+                self.forward = 0.0;
+                self.strafe = 0.0;
+                self.sprint = false;
+                self.look_rate = self.random_between(-25.0, 25.0);
+                self.decision_in = self.random_between(0.4, 0.9);
+            } else {
+                self.forward = self.random_between(0.65, 1.0);
+                self.strafe = self.random_between(-0.5, 0.5);
+                self.sprint = self.random_unit() < 0.16;
+                self.look_rate = if blocked {
+                    self.random_between(90.0, 145.0)
+                        * if self.random_unit() < 0.5 { -1.0 } else { 1.0 }
+                } else {
+                    self.random_between(-65.0, 65.0)
+                };
+                self.decision_in = self.random_between(1.2, 2.8);
+            }
+        }
+
+        let jump = self.moving() && (blocked || self.jump_in <= 0.0);
+        if jump {
+            self.jump_in = self.random_between(2.8, 5.8);
+        }
+        PreviewBotInput {
+            forward: self.forward,
+            strafe: self.strafe,
+            sprint: self.sprinting(),
+            jump,
+            look_x: self.look_rate * delta,
+        }
+    }
+
+    fn random_unit(&mut self) -> f32 {
+        self.random_state ^= self.random_state << 13;
+        self.random_state ^= self.random_state >> 7;
+        self.random_state ^= self.random_state << 17;
+        (self.random_state >> 40) as f32 / (1_u32 << 24) as f32
+    }
+
+    fn random_between(&mut self, min: f32, max: f32) -> f32 {
+        min + (max - min) * self.random_unit()
+    }
+}
+
 impl StudioApp {
     pub(crate) fn active_client_mut(&mut self) -> &mut ClientSession {
         let selected = self
@@ -81,7 +219,11 @@ impl StudioApp {
                     return;
                 }
             };
-            self.preview_peers.push(PreviewPeer { client, network });
+            self.preview_peers.push(PreviewPeer {
+                client,
+                network,
+                autopilot: PreviewAutopilot::new(self.preview_peers.len() + 1),
+            });
         }
     }
 
@@ -117,5 +259,31 @@ impl StudioApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_autopilot_moves_and_jumps_through_player_input() {
+        let mut client =
+            ClientSession::load(STANDALONE_PREVIEW_MANIFEST, STANDALONE_PREVIEW_SCRIPT)
+                .expect("preview client");
+        let start = client.engine().snapshot()[..3].to_vec();
+        let mut autopilot = PreviewAutopilot::new(1);
+        let mut farthest = 0.0_f32;
+        let mut highest = 0.0_f32;
+        for _ in 0..360 {
+            let input = autopilot.next_input(1.0 / 60.0, client.engine().snapshot());
+            input.apply(&mut client);
+            client.step(1.0 / 60.0);
+            let position = client.engine().snapshot();
+            farthest = farthest.max((position[0] - start[0]).hypot(position[2] - start[2]));
+            highest = highest.max(position[1] - start[1]);
+        }
+        assert!(farthest > 1.0, "uncontrolled player should roam");
+        assert!(highest > 0.2, "uncontrolled player should jump");
     }
 }

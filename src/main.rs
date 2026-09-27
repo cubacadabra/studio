@@ -43,6 +43,7 @@ mod shell;
 mod wardrobe;
 #[cfg(test)]
 mod wardrobe_tests;
+use app_multiplay::{PreviewAutopilot, PreviewBotInput};
 use assets::*;
 use codex::{CodexClient, CodexEvent};
 use cubacadabra_morphs::decode_morph_pack;
@@ -150,6 +151,7 @@ struct PreparedProjectLoad {
 struct PreviewPeer {
     client: ClientSession,
     network: BackendClient,
+    autopilot: PreviewAutopilot,
 }
 
 enum ProjectLoadEvent {
@@ -266,6 +268,7 @@ struct StudioApp {
     codex: CodexClient,
     network: BackendClient,
     client: ClientSession,
+    primary_autopilot: PreviewAutopilot,
     preview_peers: Vec<PreviewPeer>,
     preview_namespace: Option<String>,
     about_preview: cubacadabra_about_preview::AboutPreview,

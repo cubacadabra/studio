@@ -412,6 +412,7 @@ impl StudioApp {
         self.world_models = world_models;
         self.network = network;
         self.client = client;
+        self.primary_autopilot = PreviewAutopilot::new(0);
         self.preview_peers.clear();
         self.preview_namespace = None;
         self.renderer_uses_base_package_generation = client_uses_base_package_generation;

@@ -88,6 +88,7 @@ impl StudioApp {
             codex,
             network,
             client,
+            primary_autopilot: PreviewAutopilot::new(0),
             preview_peers: Vec::new(),
             preview_namespace: None,
             about_preview,
@@ -798,14 +799,26 @@ impl StudioApp {
             .shell
             .as_ref()
             .map_or(0, StudioShell::controlled_player);
+        let bot_preview = playing && !self.preview_peers.is_empty();
         if controlled_player != 0 {
-            self.client
-                .set_input_values(0.0, 0.0, false, false, false, 0.0, 0.0, 0.0);
+            let input = if bot_preview {
+                self.primary_autopilot
+                    .next_input(delta, self.client.engine().snapshot())
+            } else {
+                PreviewBotInput::default()
+            };
+            input.apply(&mut self.client);
+        } else {
+            self.primary_autopilot.reset_after_control();
         }
         for (index, peer) in self.preview_peers.iter_mut().enumerate() {
             if controlled_player != index + 1 {
-                peer.client
-                    .set_input_values(0.0, 0.0, false, false, false, 0.0, 0.0, 0.0);
+                let input = peer
+                    .autopilot
+                    .next_input(delta, peer.client.engine().snapshot());
+                input.apply(&mut peer.client);
+            } else {
+                peer.autopilot.reset_after_control();
             }
         }
         self.jump_queued = false;
@@ -830,8 +843,12 @@ impl StudioApp {
         self.dispatch_preview_peer_actions();
         if !self.standalone_preview
             && let Some(movement) = self.client.local_movement(
-                controlled_player == 0 && length > 0.01,
-                controlled_player == 0 && playing && sprint,
+                (controlled_player == 0 && length > 0.01)
+                    || (bot_preview && controlled_player != 0 && self.primary_autopilot.moving()),
+                (controlled_player == 0 && playing && sprint)
+                    || (bot_preview
+                        && controlled_player != 0
+                        && self.primary_autopilot.sprinting()),
             )
         {
             self.network.send_move(
@@ -846,8 +863,10 @@ impl StudioApp {
         }
         for (index, peer) in self.preview_peers.iter_mut().enumerate() {
             if let Some(movement) = peer.client.local_movement(
-                controlled_player == index + 1 && length > 0.01,
-                controlled_player == index + 1 && playing && sprint,
+                (controlled_player == index + 1 && length > 0.01)
+                    || (controlled_player != index + 1 && peer.autopilot.moving()),
+                (controlled_player == index + 1 && playing && sprint)
+                    || (controlled_player != index + 1 && peer.autopilot.sprinting()),
             ) {
                 peer.network.send_move(
                     movement.position[0],
