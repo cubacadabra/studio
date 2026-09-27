@@ -207,12 +207,17 @@ impl StudioApp {
                 &background.sources.manifest_source,
                 &background.sources.script_source,
             ) {
-                Ok(client) => match BackendClient::new(client.game_id()) {
-                    Ok(network) => Ok(PreparedProjectLoad {
-                        background,
-                        client,
-                        network,
-                    }),
+                Ok(mut client) => match BackendClient::new(client.game_id()) {
+                    Ok(network) => {
+                        client
+                            .engine_mut()
+                            .set_studio_movement_joystick_visible(false);
+                        Ok(PreparedProjectLoad {
+                            background,
+                            client,
+                            network,
+                        })
+                    }
                     Err(error) => {
                         remove_temporary_package(&background.sources);
                         Err(error)

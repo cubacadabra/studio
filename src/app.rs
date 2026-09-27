@@ -36,6 +36,9 @@ impl StudioApp {
             )
         };
         let mut client = ClientSession::load(&manifest_source, &script_source)?;
+        client
+            .engine_mut()
+            .set_studio_movement_joystick_visible(false);
         let about_preview = cubacadabra_about_preview::AboutPreview::new().map_err(StudioError)?;
         if standalone_preview {
             let position = client

@@ -59,7 +59,12 @@ impl StudioApp {
             .expect("preview namespace");
         for _ in 1..count {
             let client = match ClientSession::load(&self.manifest_source, &self.script_source) {
-                Ok(client) => client,
+                Ok(mut client) => {
+                    client
+                        .engine_mut()
+                        .set_studio_movement_joystick_visible(false);
+                    client
+                }
                 Err(error) => {
                     self.preview_start_failed(format!(
                         "Could not start the other players: {error}"
