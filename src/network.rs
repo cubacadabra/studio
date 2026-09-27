@@ -92,6 +92,7 @@ struct MoveCommand {
 }
 
 enum Command {
+    SetGame(String),
     SetWorld(String),
     Send(String),
     Move(MoveCommand),
@@ -150,6 +151,10 @@ impl BackendClient {
         let world_id = world_id.into();
         debug!("queueing world selection: world_id={}", world_id);
         let _ = self.commands.send(Command::SetWorld(world_id));
+    }
+
+    pub fn set_game_id(&self, game_id: impl Into<String>) {
+        let _ = self.commands.send(Command::SetGame(game_id.into()));
     }
 
     pub fn send(&self, message: String) {
@@ -275,7 +280,7 @@ fn encode_path_segment(value: &str) -> String {
 
 fn run_worker(
     backend_url: Url,
-    game_id: String,
+    mut game_id: String,
     commands: Receiver<Command>,
     events: Sender<BackendEvent>,
     auth: Arc<Mutex<Option<AuthSession>>>,
@@ -295,6 +300,15 @@ fn run_worker(
     while running {
         loop {
             match commands.try_recv() {
+                Ok(Command::SetGame(next_game_id)) => {
+                    if game_id != next_game_id {
+                        game_id = next_game_id;
+                        disconnect(&mut socket, &mut connected_world_id, &events);
+                        pending_messages.clear();
+                        last_sent_move = None;
+                        next_connect_at = Instant::now();
+                    }
+                }
                 Ok(Command::SetWorld(world_id)) => {
                     if desired_world_id.as_deref() != Some(world_id.as_str()) {
                         debug!(

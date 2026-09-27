@@ -166,6 +166,24 @@ impl StudioShell {
                                 );
                             }
                             let play_icon = if self.playing { Icon::Stop } else { Icon::Play };
+                            if !self.playing {
+                                ui.menu_button("▾", |ui| {
+                                    ui.set_min_width(160.0);
+                                    for players in [1, 3, 6, 9] {
+                                        let label = if players == 1 {
+                                            "Play solo".to_owned()
+                                        } else {
+                                            format!("Play with {players} players")
+                                        };
+                                        if ui.button(label).clicked() {
+                                            self.start_play(players);
+                                            ui.close();
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text("Choose player count");
+                            }
                             let play_button = toolbar_button(ui, play_icon, play_label, self.playing)
                                 .on_hover_text(if self.project_dirty || self.preview_stale {
                                     "Save the authoring scene, rebuild the preview, and enter Play mode"
@@ -176,12 +194,8 @@ impl StudioShell {
                                 if self.playing {
                                     self.set_playing(false);
                                     self.notice = "Play session stopped".to_owned();
-                                } else if self.project_dirty || self.preview_stale {
-                                    self.request_rebuild_and_play();
                                 } else {
-                                    self.playing = true;
-                                    self.restart_requested = true;
-                                    self.notice = "Restarting preview…".to_owned();
+                                    self.start_play(1);
                                 }
                             }
                             if self.project_editable

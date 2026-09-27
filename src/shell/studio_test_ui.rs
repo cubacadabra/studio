@@ -191,6 +191,27 @@ impl StudioShell {
                     egui::pos2(available.min.x + 1.0, header.max.y),
                     egui::pos2(available.max.x - 1.0, available.max.y - 1.0),
                 );
+                self.play_viewports.clear();
+                if self.playing && self.play_player_count > 1 {
+                    self.play_viewports = play_grid_rects(self.runtime_viewport, self.play_player_count);
+                    for (index, tile) in self.play_viewports.iter().copied().enumerate() {
+                        let selected = index == self.controlled_player;
+                        ui.painter().rect_stroke(
+                            tile,
+                            0.0,
+                            Stroke::new(if selected { 3.0 } else { 1.0 }, if selected { colors.accent } else { colors.border }),
+                            StrokeKind::Inside,
+                        );
+                        let label = if selected {
+                            format!("Player {} · Controlling", index + 1)
+                        } else {
+                            format!("Player {}", index + 1)
+                        };
+                        let badge = Rect::from_min_size(tile.min + egui::vec2(8.0, 8.0), egui::vec2(if selected { 154.0 } else { 76.0 }, 24.0));
+                        ui.painter().rect_filled(badge, UI.radius, Color32::from_black_alpha(185));
+                        ui.painter().text(badge.center(), Align2::CENTER_CENTER, label, medium_font(TYPE.meta), Color32::WHITE);
+                    }
+                }
                 ui.painter().rect_stroke(
                     available,
                     0.0,
@@ -921,6 +942,23 @@ impl StudioShell {
     }
 }
 
+fn play_grid_rects(viewport: Rect, players: usize) -> Vec<Rect> {
+    let columns = 3;
+    let rows = players.div_ceil(columns);
+    let gap = 2.0;
+    let width = (viewport.width() - gap * (columns - 1) as f32) / columns as f32;
+    let height = (viewport.height() - gap * (rows - 1) as f32) / rows as f32;
+    (0..players)
+        .map(|index| {
+            let column = index % columns;
+            let row = index / columns;
+            let min = viewport.min
+                + egui::vec2(column as f32 * (width + gap), row as f32 * (height + gap));
+            Rect::from_min_size(min, egui::vec2(width, height))
+        })
+        .collect()
+}
+
 fn scene_move_drag_origin(
     projection: &SceneObjectProjection,
     current_screen: Pos2,
@@ -960,6 +998,24 @@ fn paint_scene_preview_cube(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn play_grid_has_one_nonoverlapping_tile_per_player() {
+        let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 720.0));
+        for players in [3, 6, 9] {
+            let tiles = play_grid_rects(viewport, players);
+            assert_eq!(tiles.len(), players);
+            assert!(tiles.iter().all(|tile| viewport.contains_rect(*tile)));
+            for (index, tile) in tiles.iter().enumerate() {
+                assert!(
+                    tiles
+                        .iter()
+                        .skip(index + 1)
+                        .all(|other| !tile.intersects(*other))
+                );
+            }
+        }
+    }
 
     fn projection(corners: [Pos2; 4]) -> SceneObjectProjection {
         SceneObjectProjection {

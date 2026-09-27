@@ -18,6 +18,7 @@ mod app_events;
 mod app_input;
 mod app_morph_runtime;
 mod app_morphs;
+mod app_multiplay;
 mod app_project;
 mod app_project_load;
 mod app_roblox;
@@ -146,6 +147,11 @@ struct PreparedProjectLoad {
     network: BackendClient,
 }
 
+struct PreviewPeer {
+    client: ClientSession,
+    network: BackendClient,
+}
+
 enum ProjectLoadEvent {
     Progress(f32),
     Finished(Result<BackgroundProjectLoad, String>),
@@ -254,11 +260,14 @@ struct StudioApp {
     authoring_scene: Option<AuthoringScene>,
     authoring_scene_indices: BTreeMap<String, usize>,
     manifest_source: String,
+    script_source: String,
     standalone_preview: bool,
     temporary_package: Option<PathBuf>,
     codex: CodexClient,
     network: BackendClient,
     client: ClientSession,
+    preview_peers: Vec<PreviewPeer>,
+    preview_namespace: Option<String>,
     about_preview: cubacadabra_about_preview::AboutPreview,
     recent_projects: Vec<PathBuf>,
     image_atlas: Option<ImageAtlas>,

@@ -78,12 +78,15 @@ impl StudioApp {
                 .unwrap_or_default(),
             authoring_scene,
             manifest_source,
+            script_source,
             game_root,
             standalone_preview,
             temporary_package,
             codex,
             network,
             client,
+            preview_peers: Vec::new(),
+            preview_namespace: None,
             about_preview,
             recent_projects,
             window: None,
@@ -223,15 +226,38 @@ impl StudioApp {
             .map(StudioShell::runtime_viewport)
             .filter(|rect| rect.is_positive())
             .unwrap_or(fallback);
+        let primary_viewport = self
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.play_viewports().first())
+            .copied()
+            .unwrap_or(viewport);
         self.client.set_ui_viewport_values(
-            viewport.width(),
-            viewport.height(),
+            primary_viewport.width(),
+            primary_viewport.height(),
             scale,
             0.0,
             0.0,
             0.0,
             0.0,
         );
+        if let Some(shell) = &self.shell {
+            for (peer, viewport) in self
+                .preview_peers
+                .iter_mut()
+                .zip(shell.play_viewports().iter().skip(1))
+            {
+                peer.client.set_ui_viewport_values(
+                    viewport.width(),
+                    viewport.height(),
+                    scale,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                );
+            }
+        }
         if let Some(renderer) = &mut self.renderer {
             renderer.set_studio_camera_preset(
                 self.shell
@@ -274,6 +300,7 @@ impl StudioApp {
             self.preview_probe = Some(probe);
         }
         self.drain_backend_events();
+        self.drain_preview_peer_events();
         self.drain_codex_events();
         self.commit_ready_project_load();
         self.prepare_ready_project_runtime();
@@ -677,6 +704,7 @@ impl StudioApp {
         if thumbnail_requested {
             self.generate_morph_thumbnail();
         }
+        self.sync_preview_players();
         self.update_viewport();
         let project_loading = self
             .shell
@@ -741,23 +769,45 @@ impl StudioApp {
         let sprint = self.mobile_sprint
             || self.pressed_keys.contains(&KeyCode::ShiftLeft)
             || self.pressed_keys.contains(&KeyCode::ShiftRight);
-        self.client.set_input_values(
+        let jump = controls_active && self.jump_queued;
+        let climb = controls_active && self.climb;
+        let look = self.look_delta;
+        let zoom = self.zoom_delta;
+        self.active_client_mut().set_input_values(
             forward,
             strafe,
             controls_active && sprint,
-            controls_active && self.jump_queued,
-            controls_active && self.climb,
-            self.look_delta.0,
-            self.look_delta.1,
-            self.zoom_delta,
+            jump,
+            climb,
+            look.0,
+            look.1,
+            zoom,
         );
+        let controlled_player = self
+            .shell
+            .as_ref()
+            .map_or(0, StudioShell::controlled_player);
+        if controlled_player != 0 {
+            self.client
+                .set_input_values(0.0, 0.0, false, false, false, 0.0, 0.0, 0.0);
+        }
+        for (index, peer) in self.preview_peers.iter_mut().enumerate() {
+            if controlled_player != index + 1 {
+                peer.client
+                    .set_input_values(0.0, 0.0, false, false, false, 0.0, 0.0, 0.0);
+            }
+        }
         self.jump_queued = false;
         self.look_delta = (0.0, 0.0);
         self.zoom_delta = 0.0;
         self.dispatch_client_actions();
+        self.dispatch_preview_peer_actions();
         let client_step_started = Instant::now();
         if playing {
             self.client.step(delta);
+            for peer in &mut self.preview_peers {
+                peer.client.step(delta);
+            }
         }
         if self.shell.as_ref().is_some_and(StudioShell::about_is_open) {
             self.about_preview.step();
@@ -766,8 +816,12 @@ impl StudioApp {
         self.drain_ui_events();
         self.refresh_runtime_ui_outline();
         self.dispatch_client_actions();
+        self.dispatch_preview_peer_actions();
         if !self.standalone_preview
-            && let Some(movement) = self.client.local_movement(length > 0.01, playing && sprint)
+            && let Some(movement) = self.client.local_movement(
+                controlled_player == 0 && length > 0.01,
+                controlled_player == 0 && playing && sprint,
+            )
         {
             self.network.send_move(
                 movement.position[0],
@@ -779,10 +833,27 @@ impl StudioApp {
                 movement.respawn_event_id,
             );
         }
+        for (index, peer) in self.preview_peers.iter_mut().enumerate() {
+            if let Some(movement) = peer.client.local_movement(
+                controlled_player == index + 1 && length > 0.01,
+                controlled_player == index + 1 && playing && sprint,
+            ) {
+                peer.network.send_move(
+                    movement.position[0],
+                    movement.position[1],
+                    movement.position[2],
+                    movement.yaw,
+                    movement.moving,
+                    movement.sprinting,
+                    movement.respawn_event_id,
+                );
+            }
+        }
 
         let mut renderer_sync_ms = 0.0;
         let mut renderer_draw_ms = 0.0;
         let mut renderer_timings_ms = [0.0; 4];
+        let window_scale = self.window.as_ref().map_or(1.0, Window::scale_factor) as f32;
         if let Some(renderer) = &mut self.renderer {
             renderer.set_studio_edit_mode(!playing && !morph_preview);
             renderer.set_studio_shadows_enabled(
@@ -816,6 +887,18 @@ impl StudioApp {
                         .and_then(preview_probe::PreviewProbe::capture_path);
                     #[cfg(debug_assertions)]
                     let mut readback = None;
+                    let multi_viewports = shell
+                        .play_viewports()
+                        .iter()
+                        .map(|rect| {
+                            [
+                                rect.min.x * window_scale,
+                                rect.min.y * window_scale,
+                                rect.width() * window_scale,
+                                rect.height() * window_scale,
+                            ]
+                        })
+                        .collect::<Vec<_>>();
                     let overlay =
                         |device: &egui_wgpu::wgpu::Device,
                          queue: &egui_wgpu::wgpu::Queue,
@@ -831,14 +914,29 @@ impl StudioApp {
                                 ));
                             }
                         };
-                    #[cfg(debug_assertions)]
-                    if self.preview_probe.is_some() {
-                        renderer.capture_studio_frame(overlay);
+                    if playing
+                        && multi_viewports.len() == self.preview_peers.len() + 1
+                        && multi_viewports.len() > 1
+                    {
+                        let mut engines = Vec::with_capacity(multi_viewports.len());
+                        engines.push(self.client.engine());
+                        engines.extend(self.preview_peers.iter().map(|peer| peer.client.engine()));
+                        renderer.draw_studio_tiles_with_overlay(
+                            &engines,
+                            &multi_viewports,
+                            cfg!(debug_assertions) && self.preview_probe.is_some(),
+                            overlay,
+                        );
                     } else {
+                        #[cfg(debug_assertions)]
+                        if self.preview_probe.is_some() {
+                            renderer.capture_studio_frame(overlay);
+                        } else {
+                            renderer.draw_with_overlay(overlay);
+                        }
+                        #[cfg(not(debug_assertions))]
                         renderer.draw_with_overlay(overlay);
                     }
-                    #[cfg(not(debug_assertions))]
-                    renderer.draw_with_overlay(overlay);
                     #[cfg(debug_assertions)]
                     if let (Some(path), Some(readback)) = (capture_path, readback) {
                         readback.save(renderer.device(), &path);

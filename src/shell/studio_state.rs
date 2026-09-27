@@ -12,7 +12,54 @@ impl StudioShell {
     }
 
     pub(crate) fn runtime_viewport(&self) -> Rect {
-        self.runtime_viewport
+        self.play_viewports
+            .get(self.controlled_player)
+            .copied()
+            .unwrap_or(self.runtime_viewport)
+    }
+
+    pub(crate) fn play_viewports(&self) -> &[Rect] {
+        &self.play_viewports
+    }
+
+    pub(crate) fn play_player_count(&self) -> usize {
+        if self.playing {
+            self.play_player_count
+        } else {
+            1
+        }
+    }
+
+    pub(crate) fn controlled_player(&self) -> usize {
+        self.controlled_player
+    }
+
+    pub(crate) fn select_play_player(&mut self, point: egui::Pos2) -> bool {
+        let Some(index) = self
+            .play_viewports
+            .iter()
+            .position(|rect| rect.contains(point))
+        else {
+            return false;
+        };
+        if self.controlled_player == index {
+            return false;
+        }
+        self.controlled_player = index;
+        true
+    }
+
+    pub(crate) fn start_play(&mut self, players: usize) {
+        self.play_player_count = players;
+        self.controlled_player = 0;
+        self.play_viewports.clear();
+        if self.project_dirty || self.preview_stale {
+            self.request_rebuild_and_play();
+        } else {
+            self.set_playing(true);
+            self.restart_requested = true;
+            self.notice = "Restarting preview…".to_owned();
+        }
     }
 
     pub(crate) fn is_playing(&self) -> bool {
@@ -21,6 +68,10 @@ impl StudioShell {
 
     pub(crate) fn set_playing(&mut self, playing: bool) {
         self.playing = playing;
+        if !playing {
+            self.play_viewports.clear();
+            self.controlled_player = 0;
+        }
         if !playing && self.review_camera == ReviewCameraPreset::Gameplay {
             self.review_camera = ReviewCameraPreset::Showcase;
             self.review_camera_reset = true;

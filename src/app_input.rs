@@ -31,11 +31,11 @@ impl StudioApp {
     }
 
     pub(crate) fn pointer_event(&mut self, phase: u8, x: f32, y: f32) -> bool {
-        self.client.ui_pointer_event(1, phase, x, y)
+        self.active_client_mut().ui_pointer_event(1, phase, x, y)
     }
 
     pub(crate) fn drain_ui_events(&mut self) {
-        while let Some(source) = self.client.poll_ui_event_json() {
+        while let Some(source) = self.active_client_mut().poll_ui_event_json() {
             let Ok(event) = serde_json::from_slice::<Value>(&source) else {
                 continue;
             };
@@ -241,6 +241,28 @@ impl StudioApp {
         let Some((x, y)) = self.pointer_position else {
             return;
         };
+        if state == ElementState::Pressed
+            && button == MouseButton::Left
+            && self
+                .shell
+                .as_ref()
+                .is_some_and(|shell| shell.play_player_count() > 1)
+            && self.shell.as_ref().is_some_and(|shell| {
+                shell
+                    .play_viewports()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, rect)| {
+                        index != shell.controlled_player() && rect.contains(egui::pos2(x, y))
+                    })
+            })
+        {
+            self.clear_pointer_controls();
+            if let Some(shell) = &mut self.shell {
+                shell.select_play_player(egui::pos2(x, y));
+            }
+            self.update_viewport();
+        }
         if self.review_navigation_active() {
             match button {
                 MouseButton::Right => {

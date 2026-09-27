@@ -397,6 +397,7 @@ impl StudioApp {
             .map(authoring_scene_indices)
             .unwrap_or_default();
         self.manifest_source = manifest_source;
+        self.script_source = script_source;
         self.standalone_preview = standalone_preview;
         self.temporary_package = temporary_package;
         if !standalone_preview {
@@ -406,6 +407,8 @@ impl StudioApp {
         self.world_models = world_models;
         self.network = network;
         self.client = client;
+        self.preview_peers.clear();
+        self.preview_namespace = None;
         self.renderer_uses_base_package_generation = client_uses_base_package_generation;
         self.local_morph_catalog = local_morph_catalog;
         self.runtime_ui_revision = u64::MAX;
