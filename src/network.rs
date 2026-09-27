@@ -308,7 +308,11 @@ fn run_worker(
                         next_connect_at = Instant::now();
                     }
                 }
-                Ok(Command::Send(message)) => pending_messages.push_back(message),
+                Ok(Command::Send(message)) => {
+                    if socket.is_some() || !is_live_cube_move(&message) {
+                        pending_messages.push_back(message);
+                    }
+                }
                 Ok(Command::Move(movement)) => latest_move = Some(movement),
                 Ok(Command::FetchMorphCatalog) => {
                     let endpoint = http_url(&backend_url, "/morphs/catalog")
@@ -515,6 +519,7 @@ fn run_worker(
 
             if failed {
                 disconnect(&mut socket, &mut connected_world_id, &events);
+                pending_messages.retain(|message| !is_live_cube_move(message));
                 next_connect_at = Instant::now() + RECONNECT_INTERVAL;
             }
         }
@@ -523,6 +528,12 @@ fn run_worker(
     }
 
     disconnect(&mut socket, &mut connected_world_id, &events);
+}
+
+fn is_live_cube_move(message: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(message).is_ok_and(|value| {
+        value.get("type").and_then(serde_json::Value::as_str) == Some("world_block_move")
+    })
 }
 
 fn http_url(base_url: &Url, path: &str) -> Result<Url, String> {
