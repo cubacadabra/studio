@@ -73,6 +73,14 @@ impl PreviewProbe {
         if self.frame == 2 && self.multiplay {
             app.shell.as_mut().unwrap().start_play(9);
         }
+        if self.frame == 80 && self.multiplay {
+            let preview = app.shell.as_ref().unwrap().play_viewports()[1].center();
+            let scale = app.window.as_ref().unwrap().scale_factor();
+            app.handle_cursor_move(f64::from(preview.x) * scale, f64::from(preview.y) * scale);
+            app.handle_mouse_button(ElementState::Pressed, MouseButton::Left);
+            app.handle_mouse_button(ElementState::Released, MouseButton::Left);
+            assert_eq!(app.shell.as_ref().unwrap().controlled_player(), 1);
+        }
         if self.add_palette {
             if self.frame == 60 {
                 let shell = app.shell.as_mut().unwrap();
@@ -174,8 +182,10 @@ impl PreviewProbe {
     }
 
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
-        let name = if self.multiplay && self.frame == 120 {
+        let name = if self.multiplay && self.frame == 70 {
             "multiplayer"
+        } else if self.multiplay && self.frame == 120 {
+            "multiplayer-switched"
         } else if self.add_palette && self.frame == 80 {
             "add-palette"
         } else if self.appearance && self.frame == 80 {

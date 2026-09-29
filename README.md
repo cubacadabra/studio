@@ -130,6 +130,9 @@ CUBA_STUDIO_PROBE_DIR=/tmp/appearance CUBA_STUDIO_PROBE_APPEARANCE=1 \
   cargo run -- --path ../examples/survival-101
 ```
 
+The multiplayer probe captures the nine-player overlay before and after
+clicking Player 2's preview into the full view.
+
 For a fixed source-reference comparison, also provide the target screenshot.
 The probe copies it to `target.png`, captures the authored Gameplay camera as
 `current.png`, and writes a size-normalized amplified absolute `diff.png`:
