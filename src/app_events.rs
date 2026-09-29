@@ -4,7 +4,10 @@ impl StudioApp {
         while let Some(event) = self.network.try_recv() {
             match event {
                 BackendEvent::Connected => self.client.transport_connected(),
-                BackendEvent::Disconnected => self.client.transport_disconnected(),
+                BackendEvent::Disconnected => {
+                    self.client.transport_disconnected();
+                    self.preview_player_ids.retain(|_, player| *player != 0);
+                }
                 BackendEvent::Message(source) => {
                     self.receive_preview_message(0, &source);
                 }

@@ -199,6 +199,7 @@ impl StudioApp {
         if self.preview_peers.len() + 1 == count {
             return;
         }
+        self.preview_player_ids.retain(|_, player| *player == 0);
         self.preview_peers.clear();
         let namespace = self
             .preview_namespace
@@ -260,7 +261,9 @@ impl StudioApp {
                         self.preview_peers[index].client.transport_connected()
                     }
                     BackendEvent::Disconnected => {
-                        self.preview_peers[index].client.transport_disconnected()
+                        self.preview_peers[index].client.transport_disconnected();
+                        self.preview_player_ids
+                            .retain(|_, player| *player != index + 1);
                     }
                     BackendEvent::Message(source) => {
                         self.receive_preview_message(index + 1, &source);
@@ -284,6 +287,7 @@ impl StudioApp {
             && message.get("type").and_then(Value::as_str) == Some("session_identity")
             && let Some(id) = message.get("id").and_then(Value::as_str)
         {
+            self.preview_player_ids.retain(|_, player| *player != index);
             self.preview_player_ids.insert(id.to_owned(), index);
             if let Some(name) = self
                 .shell
@@ -297,6 +301,13 @@ impl StudioApp {
                     let _ = peer.client.receive_text(&update);
                 }
             }
+        }
+        if source.contains("player_leave")
+            && let Ok(message) = serde_json::from_str::<Value>(source)
+            && message.get("type").and_then(Value::as_str) == Some("player_leave")
+            && let Some(id) = message.get("id").and_then(Value::as_str)
+        {
+            self.preview_player_ids.remove(id);
         }
         let names = self
             .shell
@@ -320,6 +331,58 @@ impl StudioApp {
             }
         }
     }
+
+    /// All preview clients run in this process. Show their current simulated
+    /// positions to one another without waiting for the local socket relay.
+    /// The backend still owns presence, corrections, and shared game messages.
+    pub(crate) fn sync_preview_local_movement(&mut self) {
+        if self.preview_namespace.is_none() || self.preview_player_ids.len() < 2 {
+            return;
+        }
+        let movements: Vec<_> = self
+            .preview_player_ids
+            .iter()
+            .filter_map(|(id, &index)| {
+                let client = if index == 0 {
+                    &self.client
+                } else {
+                    &self.preview_peers.get(index - 1)?.client
+                };
+                preview_local_movement_message(id, client).map(|message| (index, message))
+            })
+            .collect();
+        for (index, message) in movements {
+            if index != 0 {
+                let _ = self.client.receive_text(&message);
+            }
+            for (peer_index, peer) in self.preview_peers.iter_mut().enumerate() {
+                if index != peer_index + 1 {
+                    let _ = peer.client.receive_text(&message);
+                }
+            }
+        }
+    }
+}
+
+fn preview_local_movement_message(id: &str, client: &ClientSession) -> Option<String> {
+    let snapshot = client.engine().snapshot();
+    let movement = client.local_movement(
+        snapshot.get(6).is_some_and(|moving| *moving != 0.0),
+        snapshot.get(7).is_some_and(|sprinting| *sprinting != 0.0),
+    )?;
+    Some(
+        serde_json::json!({
+            "type": "move",
+            "id": id,
+            "x": movement.position[0],
+            "y": movement.position[1],
+            "z": movement.position[2],
+            "yaw": movement.yaw,
+            "moving": movement.moving,
+            "sprinting": movement.sprinting,
+        })
+        .to_string(),
+    )
 }
 
 fn preview_named_message(
@@ -391,5 +454,34 @@ mod tests {
         }
         assert!(farthest > 1.0, "uncontrolled player should roam");
         assert!(highest > 0.2, "uncontrolled player should jump");
+    }
+
+    #[test]
+    fn local_preview_movement_matches_the_source_client() {
+        let mut source =
+            ClientSession::load(STANDALONE_PREVIEW_MANIFEST, STANDALONE_PREVIEW_SCRIPT).unwrap();
+        let mut viewer =
+            ClientSession::load(STANDALONE_PREVIEW_MANIFEST, STANDALONE_PREVIEW_SCRIPT).unwrap();
+        source.poll_actions();
+        viewer.poll_actions();
+        assert!(source.receive_text(r#"{"type":"session_identity","id":"source"}"#));
+        assert!(viewer.receive_text(r#"{"type":"session_identity","id":"viewer"}"#));
+        assert!(viewer.receive_text(r#"{"type":"player_join","id":"source","username":"Hana"}"#));
+        source
+            .engine_mut()
+            .set_input_values(1.0, 0.0, false, false, false, 0.0, 0.0, 0.0);
+        for _ in 0..30 {
+            source.step(1.0 / 60.0);
+        }
+        let message = preview_local_movement_message("source", &source).unwrap();
+        assert!(viewer.receive_text(&message));
+        viewer.poll_actions();
+        let source_position = &source.engine().snapshot()[..3];
+        let remote_position = &viewer.engine().snapshot()[8..11];
+        assert_eq!(remote_position, source_position);
+        assert_eq!(
+            serde_json::from_str::<Value>(&message).unwrap()["moving"],
+            true
+        );
     }
 }

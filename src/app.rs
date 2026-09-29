@@ -630,6 +630,7 @@ impl StudioApp {
             for peer in &mut self.preview_peers {
                 peer.client.step(delta);
             }
+            self.sync_preview_local_movement();
         }
         if self.shell.as_ref().is_some_and(StudioShell::about_is_open) {
             self.about_preview.step();
@@ -763,6 +764,7 @@ impl StudioApp {
                         renderer.draw_studio_tiles_with_overlay(
                             &engines,
                             &multi_viewports,
+                            &self.preview_player_ids,
                             cfg!(debug_assertions) && self.preview_probe.is_some(),
                             overlay,
                         );
