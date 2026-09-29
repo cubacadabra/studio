@@ -271,6 +271,7 @@ struct StudioApp {
     primary_autopilot: PreviewAutopilot,
     preview_peers: Vec<PreviewPeer>,
     preview_namespace: Option<String>,
+    preview_player_ids: BTreeMap<String, usize>,
     about_preview: cubacadabra_about_preview::AboutPreview,
     recent_projects: Vec<PathBuf>,
     image_atlas: Option<ImageAtlas>,

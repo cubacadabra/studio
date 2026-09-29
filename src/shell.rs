@@ -346,6 +346,7 @@ pub(crate) struct StudioShell {
     play_viewports: Vec<Rect>,
     // Indexed by player; slot zero is the main view.
     play_player_slots: Vec<usize>,
+    play_player_names: Vec<String>,
     play_player_count: usize,
     controlled_player: usize,
     scene_outline: SceneOutline,

@@ -208,11 +208,10 @@ impl StudioShell {
                             Stroke::new(1.0, colors.border),
                             StrokeKind::Inside,
                         );
-                        let label = if tile.width() < 100.0 {
-                            format!("P{}", index + 1)
-                        } else {
-                            format!("Player {}", index + 1)
-                        };
+                        let label = self
+                            .play_player_name(index)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("Player {}", index + 1));
                         let badge = Rect::from_min_size(
                             tile.min + egui::vec2(8.0, 8.0),
                             egui::vec2(76.0_f32.min((tile.width() - 16.0).max(0.0)), 24.0),
@@ -228,7 +227,11 @@ impl StudioShell {
                     ui.painter().text(
                         badge.center(),
                         Align2::CENTER_CENTER,
-                        format!("Player {} · Controlling", self.controlled_player + 1),
+                        format!(
+                            "{} · Controlling",
+                            self.play_player_name(self.controlled_player)
+                                .unwrap_or("Player")
+                        ),
                         medium_font(TYPE.meta),
                         Color32::WHITE,
                     );

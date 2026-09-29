@@ -162,13 +162,22 @@ impl StudioApp {
             .map_or(1, StudioShell::play_player_count);
         if count == 1 {
             self.preview_peers.clear();
+            self.preview_player_ids.clear();
             if self.preview_namespace.take().is_some() {
+                self.client.engine_mut().set_username_value("PLAYER");
                 self.network.set_game_id(self.client.game_id());
                 self.client.request_transport();
             }
             return;
         }
         if self.preview_namespace.is_none() {
+            if let Some(name) = self
+                .shell
+                .as_ref()
+                .and_then(|shell| shell.play_player_name(0))
+            {
+                self.client.engine_mut().set_username_value(name);
+            }
             let mut random = [0_u8; 12];
             if let Err(error) = getrandom::fill(&mut random) {
                 self.preview_start_failed(format!(
@@ -195,12 +204,19 @@ impl StudioApp {
             .preview_namespace
             .as_deref()
             .expect("preview namespace");
-        for _ in 1..count {
+        for index in 1..count {
             let client = match ClientSession::load(&self.manifest_source, &self.script_source) {
                 Ok(mut client) => {
                     client
                         .engine_mut()
                         .set_studio_movement_joystick_visible(false);
+                    if let Some(name) = self
+                        .shell
+                        .as_ref()
+                        .and_then(|shell| shell.play_player_name(index))
+                    {
+                        client.engine_mut().set_username_value(name);
+                    }
                     client
                 }
                 Err(error) => {
@@ -236,17 +252,60 @@ impl StudioApp {
     }
 
     pub(crate) fn drain_preview_peer_events(&mut self) {
-        for peer in &mut self.preview_peers {
-            while let Some(event) = peer.network.try_recv() {
+        for index in 0..self.preview_peers.len() {
+            while let Some(event) = self.preview_peers[index].network.try_recv() {
                 match event {
-                    BackendEvent::Connected => peer.client.transport_connected(),
-                    BackendEvent::Disconnected => peer.client.transport_disconnected(),
+                    BackendEvent::Connected => {
+                        self.preview_peers[index].client.transport_connected()
+                    }
+                    BackendEvent::Disconnected => {
+                        self.preview_peers[index].client.transport_disconnected()
+                    }
                     BackendEvent::Message(source) => {
-                        let _ = peer.client.receive_text(&source);
+                        self.receive_preview_message(index + 1, &source);
                     }
                     _ => {}
                 }
             }
+        }
+    }
+
+    pub(crate) fn receive_preview_message(&mut self, index: usize, source: &str) {
+        if self.preview_namespace.is_none() {
+            let _ = self.client.receive_text(source);
+            return;
+        }
+        // Preview sockets are guests, so the backend assigns its own labels.
+        // Keep those IDs for networking while giving each local client the
+        // same display name Studio shows on that player's viewport.
+        if source.contains("session_identity")
+            && let Ok(message) = serde_json::from_str::<Value>(source)
+            && message.get("type").and_then(Value::as_str) == Some("session_identity")
+            && let Some(id) = message.get("id").and_then(Value::as_str)
+        {
+            self.preview_player_ids.insert(id.to_owned(), index);
+            if let Some(name) = self
+                .shell
+                .as_ref()
+                .and_then(|shell| shell.play_player_name(index))
+            {
+                let update = serde_json::json!({"type": "player_name", "id": id, "username": name})
+                    .to_string();
+                let _ = self.client.receive_text(&update);
+                for peer in &mut self.preview_peers {
+                    let _ = peer.client.receive_text(&update);
+                }
+            }
+        }
+        let names = self
+            .shell
+            .as_ref()
+            .map_or(&[][..], StudioShell::play_player_names);
+        let named = preview_named_message(source, &self.preview_player_ids, names);
+        if index == 0 {
+            let _ = self.client.receive_text(&named);
+        } else if let Some(peer) = self.preview_peers.get_mut(index - 1) {
+            let _ = peer.client.receive_text(&named);
         }
     }
 
@@ -262,9 +321,55 @@ impl StudioApp {
     }
 }
 
+fn preview_named_message(
+    source: &str,
+    player_ids: &BTreeMap<String, usize>,
+    names: &[String],
+) -> String {
+    if !source.contains("player_join") && !source.contains("player_name") {
+        return source.to_owned();
+    }
+    let Ok(mut message) = serde_json::from_str::<Value>(source) else {
+        return source.to_owned();
+    };
+    if !matches!(
+        message.get("type").and_then(Value::as_str),
+        Some("player_join" | "player_name")
+    ) {
+        return source.to_owned();
+    }
+    let Some(name) = message
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| player_ids.get(id))
+        .and_then(|index| names.get(*index))
+    else {
+        return source.to_owned();
+    };
+    message["username"] = Value::String(name.to_owned());
+    message.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_names_follow_player_identity_in_remote_labels() {
+        let names = ["Maya".to_owned(), "Theo".to_owned()];
+        let ids = BTreeMap::from([("socket-a".to_owned(), 0), ("socket-b".to_owned(), 1)]);
+        let join = r#"{"type":"player_join","id":"socket-b","username":"Web Player 1234"}"#;
+        let renamed = preview_named_message(join, &ids, &names);
+        let parsed: Value = serde_json::from_str(&renamed).unwrap();
+        assert_eq!(parsed["username"], "Theo");
+        assert_eq!(parsed["id"], "socket-b");
+
+        let name_update = r#"{"type":"player_name","id":"socket-a","username":"Player 1"}"#;
+        let renamed = preview_named_message(name_update, &ids, &names);
+        let parsed: Value = serde_json::from_str(&renamed).unwrap();
+        assert_eq!(parsed["username"], "Maya");
+        assert_eq!(preview_named_message(join, &BTreeMap::new(), &names), join);
+    }
 
     #[test]
     fn preview_autopilot_moves_and_jumps_through_player_input() {

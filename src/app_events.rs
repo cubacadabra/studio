@@ -6,7 +6,7 @@ impl StudioApp {
                 BackendEvent::Connected => self.client.transport_connected(),
                 BackendEvent::Disconnected => self.client.transport_disconnected(),
                 BackendEvent::Message(source) => {
-                    let _ = self.client.receive_text(&source);
+                    self.receive_preview_message(0, &source);
                 }
                 BackendEvent::MorphCatalog(source) => self.install_published_morphs(&source),
                 BackendEvent::MorphCatalogError(message) => {

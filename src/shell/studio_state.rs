@@ -30,6 +30,14 @@ impl StudioShell {
         }
     }
 
+    pub(crate) fn play_player_name(&self, index: usize) -> Option<&str> {
+        self.play_player_names.get(index).map(String::as_str)
+    }
+
+    pub(crate) fn play_player_names(&self) -> &[String] {
+        &self.play_player_names
+    }
+
     pub(crate) fn controlled_player(&self) -> usize {
         self.controlled_player
     }
@@ -52,6 +60,11 @@ impl StudioShell {
 
     pub(crate) fn start_play(&mut self, players: usize) {
         self.play_player_count = players;
+        self.play_player_names = if players > 1 {
+            random_preview_names(players)
+        } else {
+            Vec::new()
+        };
         self.play_player_slots = (0..players).collect();
         self.controlled_player = 0;
         self.play_viewports.clear();
@@ -1078,6 +1091,38 @@ impl StudioShell {
         self.new_project_dialog_open = false;
         self.new_project_error = None;
         self.notice = format!("Created {}", project.display());
+    }
+}
+
+fn random_preview_names(players: usize) -> Vec<String> {
+    const NAMES: &[&str] = &[
+        "Alex", "Amira", "Avery", "Ben", "Camila", "Chloe", "Daniel", "Eli", "Emma", "Felix",
+        "Grace", "Hana", "Isaac", "Jade", "Jamal", "Kai", "Leah", "Leo", "Lila", "Maya", "Mia",
+        "Nina", "Noah", "Omar", "Priya", "Rafael", "Riley", "Sam", "Sofia", "Theo", "Uma", "Zoe",
+    ];
+    let mut names = NAMES.to_vec();
+    let mut random = [0_u8; NAMES.len()];
+    if let Err(error) = getrandom::fill(&mut random) {
+        log::warn!("could not randomize preview names: {error}");
+    }
+    for index in (1..names.len()).rev() {
+        names.swap(index, usize::from(random[index]) % (index + 1));
+    }
+    names.into_iter().take(players).map(str::to_owned).collect()
+}
+
+#[cfg(test)]
+mod preview_name_tests {
+    use super::random_preview_names;
+
+    #[test]
+    fn preview_names_are_unique_for_nine_players() {
+        let names = random_preview_names(9);
+        assert_eq!(names.len(), 9);
+        assert_eq!(
+            names.iter().collect::<std::collections::HashSet<_>>().len(),
+            9
+        );
     }
 }
 

@@ -91,6 +91,7 @@ impl StudioApp {
             primary_autopilot: PreviewAutopilot::new(0),
             preview_peers: Vec::new(),
             preview_namespace: None,
+            preview_player_ids: BTreeMap::new(),
             about_preview,
             recent_projects,
             window: None,

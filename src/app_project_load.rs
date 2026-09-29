@@ -415,6 +415,7 @@ impl StudioApp {
         self.primary_autopilot = PreviewAutopilot::new(0);
         self.preview_peers.clear();
         self.preview_namespace = None;
+        self.preview_player_ids.clear();
         self.renderer_uses_base_package_generation = client_uses_base_package_generation;
         self.local_morph_catalog = local_morph_catalog;
         self.runtime_ui_revision = u64::MAX;
