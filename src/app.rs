@@ -719,10 +719,20 @@ impl StudioApp {
         self.client
             .engine_mut()
             .set_studio_play_controls_hidden(playing);
-        for peer in &mut self.preview_peers {
+        let controlled_player = self
+            .shell
+            .as_ref()
+            .map_or(0, StudioShell::controlled_player);
+        self.client
+            .engine_mut()
+            .set_studio_run_control_hidden(playing && controlled_player != 0);
+        for (index, peer) in self.preview_peers.iter_mut().enumerate() {
             peer.client
                 .engine_mut()
                 .set_studio_play_controls_hidden(playing);
+            peer.client
+                .engine_mut()
+                .set_studio_run_control_hidden(playing && controlled_player != index + 1);
         }
         let morph_preview = !project_loading
             && self
