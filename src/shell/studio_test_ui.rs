@@ -195,8 +195,7 @@ impl StudioShell {
                 if self.playing && self.play_player_count > 1 {
                     self.play_viewports = play_overlay_rects(
                         self.runtime_viewport,
-                        self.play_player_count,
-                        self.controlled_player,
+                        &self.play_player_slots,
                     );
                     for (index, tile) in self.play_viewports.iter().copied().enumerate() {
                         let selected = index == self.controlled_player;
@@ -964,7 +963,7 @@ impl StudioShell {
     }
 }
 
-pub(super) fn play_overlay_rects(viewport: Rect, players: usize, controlled: usize) -> Vec<Rect> {
+fn play_overlay_rects(viewport: Rect, player_slots: &[usize]) -> Vec<Rect> {
     let width = (viewport.width() * 0.28)
         .min(viewport.height() * 0.32)
         .min(320.0);
@@ -979,7 +978,7 @@ pub(super) fn play_overlay_rects(viewport: Rect, players: usize, controlled: usi
     let side_bottom = viewport.bottom() - viewport.height() * 0.15 - height;
     let side_middle = (side_top + side_bottom) * 0.5;
     let center = viewport.center().x - width * 0.5;
-    let slots = match players {
+    let slots = match player_slots.len() {
         3 => vec![(left, side_middle), (right, side_middle)],
         6 => vec![
             (center, top),
@@ -999,17 +998,13 @@ pub(super) fn play_overlay_rects(viewport: Rect, players: usize, controlled: usi
             (center, bottom),
         ],
     };
-    (0..players)
-        .map(|index| {
-            if index == controlled {
+    player_slots
+        .iter()
+        .map(|&slot| {
+            if slot == 0 {
                 viewport
             } else {
-                let slot = if index == 0 {
-                    controlled - 1
-                } else {
-                    index - 1
-                };
-                let (x, y) = slots[slot];
+                let (x, y) = slots[slot - 1];
                 Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height))
             }
         })
@@ -1061,7 +1056,9 @@ mod tests {
         let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 720.0));
         for players in [3, 6, 9] {
             for controlled in 0..players {
-                let tiles = play_overlay_rects(viewport, players, controlled);
+                let mut player_slots: Vec<_> = (0..players).collect();
+                player_slots.swap(0, controlled);
+                let tiles = play_overlay_rects(viewport, &player_slots);
                 assert_eq!(tiles.len(), players);
                 assert_eq!(tiles[controlled], viewport);
                 assert!(tiles.iter().all(|tile| viewport.contains_rect(*tile)));
@@ -1088,7 +1085,8 @@ mod tests {
             egui::vec2(1440.0, 900.0),
         ] {
             let viewport = Rect::from_min_size(Pos2::ZERO, size);
-            let tiles = play_overlay_rects(viewport, 9, 0);
+            let mut player_slots: Vec<_> = (0..9).collect();
+            let tiles = play_overlay_rects(viewport, &player_slots);
             assert_eq!(tiles[0], viewport);
             assert!(tiles[1..].iter().all(|tile| viewport.contains_rect(*tile)));
             assert!(tiles[1].center().x == viewport.center().x);
@@ -1096,7 +1094,8 @@ mod tests {
             assert!(tiles[2].max.x < tiles[1].min.x);
             assert!(tiles[3].min.x > tiles[1].max.x);
             assert!(tiles[8].min.y > tiles[6].min.y);
-            let switched = play_overlay_rects(viewport, 9, 4);
+            player_slots.swap(0, 4);
+            let switched = play_overlay_rects(viewport, &player_slots);
             assert_eq!(switched[4], viewport);
             assert_eq!(switched[0], tiles[4]);
             assert_eq!(switched[2], tiles[2]);

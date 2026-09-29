@@ -61,6 +61,7 @@ impl StudioShell {
             review_camera_reset: false,
             runtime_viewport: Rect::NOTHING,
             play_viewports: Vec::new(),
+            play_player_slots: vec![0],
             play_player_count: 1,
             controlled_player: 0,
             scene_outline,

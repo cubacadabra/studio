@@ -1,4 +1,3 @@
-use super::studio_test_ui::play_overlay_rects;
 use super::*;
 impl StudioShell {
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
@@ -45,17 +44,15 @@ impl StudioShell {
         else {
             return false;
         };
+        self.play_player_slots.swap(self.controlled_player, index);
+        self.play_viewports.swap(self.controlled_player, index);
         self.controlled_player = index;
-        self.play_viewports = play_overlay_rects(
-            self.runtime_viewport,
-            self.play_player_count,
-            self.controlled_player,
-        );
         true
     }
 
     pub(crate) fn start_play(&mut self, players: usize) {
         self.play_player_count = players;
+        self.play_player_slots = (0..players).collect();
         self.controlled_player = 0;
         self.play_viewports.clear();
         if self.project_dirty || self.preview_stale {
@@ -76,6 +73,7 @@ impl StudioShell {
         if !playing {
             self.play_viewports.clear();
             self.controlled_player = 0;
+            self.play_player_slots = (0..self.play_player_count).collect();
         }
         if !playing && self.review_camera == ReviewCameraPreset::Gameplay {
             self.review_camera = ReviewCameraPreset::Showcase;

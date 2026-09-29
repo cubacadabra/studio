@@ -8,6 +8,7 @@ pub(crate) struct PreviewProbe {
     frame: u32,
     review: bool,
     multiplay: bool,
+    expected_play_viewports: Option<Vec<egui::Rect>>,
     add_palette: bool,
     appearance: bool,
     world: Option<String>,
@@ -36,6 +37,7 @@ impl PreviewProbe {
             frame: 0,
             review: env::var_os("CUBA_STUDIO_PROBE_REVIEW").is_some(),
             multiplay: env::var_os("CUBA_STUDIO_PROBE_MULTIPLAY").is_some(),
+            expected_play_viewports: None,
             add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
             appearance: env::var_os("CUBA_STUDIO_PROBE_APPEARANCE").is_some(),
             world: env::var("CUBA_STUDIO_PROBE_WORLD").ok(),
@@ -73,13 +75,52 @@ impl PreviewProbe {
         if self.frame == 2 && self.multiplay {
             app.shell.as_mut().unwrap().start_play(9);
         }
-        if self.frame == 80 && self.multiplay {
-            let preview = app.shell.as_ref().unwrap().play_viewports()[1].center();
-            let scale = app.window.as_ref().unwrap().scale_factor();
-            app.handle_cursor_move(f64::from(preview.x) * scale, f64::from(preview.y) * scale);
-            app.handle_mouse_button(ElementState::Pressed, MouseButton::Left);
-            app.handle_mouse_button(ElementState::Released, MouseButton::Left);
-            assert_eq!(app.shell.as_ref().unwrap().controlled_player(), 1);
+        if self.multiplay {
+            if let Some(expected) = &self.expected_play_viewports {
+                assert_eq!(
+                    app.shell.as_ref().unwrap().play_viewports(),
+                    expected,
+                    "player slots changed after redraw"
+                );
+            }
+            // Exercise repeated takeovers, including the original player and
+            // a player that has already occupied the main view.
+            let target = match self.frame {
+                80 => Some(1),
+                90 => Some(4),
+                100 => Some(0),
+                110 => Some(4),
+                _ => None,
+            };
+            if let Some(target) = target {
+                let shell = app.shell.as_ref().unwrap();
+                let previous = shell.controlled_player();
+                let mut expected = shell.play_viewports().to_vec();
+                let preview = expected[target].center();
+                expected.swap(previous, target);
+                let scale = app.window.as_ref().unwrap().scale_factor();
+                app.handle_cursor_move(f64::from(preview.x) * scale, f64::from(preview.y) * scale);
+                app.handle_mouse_button(ElementState::Pressed, MouseButton::Left);
+                app.handle_mouse_button(ElementState::Released, MouseButton::Left);
+                let shell = app.shell.as_ref().unwrap();
+                assert_eq!(shell.controlled_player(), target);
+                assert_eq!(shell.play_viewports(), expected);
+                let expected_client = if target == 0 {
+                    &app.client as *const ClientSession
+                } else {
+                    &app.preview_peers[target - 1].client as *const ClientSession
+                };
+                assert_eq!(
+                    app.active_client_mut() as *const ClientSession,
+                    expected_client
+                );
+                self.expected_play_viewports = Some(expected);
+            }
+            if self.frame == 120 {
+                eprintln!(
+                    "multiplayer probe passed: repeated player swaps, stable slots, input routing"
+                );
+            }
         }
         if self.add_palette {
             if self.frame == 60 {

@@ -344,6 +344,8 @@ pub(crate) struct StudioShell {
     review_camera_reset: bool,
     runtime_viewport: Rect,
     play_viewports: Vec<Rect>,
+    // Indexed by player; slot zero is the main view.
+    play_player_slots: Vec<usize>,
     play_player_count: usize,
     controlled_player: usize,
     scene_outline: SceneOutline,

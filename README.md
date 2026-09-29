@@ -131,7 +131,9 @@ CUBA_STUDIO_PROBE_DIR=/tmp/appearance CUBA_STUDIO_PROBE_APPEARANCE=1 \
 ```
 
 The multiplayer probe captures the nine-player overlay before and after
-clicking Player 2's preview into the full view.
+repeatedly clicking players into the full view. It checks that control follows
+the selected player, the outgoing player takes the clicked preview slot, and
+the other previews stay in place across redraws.
 
 For a fixed source-reference comparison, also provide the target screenshot.
 The probe copies it to `target.png`, captures the authored Gameplay camera as
