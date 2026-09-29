@@ -262,6 +262,7 @@ impl StudioApp {
                 shell.select_play_player(egui::pos2(x, y));
             }
             self.update_viewport();
+            return;
         }
         if self.review_navigation_active() {
             match button {

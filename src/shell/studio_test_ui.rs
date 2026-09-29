@@ -193,36 +193,46 @@ impl StudioShell {
                 );
                 self.play_viewports.clear();
                 if self.playing && self.play_player_count > 1 {
-                    self.play_viewports = play_grid_rects(self.runtime_viewport, self.play_player_count);
+                    self.play_viewports = play_overlay_rects(
+                        self.runtime_viewport,
+                        self.play_player_count,
+                        self.controlled_player,
+                    );
                     for (index, tile) in self.play_viewports.iter().copied().enumerate() {
                         let selected = index == self.controlled_player;
+                        if selected {
+                            continue;
+                        }
                         ui.painter().rect_stroke(
                             tile,
                             0.0,
-                            Stroke::new(if selected { 3.0 } else { 1.0 }, if selected { colors.accent } else { colors.border }),
+                            Stroke::new(1.0, colors.border),
                             StrokeKind::Inside,
                         );
-                        let label = if selected && tile.width() < 100.0 {
-                            format!("P{}", index + 1)
-                        } else if selected && tile.width() < 130.0 {
-                            format!("P{} · Active", index + 1)
-                        } else if selected && tile.width() < 170.0 {
-                            format!("P{} · Controlling", index + 1)
-                        } else if selected {
-                            format!("Player {} · Controlling", index + 1)
-                        } else if tile.width() < 100.0 {
+                        let label = if tile.width() < 100.0 {
                             format!("P{}", index + 1)
                         } else {
                             format!("Player {}", index + 1)
                         };
-                        let badge_width: f32 = if selected { 154.0 } else { 76.0 };
                         let badge = Rect::from_min_size(
                             tile.min + egui::vec2(8.0, 8.0),
-                            egui::vec2(badge_width.min((tile.width() - 16.0).max(0.0)), 24.0),
+                            egui::vec2(76.0_f32.min((tile.width() - 16.0).max(0.0)), 24.0),
                         );
                         ui.painter().rect_filled(badge, UI.radius, Color32::from_black_alpha(185));
                         ui.painter().text(badge.center(), Align2::CENTER_CENTER, label, medium_font(TYPE.meta), Color32::WHITE);
                     }
+                    let badge = Rect::from_min_size(
+                        self.runtime_viewport.min + egui::vec2(12.0, 12.0),
+                        egui::vec2(154.0, 24.0),
+                    );
+                    ui.painter().rect_filled(badge, UI.radius, Color32::from_black_alpha(185));
+                    ui.painter().text(
+                        badge.center(),
+                        Align2::CENTER_CENTER,
+                        format!("Player {} · Controlling", self.controlled_player + 1),
+                        medium_font(TYPE.meta),
+                        Color32::WHITE,
+                    );
                 }
                 ui.painter().rect_stroke(
                     available,
@@ -954,37 +964,54 @@ impl StudioShell {
     }
 }
 
-fn play_grid_rects(viewport: Rect, players: usize) -> Vec<Rect> {
-    let columns = 3;
-    let rows = players.div_ceil(columns);
-    let gap = 2.0;
-    let width = (viewport.width() - gap * (columns - 1) as f32) / columns as f32;
-    let height = (viewport.height() - gap * (rows - 1) as f32) / rows as f32;
+pub(super) fn play_overlay_rects(viewport: Rect, players: usize, controlled: usize) -> Vec<Rect> {
+    let width = (viewport.width() * 0.28)
+        .min(viewport.height() * 0.32)
+        .min(320.0);
+    let height = width * 9.0 / 16.0;
+    let inset_x = (viewport.width() * 0.022).max(8.0);
+    let inset_y = (viewport.height() * 0.025).max(8.0);
+    let left = viewport.left() + inset_x;
+    let right = viewport.right() - inset_x - width;
+    let top = viewport.top() + inset_y;
+    let bottom = viewport.bottom() - inset_y - height;
+    let side_top = viewport.top() + viewport.height() * 0.08;
+    let side_bottom = viewport.bottom() - viewport.height() * 0.15 - height;
+    let side_middle = (side_top + side_bottom) * 0.5;
+    let center = viewport.center().x - width * 0.5;
+    let slots = match players {
+        3 => vec![(left, side_middle), (right, side_middle)],
+        6 => vec![
+            (center, top),
+            (left, side_top),
+            (right, side_top),
+            (left, side_bottom),
+            (right, side_bottom),
+        ],
+        _ => vec![
+            (center, top),
+            (left, side_top),
+            (right, side_top),
+            (left, side_middle),
+            (right, side_middle),
+            (left, side_bottom),
+            (right, side_bottom),
+            (center, bottom),
+        ],
+    };
     (0..players)
         .map(|index| {
-            // Keep Player 1 in the center while filling all nine grid cells.
-            let cell = if players == 9 {
-                [4, 0, 1, 2, 6, 7, 8, 3, 5][index]
+            if index == controlled {
+                viewport
             } else {
-                index
-            };
-            let column = cell % columns;
-            let row = cell / columns;
-            let min = viewport.min
-                + egui::vec2(column as f32 * (width + gap), row as f32 * (height + gap));
-            let max = egui::pos2(
-                if column == columns - 1 {
-                    viewport.max.x
+                let slot = if index == 0 {
+                    controlled - 1
                 } else {
-                    min.x + width
-                },
-                if row == rows - 1 {
-                    viewport.max.y
-                } else {
-                    min.y + height
-                },
-            );
-            Rect::from_min_max(min, max)
+                    index - 1
+                };
+                let (x, y) = slots[slot];
+                Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height))
+            }
         })
         .collect()
 }
@@ -1030,25 +1057,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn play_grid_has_one_nonoverlapping_tile_per_player() {
+    fn play_overlay_keeps_one_full_view_and_nonoverlapping_previews() {
         let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 720.0));
         for players in [3, 6, 9] {
-            let tiles = play_grid_rects(viewport, players);
-            assert_eq!(tiles.len(), players);
-            assert!(tiles.iter().all(|tile| viewport.contains_rect(*tile)));
-            for (index, tile) in tiles.iter().enumerate() {
-                assert!(
-                    tiles
-                        .iter()
-                        .skip(index + 1)
-                        .all(|other| !tile.intersects(*other))
-                );
+            for controlled in 0..players {
+                let tiles = play_overlay_rects(viewport, players, controlled);
+                assert_eq!(tiles.len(), players);
+                assert_eq!(tiles[controlled], viewport);
+                assert!(tiles.iter().all(|tile| viewport.contains_rect(*tile)));
+                for (index, tile) in tiles.iter().enumerate() {
+                    if index == controlled {
+                        continue;
+                    }
+                    assert!(tiles.iter().enumerate().all(|(other_index, other)| {
+                        other_index == controlled
+                            || other_index == index
+                            || !tile.intersects(*other)
+                    }));
+                }
             }
         }
     }
 
     #[test]
-    fn nine_player_layout_fills_three_equal_columns_and_rows() {
+    fn nine_player_layout_places_eight_previews_around_the_full_view() {
         for size in [
             egui::vec2(390.0, 844.0),
             egui::vec2(768.0, 1024.0),
@@ -1056,22 +1088,18 @@ mod tests {
             egui::vec2(1440.0, 900.0),
         ] {
             let viewport = Rect::from_min_size(Pos2::ZERO, size);
-            let tiles = play_grid_rects(viewport, 9);
-            let center = tiles[0];
-            assert!((center.center() - viewport.center()).length() < 0.001);
-            assert!(tiles.iter().all(|tile| {
-                viewport.contains_rect(*tile)
-                    && (tile.width() - center.width()).abs() < 0.001
-                    && (tile.height() - center.height()).abs() < 0.001
-            }));
-            assert!(tiles[1..4].iter().all(|tile| tile.max.y < center.min.y));
-            assert!(tiles[4..7].iter().all(|tile| tile.min.y > center.max.y));
-            assert!(tiles[7].max.x < center.min.x);
-            assert!(tiles[8].min.x > center.max.x);
-            assert_eq!(tiles[7].min.x, viewport.min.x);
-            assert_eq!(tiles[8].max.x, viewport.max.x);
-            assert_eq!(tiles[1].min.y, viewport.min.y);
-            assert_eq!(tiles[4].max.y, viewport.max.y);
+            let tiles = play_overlay_rects(viewport, 9, 0);
+            assert_eq!(tiles[0], viewport);
+            assert!(tiles[1..].iter().all(|tile| viewport.contains_rect(*tile)));
+            assert!(tiles[1].center().x == viewport.center().x);
+            assert!(tiles[8].center().x == viewport.center().x);
+            assert!(tiles[2].max.x < tiles[1].min.x);
+            assert!(tiles[3].min.x > tiles[1].max.x);
+            assert!(tiles[8].min.y > tiles[6].min.y);
+            let switched = play_overlay_rects(viewport, 9, 4);
+            assert_eq!(switched[4], viewport);
+            assert_eq!(switched[0], tiles[4]);
+            assert_eq!(switched[2], tiles[2]);
         }
     }
 

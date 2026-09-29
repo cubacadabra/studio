@@ -7,6 +7,7 @@ pub(crate) struct PreviewProbe {
     directory: PathBuf,
     frame: u32,
     review: bool,
+    multiplay: bool,
     add_palette: bool,
     appearance: bool,
     world: Option<String>,
@@ -34,6 +35,7 @@ impl PreviewProbe {
             directory,
             frame: 0,
             review: env::var_os("CUBA_STUDIO_PROBE_REVIEW").is_some(),
+            multiplay: env::var_os("CUBA_STUDIO_PROBE_MULTIPLAY").is_some(),
             add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
             appearance: env::var_os("CUBA_STUDIO_PROBE_APPEARANCE").is_some(),
             world: env::var("CUBA_STUDIO_PROBE_WORLD").ok(),
@@ -67,6 +69,9 @@ impl PreviewProbe {
         }
         if self.frame == 2 && self.review {
             app.shell.as_mut().unwrap().set_playing(true);
+        }
+        if self.frame == 2 && self.multiplay {
+            app.shell.as_mut().unwrap().start_play(9);
         }
         if self.add_palette {
             if self.frame == 60 {
@@ -169,7 +174,9 @@ impl PreviewProbe {
     }
 
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
-        let name = if self.add_palette && self.frame == 80 {
+        let name = if self.multiplay && self.frame == 120 {
+            "multiplayer"
+        } else if self.add_palette && self.frame == 80 {
             "add-palette"
         } else if self.appearance && self.frame == 80 {
             "appearance-inspector"

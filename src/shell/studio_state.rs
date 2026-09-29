@@ -1,3 +1,4 @@
+use super::studio_test_ui::play_overlay_rects;
 use super::*;
 impl StudioShell {
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
@@ -38,14 +39,18 @@ impl StudioShell {
         let Some(index) = self
             .play_viewports
             .iter()
-            .position(|rect| rect.contains(point))
+            .enumerate()
+            .find(|(index, rect)| *index != self.controlled_player && rect.contains(point))
+            .map(|(index, _)| index)
         else {
             return false;
         };
-        if self.controlled_player == index {
-            return false;
-        }
         self.controlled_player = index;
+        self.play_viewports = play_overlay_rects(
+            self.runtime_viewport,
+            self.play_player_count,
+            self.controlled_player,
+        );
         true
     }
 

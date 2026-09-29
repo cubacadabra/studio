@@ -114,6 +114,10 @@ permission or an available on-screen drawable, writes PNGs, and exits:
 CUBA_STUDIO_PROBE_DIR=/tmp/maze-gameplay \
   cargo run -- --path ../examples/maze-101
 
+CUBA_STUDIO_PROBE_DIR=/tmp/studio-multiplayer \
+  CUBA_STUDIO_PROBE_MULTIPLAY=1 \
+  cargo run -- --path ../examples/survival-101
+
 CUBA_STUDIO_PROBE_DIR=/tmp/maze-review CUBA_STUDIO_PROBE_REVIEW=1 \
   CUBA_STUDIO_PROBE_WORLD=maze-world \
   cargo run -- --path ../examples/maze-101
