@@ -966,7 +966,7 @@ impl StudioShell {
     }
 }
 
-fn play_overlay_rects(viewport: Rect, player_slots: &[usize]) -> Vec<Rect> {
+pub(super) fn play_overlay_rects(viewport: Rect, player_slots: &[usize]) -> Vec<Rect> {
     let width = (viewport.width() * 0.28)
         .min(viewport.height() * 0.32)
         .min(320.0);

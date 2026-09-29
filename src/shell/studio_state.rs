@@ -1,3 +1,4 @@
+use super::studio_test_ui::play_overlay_rects;
 use super::*;
 impl StudioShell {
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
@@ -53,8 +54,11 @@ impl StudioShell {
             return false;
         };
         self.play_player_slots.swap(self.controlled_player, index);
-        self.play_viewports.swap(self.controlled_player, index);
         self.controlled_player = index;
+        // The slot map is the identity-bearing state. Rebuild the geometry
+        // from it instead of swapping a second, potentially stale rectangle
+        // array in parallel.
+        self.play_viewports = play_overlay_rects(self.runtime_viewport, &self.play_player_slots);
         true
     }
 
