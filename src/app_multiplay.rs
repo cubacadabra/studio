@@ -210,6 +210,7 @@ impl StudioApp {
                     client
                         .engine_mut()
                         .set_studio_movement_joystick_visible(false);
+                    client.engine_mut().set_test_player_enabled(true);
                     if let Some(name) = self
                         .shell
                         .as_ref()

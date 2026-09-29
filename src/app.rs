@@ -824,11 +824,15 @@ impl StudioApp {
         }
         for (index, peer) in self.preview_peers.iter_mut().enumerate() {
             if controlled_player != index + 1 {
-                let input = peer
-                    .autopilot
-                    .next_input(delta, peer.client.engine().snapshot());
-                input.apply(&mut peer.client);
+                peer.client.engine_mut().set_test_player_enabled(true);
+                if !peer.client.engine().has_test_player_callback() {
+                    let input = peer
+                        .autopilot
+                        .next_input(delta, peer.client.engine().snapshot());
+                    input.apply(&mut peer.client);
+                }
             } else {
+                peer.client.engine_mut().set_test_player_enabled(false);
                 peer.autopilot.reset_after_control();
             }
         }
@@ -873,11 +877,22 @@ impl StudioApp {
             );
         }
         for (index, peer) in self.preview_peers.iter_mut().enumerate() {
+            let luau_test_player = peer.client.engine().has_test_player_callback();
+            let bot_moving = if luau_test_player {
+                peer.client.engine().test_player_moving()
+            } else {
+                peer.autopilot.moving()
+            };
+            let bot_sprinting = if luau_test_player {
+                peer.client.engine().test_player_sprinting()
+            } else {
+                peer.autopilot.sprinting()
+            };
             if let Some(movement) = peer.client.local_movement(
                 (controlled_player == index + 1 && length > 0.01)
-                    || (controlled_player != index + 1 && peer.autopilot.moving()),
+                    || (controlled_player != index + 1 && bot_moving),
                 (controlled_player == index + 1 && playing && sprint)
-                    || (controlled_player != index + 1 && peer.autopilot.sprinting()),
+                    || (controlled_player != index + 1 && bot_sprinting),
             ) {
                 peer.network.send_move(
                     movement.position[0],
