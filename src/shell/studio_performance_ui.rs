@@ -33,9 +33,6 @@ impl StudioShell {
         sample.renderer_submit_ms = renderer_timings_ms[2];
         sample.renderer_present_ms = renderer_timings_ms[3];
         self.performance_latest = sample;
-        if std::env::var_os("CUBA_STUDIO_PROBE_DIR").is_some() {
-            eprintln!("studio probe performance: {}", sample.log_line());
-        }
         self.performance_history.push_back(sample);
         if self.performance_history.len() > PERFORMANCE_HISTORY_LIMIT {
             self.performance_history.pop_front();
