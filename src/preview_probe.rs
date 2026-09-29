@@ -116,9 +116,20 @@ impl PreviewProbe {
                 );
                 self.expected_play_viewports = Some(expected);
             }
-            if self.frame == 120 {
+            if self.frame == 180 {
+                let snapshot = app
+                    .active_client_mut()
+                    .capture_snapshot()
+                    .expect("controlled player snapshot");
+                assert_eq!(snapshot.input.forward, 0.0);
+                assert_eq!(snapshot.input.strafe, 0.0);
+                assert!(!snapshot.input.jump && !snapshot.input.sprint);
+                assert!(
+                    !snapshot.player.moving,
+                    "autopilot still moves the controlled player"
+                );
                 eprintln!(
-                    "multiplayer probe passed: repeated player swaps, stable slots, input routing"
+                    "multiplayer probe passed: repeated player swaps, stable slots, input routing, controlled player idle"
                 );
             }
         }
@@ -225,7 +236,7 @@ impl PreviewProbe {
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
         let name = if self.multiplay && self.frame == 70 {
             "multiplayer"
-        } else if self.multiplay && self.frame == 120 {
+        } else if self.multiplay && self.frame == 180 {
             "multiplayer-switched"
         } else if self.add_palette && self.frame == 80 {
             "add-palette"
@@ -262,6 +273,8 @@ impl PreviewProbe {
         self.frame
             >= if self.add_palette || self.appearance {
                 81
+            } else if self.multiplay {
+                181
             } else {
                 121
             }
