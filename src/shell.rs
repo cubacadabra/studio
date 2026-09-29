@@ -53,6 +53,8 @@ mod scene_manifest;
 mod studio_add_ui;
 #[path = "shell/studio_chrome.rs"]
 mod studio_chrome;
+#[path = "shell/studio_codex_state.rs"]
+mod studio_codex_state;
 #[path = "shell/studio_codex_ui.rs"]
 mod studio_codex_ui;
 #[path = "shell/studio_commands.rs"]
@@ -77,6 +79,8 @@ mod studio_start_ui;
 mod studio_state;
 #[path = "shell/studio_test_ui.rs"]
 mod studio_test_ui;
+#[path = "shell/studio_viewport_ui.rs"]
+mod studio_viewport_ui;
 #[path = "shell/studio_world.rs"]
 mod studio_world;
 #[path = "shell/style.rs"]

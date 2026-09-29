@@ -25,6 +25,7 @@ mod app_roblox;
 mod app_scene_edit;
 mod app_scene_migration;
 mod app_scene_viewport;
+mod app_start;
 mod assets;
 mod codex;
 mod game_creator;
