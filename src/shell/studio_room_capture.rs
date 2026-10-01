@@ -83,6 +83,7 @@ impl StudioShell {
                 dialog = dialog.set_parent(window);
             }
             if let Some(path) = dialog.pick_file() {
+                self.room_capture.clear_review();
                 self.room_capture.source = Some(path);
                 self.room_capture.error = None;
             }
@@ -97,6 +98,7 @@ impl StudioShell {
                 dialog = dialog.set_parent(window);
             }
             if let Some(path) = dialog.pick_folder() {
+                self.room_capture.clear_review();
                 self.room_capture.parent = Some(path);
                 self.room_capture.error = None;
             }
@@ -105,6 +107,16 @@ impl StudioShell {
 }
 
 impl RoomCaptureState {
+    fn clear_review(&mut self) {
+        self.dataset = None;
+        self.output = None;
+        self.preview = None;
+        self.preview_loaded = None;
+        self.preview_error = None;
+        self.selected = 0;
+        self.status.clear();
+    }
+
     fn start(&mut self) {
         let (Some(source), Some(parent)) = (&self.source, &self.parent) else {
             return;
@@ -219,8 +231,9 @@ impl RoomCaptureState {
                         });
                         ui.label(RichText::new("Creates a new capture folder with source metadata and selected frames.")
                             .color(colors.secondary_text));
-                        ui.label(RichText::new("Up to 180 frames · 1600 px maximum dimension")
-                            .color(colors.secondary_text));
+                        let options = CaptureOptions::default();
+                        ui.label(RichText::new(format!("Up to {} frames · {} px maximum dimension",
+                            options.max_frames, options.max_dimension)).color(colors.secondary_text));
                         ui.add_space(8.0);
                         if busy {
                             ui.horizontal_wrapped(|ui| {
@@ -490,6 +503,19 @@ mod tests {
         fs::create_dir_all(&runtime).unwrap();
         assert!(new_capture_path(Path::new("room.mov"), &runtime).is_err());
         fs::remove_dir_all(runtime.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn capture_preview_rejects_paths_outside_selected_frames() {
+        for file in [
+            "../frame.jpg",
+            "/tmp/frame.jpg",
+            "frames/../../frame.jpg",
+            "frames/frame-000001.png",
+            "frames/frame-a00001.jpg",
+        ] {
+            assert!(capture_preview_path(Path::new("/missing-dataset"), file).is_err());
+        }
     }
 
     #[test]

@@ -78,6 +78,13 @@ The resulting binary can be invoked as:
 Controls:
 
 - `World`, `Files`, and `Morphs`: switch the available workspaces
+- `File` → `Import From` → `Room Video…`: select a local video and an output
+  parent folder, extract selected frames, then review their timestamps and
+  training/evaluation roles. This also works from the project chooser.
+  Install `ffmpeg` and `ffprobe` for video decoding; selection and capture
+  metadata use the shared Rust `cubacadabra-room-capture` crate in `../tools`.
+  Capture folders are creator source; camera recovery and metric alignment
+  are the next stage before creating a playable world.
 - `ChatGPT · <plan>`: open the in-window Codex chat for the current project
 - `Play` / `Stop`: save and rebuild stale source, enter the gameplay preview,
   or return to the preserved Build-mode camera
@@ -128,6 +135,13 @@ CUBA_STUDIO_PROBE_DIR=/tmp/add-palette CUBA_STUDIO_PROBE_ADD=1 \
 CUBA_STUDIO_PROBE_DIR=/tmp/appearance CUBA_STUDIO_PROBE_APPEARANCE=1 \
   CUBA_STUDIO_PROBE_WORLD=starter-world \
   cargo run -- --path ../examples/survival-101
+
+CUBA_STUDIO_PROBE_DIR=/tmp/room-video CUBA_STUDIO_PROBE_ROOM_CAPTURE=1 \
+  cargo run
+
+CUBA_STUDIO_PROBE_DIR=/tmp/room-video-review \
+  CUBA_STUDIO_PROBE_CAPTURE_DATASET=/absolute/path/to/capture.json \
+  cargo run
 ```
 
 The multiplayer probe captures the nine-player overlay before and after
@@ -158,6 +172,12 @@ captures `add-palette.png`, and verifies that the shared palette entry point
 honors Studio's edit-mode checks. The Appearance probe performs an in-memory
 Block addition through the normal scene transaction path and captures its
 production Inspector without saving the fixture project.
+
+The Room Video probe checks the actual AppKit import item and shared command
+dispatch on macOS, opens the modal from the project chooser, and captures
+`room-video.png`. A supplied capture dataset additionally verifies selected
+frame decoding and review. Modal bounds are covered at mobile, tablet, laptop,
+and desktop sizes by the Studio tests.
 
 ## ChatGPT connection
 
