@@ -67,6 +67,8 @@ mod studio_morph_ui;
 mod studio_performance_ui;
 #[path = "shell/studio_project_ui.rs"]
 mod studio_project_ui;
+#[path = "shell/studio_room_capture.rs"]
+mod studio_room_capture;
 #[path = "shell/studio_scene_ui.rs"]
 mod studio_scene_ui;
 #[path = "shell/studio_shell.rs"]
@@ -166,6 +168,7 @@ pub(crate) enum StudioCommand {
     Save,
     PublishGame,
     ImportRobloxPlace,
+    ImportRoomVideo,
     ExportRobloxPlace,
     Undo,
     Redo,
@@ -487,6 +490,7 @@ pub(crate) struct StudioShell {
     recent_project_requested: Option<PathBuf>,
     open_project_requested: bool,
     roblox_import_requested: bool,
+    room_capture: studio_room_capture::RoomCaptureState,
     roblox_export_requested: bool,
     project_loading: Option<ProjectLoadingState>,
     new_project_dialog_open: bool,

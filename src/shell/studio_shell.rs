@@ -206,6 +206,7 @@ impl StudioShell {
             recent_project_requested: None,
             open_project_requested: false,
             roblox_import_requested: false,
+            room_capture: studio_room_capture::RoomCaptureState::default(),
             roblox_export_requested: false,
             project_loading: None,
             new_project_dialog_open: false,

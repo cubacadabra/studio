@@ -11,6 +11,8 @@ pub(crate) struct PreviewProbe {
     expected_play_viewports: Option<Vec<egui::Rect>>,
     add_palette: bool,
     appearance: bool,
+    room_capture: bool,
+    capture_dataset: Option<PathBuf>,
     world: Option<String>,
     gameplay_camera: [f32; 3],
     projected: Option<[f32; 2]>,
@@ -40,6 +42,9 @@ impl PreviewProbe {
             expected_play_viewports: None,
             add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
             appearance: env::var_os("CUBA_STUDIO_PROBE_APPEARANCE").is_some(),
+            room_capture: env::var_os("CUBA_STUDIO_PROBE_ROOM_CAPTURE").is_some()
+                || env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").is_some(),
+            capture_dataset: env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").map(PathBuf::from),
             world: env::var("CUBA_STUDIO_PROBE_WORLD").ok(),
             gameplay_camera: [0.0; 3],
             projected: None,
@@ -57,6 +62,31 @@ impl PreviewProbe {
             return;
         }
         self.frame += 1;
+        if self.frame == 2 && self.room_capture {
+            #[cfg(target_os = "macos")]
+            crate::macos::probe_room_capture_menu();
+            #[cfg(not(target_os = "macos"))]
+            app.shell
+                .as_mut()
+                .unwrap()
+                .execute_command(crate::shell::StudioCommand::ImportRoomVideo);
+            eprintln!("room video menu dispatch probe passed");
+        }
+        if self.frame == 3
+            && let Some(dataset) = &self.capture_dataset
+        {
+            app.shell
+                .as_mut()
+                .unwrap()
+                .probe_room_capture_review(dataset);
+        }
+        if self.frame == 80 && self.room_capture {
+            app.shell
+                .as_ref()
+                .unwrap()
+                .probe_room_capture_visible(self.capture_dataset.is_some());
+            eprintln!("room video modal and capture review probe passed");
+        }
         if self.frame == 2
             && let Some(world) = &self.world
         {
@@ -242,6 +272,8 @@ impl PreviewProbe {
             "add-palette"
         } else if self.appearance && self.frame == 80 {
             "appearance-inspector"
+        } else if self.room_capture && self.frame == 80 {
+            "room-video"
         } else {
             match (self.review, self.frame) {
                 (false, 120) => {
@@ -271,7 +303,7 @@ impl PreviewProbe {
 
     pub(crate) fn finished(&self) -> bool {
         self.frame
-            >= if self.add_palette || self.appearance {
+            >= if self.add_palette || self.appearance || self.room_capture {
                 81
             } else if self.multiplay {
                 181

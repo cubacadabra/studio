@@ -56,6 +56,9 @@ impl StudioShell {
                 self.roblox_import_requested = true;
                 self.notice = "Choose a Roblox XML place to import…".to_owned();
             }
+            StudioCommand::ImportRoomVideo => {
+                self.room_capture.open = true;
+            }
             StudioCommand::ExportRobloxPlace => {
                 if self.authoring_scene_source.is_some() {
                     self.roblox_export_requested = true;
@@ -219,6 +222,7 @@ impl StudioShell {
         self.show_project_error(ui.ctx());
         self.show_unsaved_changes(ui.ctx());
         self.show_about(ui.ctx());
+        self.room_capture.show(ui.ctx());
         self.show_add_palette(ui.ctx());
         self.show_performance_monitor(ui.ctx());
         ui.ctx().request_repaint_after(if self.about_open {

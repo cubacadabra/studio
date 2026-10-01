@@ -107,6 +107,7 @@ impl StudioShell {
             && self.project_editable
             && !self.playing
             && self.project_loading.is_none()
+            && !self.room_capture.open
     }
 
     pub(crate) fn review_camera(&self) -> ReviewCameraPreset {

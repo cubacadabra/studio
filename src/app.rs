@@ -113,6 +113,9 @@ impl StudioApp {
             self.choose_and_open_project();
         }
         self.handle_roblox_interchange_requests();
+        if let Some(shell) = &mut self.shell {
+            shell.handle_room_capture_dialogs(self.window.as_ref());
+        }
         if let Some(project) = self
             .shell
             .as_mut()

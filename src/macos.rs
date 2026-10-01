@@ -24,6 +24,7 @@ const OPEN_PROJECT_TAG: isize = 2;
 const SAVE_TAG: isize = 3;
 const PUBLISH_GAME_TAG: isize = 11;
 const IMPORT_ROBLOX_PLACE_TAG: isize = 9;
+const IMPORT_ROOM_VIDEO_TAG: isize = 12;
 const EXPORT_ROBLOX_PLACE_TAG: isize = 10;
 const UNDO_TAG: isize = 4;
 const REDO_TAG: isize = 5;
@@ -373,6 +374,14 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
     import_menu.addItem(&studio_menu_item(
         main_thread,
         target,
+        ns_string!("Room Video…"),
+        ns_string!(""),
+        IMPORT_ROOM_VIDEO_TAG,
+        None,
+    ));
+    import_menu.addItem(&studio_menu_item(
+        main_thread,
+        target,
         ns_string!("Roblox Place (.rbxlx)…"),
         ns_string!(""),
         IMPORT_ROBLOX_PLACE_TAG,
@@ -567,11 +576,55 @@ fn command_for_tag(tag: isize) -> Option<StudioCommand> {
         SAVE_TAG => Some(StudioCommand::Save),
         PUBLISH_GAME_TAG => Some(StudioCommand::PublishGame),
         IMPORT_ROBLOX_PLACE_TAG => Some(StudioCommand::ImportRobloxPlace),
+        IMPORT_ROOM_VIDEO_TAG => Some(StudioCommand::ImportRoomVideo),
         EXPORT_ROBLOX_PLACE_TAG => Some(StudioCommand::ExportRobloxPlace),
         UNDO_TAG => Some(StudioCommand::Undo),
         REDO_TAG => Some(StudioCommand::Redo),
         DUPLICATE_TAG => Some(StudioCommand::Duplicate),
         COPY_TAG => Some(StudioCommand::Copy),
         _ => None,
+    }
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn probe_room_capture_menu() {
+    let application = NSApplication::sharedApplication(main_thread_marker());
+    let file = application
+        .mainMenu()
+        .unwrap()
+        .itemAtIndex(1)
+        .unwrap()
+        .submenu()
+        .unwrap();
+    assert_eq!(file.title().to_string(), "File");
+    let import_item = file.itemAtIndex(5).unwrap();
+    assert_eq!(import_item.title().to_string(), "Import From");
+    let import = import_item.submenu().unwrap();
+    let room = import
+        .itemWithTag(IMPORT_ROOM_VIDEO_TAG)
+        .expect("Room Video menu item");
+    assert_eq!(room.title().to_string(), "Room Video…");
+    assert!(room.isEnabled());
+    MENU_TARGET.with(|target| {
+        target
+            .get()
+            .unwrap()
+            .perform_studio_menu_action(sel!(performStudioMenuAction:), &room)
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn room_video_native_tag_dispatches_shared_command() {
+        assert_eq!(
+            command_for_tag(IMPORT_ROOM_VIDEO_TAG),
+            Some(StudioCommand::ImportRoomVideo)
+        );
+        assert_ne!(IMPORT_ROOM_VIDEO_TAG, IMPORT_ROBLOX_PLACE_TAG);
+        assert_ne!(IMPORT_ROOM_VIDEO_TAG, EXPORT_ROBLOX_PLACE_TAG);
+        assert_ne!(IMPORT_ROOM_VIDEO_TAG, PUBLISH_GAME_TAG);
     }
 }

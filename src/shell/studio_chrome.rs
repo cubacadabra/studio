@@ -48,6 +48,10 @@ impl StudioShell {
                             ui.separator();
                             ui.menu_button("Import From", |ui| {
                                 ui.set_min_width(220.0);
+                                if menu_entry(ui, Icon::Open, "Room Video…", "", true).clicked() {
+                                    self.execute_command(StudioCommand::ImportRoomVideo);
+                                    ui.close();
+                                }
                                 if menu_entry(
                                     ui,
                                     Icon::Open,
