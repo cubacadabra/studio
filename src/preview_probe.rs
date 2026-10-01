@@ -2,6 +2,7 @@
 //! Set CUBA_STUDIO_PROBE_DIR in a debug build; release builds omit this module.
 use super::*;
 use egui_wgpu::wgpu;
+use std::time::Duration;
 
 pub(crate) struct PreviewProbe {
     directory: PathBuf,
@@ -13,6 +14,9 @@ pub(crate) struct PreviewProbe {
     appearance: bool,
     room_capture: bool,
     capture_dataset: Option<PathBuf>,
+    capture_video: Option<PathBuf>,
+    capture_progress_frame: Option<u32>,
+    capture_complete_frame: Option<u32>,
     world: Option<String>,
     gameplay_camera: [f32; 3],
     projected: Option<[f32; 2]>,
@@ -43,8 +47,12 @@ impl PreviewProbe {
             add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
             appearance: env::var_os("CUBA_STUDIO_PROBE_APPEARANCE").is_some(),
             room_capture: env::var_os("CUBA_STUDIO_PROBE_ROOM_CAPTURE").is_some()
-                || env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").is_some(),
+                || env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").is_some()
+                || env::var_os("CUBA_STUDIO_PROBE_CAPTURE_VIDEO").is_some(),
             capture_dataset: env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").map(PathBuf::from),
+            capture_video: env::var_os("CUBA_STUDIO_PROBE_CAPTURE_VIDEO").map(PathBuf::from),
+            capture_progress_frame: None,
+            capture_complete_frame: None,
             world: env::var("CUBA_STUDIO_PROBE_WORLD").ok(),
             gameplay_camera: [0.0; 3],
             projected: None,
@@ -79,6 +87,32 @@ impl PreviewProbe {
                 .as_mut()
                 .unwrap()
                 .probe_room_capture_review(dataset);
+        }
+        if let Some(video) = &self.capture_video {
+            if self.frame == 3 {
+                app.shell
+                    .as_mut()
+                    .unwrap()
+                    .probe_room_capture_start(video, &self.directory);
+            }
+            if self.frame > 3 {
+                let (progress, complete) =
+                    app.shell.as_ref().unwrap().probe_room_capture_progress();
+                if self.capture_progress_frame.is_none()
+                    && progress.is_some_and(|progress| {
+                        progress.stage == cubacadabra_room_capture::CaptureStage::Selecting
+                            && progress.completed > 0
+                            && progress.stage_elapsed >= Duration::from_secs(1)
+                    })
+                {
+                    self.capture_progress_frame = Some(self.frame);
+                }
+                if complete && self.capture_complete_frame.is_none() {
+                    app.shell.as_ref().unwrap().probe_room_capture_visible(true);
+                    self.capture_complete_frame = Some(self.frame);
+                    eprintln!("room video worker progress and completion probe passed");
+                }
+            }
         }
         if self.frame == 80 && self.room_capture {
             app.shell
@@ -264,7 +298,11 @@ impl PreviewProbe {
     }
 
     pub(crate) fn capture_path(&self) -> Option<PathBuf> {
-        let name = if self.multiplay && self.frame == 70 {
+        let name = if self.capture_progress_frame == Some(self.frame) {
+            "room-video-progress"
+        } else if self.capture_complete_frame == Some(self.frame) {
+            "room-video-complete"
+        } else if self.multiplay && self.frame == 70 {
             "multiplayer"
         } else if self.multiplay && self.frame == 180 {
             "multiplayer-switched"
@@ -302,6 +340,11 @@ impl PreviewProbe {
     }
 
     pub(crate) fn finished(&self) -> bool {
+        if self.capture_video.is_some() {
+            return self
+                .capture_complete_frame
+                .is_some_and(|frame| self.frame > frame);
+        }
         self.frame
             >= if self.add_palette || self.appearance || self.room_capture {
                 81

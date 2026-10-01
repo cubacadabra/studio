@@ -80,7 +80,7 @@ Controls:
 - `World`, `Files`, and `Morphs`: switch the available workspaces
 - `File` → `Import From` → `Room Video…`: select a local video and an output
   parent folder, extract selected frames, then review their timestamps and
-  training/evaluation roles. This also works from the project chooser.
+  reconstruction/evaluation roles. This also works from the project chooser.
   Install `ffmpeg` and `ffprobe` for video decoding; selection and capture
   metadata use the shared Rust `cubacadabra-room-capture` crate in `../tools`.
   Capture folders are creator source; camera recovery and metric alignment
@@ -142,7 +142,17 @@ CUBA_STUDIO_PROBE_DIR=/tmp/room-video CUBA_STUDIO_PROBE_ROOM_CAPTURE=1 \
 CUBA_STUDIO_PROBE_DIR=/tmp/room-video-review \
   CUBA_STUDIO_PROBE_CAPTURE_DATASET=/absolute/path/to/capture.json \
   cargo run
+
+CUBA_STUDIO_PROBE_DIR=/tmp/room-video-progress \
+  CUBA_STUDIO_PROBE_CAPTURE_VIDEO=/absolute/path/to/room.mov \
+  cargo run
 ```
+
+The video-progress probe runs the real capture worker, saves its dataset under
+the probe directory, captures selection progress when measurable and the final
+frame review, then exits after completion. Capture progress is logged at info
+level on step changes and every five seconds; `RUST_LOG=info` enables it if a
+custom logging filter is in use.
 
 The multiplayer probe captures the nine-player overlay before and after
 repeatedly clicking players into the full view. It checks that control follows

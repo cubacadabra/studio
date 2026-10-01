@@ -1,18 +1,21 @@
 use super::*;
-use cubacadabra_room_capture::{CaptureDataset, CaptureOptions, capture_video};
+use cubacadabra_room_capture::{
+    CaptureDataset, CaptureOptions, CaptureProgress, CaptureStage, capture_video_with_progress,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, TryRecvError},
 };
 
 enum CaptureMessage {
-    Progress(String),
+    Progress(CaptureProgress),
     Finished(Result<CaptureDataset, String>),
 }
 
 struct CaptureWorker {
     messages: Receiver<CaptureMessage>,
     cancelled: Arc<AtomicBool>,
+    started: Instant,
 }
 
 impl Drop for CaptureWorker {
@@ -32,6 +35,7 @@ pub(super) struct RoomCaptureState {
     choose_parent: bool,
     worker: Option<CaptureWorker>,
     status: String,
+    progress: Option<CaptureProgress>,
     error: Option<String>,
     dataset: Option<CaptureDataset>,
     output: Option<PathBuf>,
@@ -42,6 +46,26 @@ pub(super) struct RoomCaptureState {
 }
 
 impl StudioShell {
+    #[cfg(debug_assertions)]
+    pub(crate) fn probe_room_capture_start(&mut self, source: &Path, parent: &Path) {
+        self.room_capture.source = Some(source.to_owned());
+        self.room_capture.parent = Some(parent.to_owned());
+        self.room_capture.start();
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn probe_room_capture_progress(&self) -> (Option<CaptureProgress>, bool) {
+        assert!(
+            self.room_capture.error.is_none(),
+            "capture probe failed: {:?}",
+            self.room_capture.error
+        );
+        (
+            self.room_capture.progress,
+            self.room_capture.dataset.is_some(),
+        )
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn probe_room_capture_review(&mut self, manifest: &Path) {
         let dataset: CaptureDataset =
@@ -115,6 +139,7 @@ impl RoomCaptureState {
         self.preview_error = None;
         self.selected = 0;
         self.status.clear();
+        self.progress = None;
     }
 
     fn start(&mut self) {
@@ -134,18 +159,40 @@ impl RoomCaptureState {
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
         let (send, messages) = mpsc::channel();
+        let started = Instant::now();
         let spawned = std::thread::Builder::new()
             .name("room-video-capture".to_owned())
             .spawn(move || {
-                let result = capture_video(
+                log::info!("Room video capture started: source={} output={}", source.display(), worker_output.display());
+                let mut last_logged = None;
+                let mut last_stage = None;
+                let result = capture_video_with_progress(
                     &source,
                     &worker_output,
                     CaptureOptions::default(),
                     &worker_cancelled,
-                    |message| {
-                        let _ = send.send(CaptureMessage::Progress(message.to_owned()));
+                    |progress| {
+                        let now = Instant::now();
+                        if last_stage != Some(progress.stage)
+                            || last_logged.is_none_or(|last: Instant| now.duration_since(last) >= Duration::from_secs(5))
+                        {
+                            log::info!(
+                                "Room video capture progress: step={}/5 stage={:?} {} elapsed={} step_elapsed={} step_remaining={}",
+                                progress.stage.step(), progress.stage, capture_progress_detail(progress),
+                                capture_duration(progress.elapsed), capture_duration(progress.stage_elapsed),
+                                progress.estimated_remaining().map(capture_duration).unwrap_or_else(|| "estimating".to_owned()),
+                            );
+                            last_logged = Some(now);
+                            last_stage = Some(progress.stage);
+                        }
+                        let _ = send.send(CaptureMessage::Progress(progress));
                     },
                 );
+                match &result {
+                    Ok(dataset) => log::info!("Room video capture finished: candidates={} selected={} elapsed={} output={}",
+                        dataset.candidate_count, dataset.frames.len(), capture_duration(started.elapsed()), worker_output.display()),
+                    Err(error) => log::info!("Room video capture stopped: elapsed={} reason={error}", capture_duration(started.elapsed())),
+                }
                 let _ = send.send(CaptureMessage::Finished(result));
             });
         match spawned {
@@ -153,6 +200,7 @@ impl RoomCaptureState {
                 self.worker = Some(CaptureWorker {
                     messages,
                     cancelled,
+                    started,
                 });
                 self.output = Some(output);
                 self.dataset = None;
@@ -161,6 +209,7 @@ impl RoomCaptureState {
                 self.preview_error = None;
                 self.selected = 0;
                 self.status = "Reading video…".to_owned();
+                self.progress = None;
             }
             Err(error) => self.error = Some(format!("Could not start capture: {error}")),
         }
@@ -171,7 +220,7 @@ impl RoomCaptureState {
         if let Some(worker) = &self.worker {
             loop {
                 match worker.messages.try_recv() {
-                    Ok(CaptureMessage::Progress(message)) => self.status = message,
+                    Ok(CaptureMessage::Progress(progress)) => self.progress = Some(progress),
                     Ok(CaptureMessage::Finished(result)) => {
                         finished = Some(result);
                         break;
@@ -200,9 +249,52 @@ impl RoomCaptureState {
 
     fn cancel(&mut self) {
         if let Some(worker) = &self.worker {
-            worker.cancelled.store(true, Ordering::Relaxed);
+            if !worker.cancelled.swap(true, Ordering::Relaxed) {
+                log::info!(
+                    "Room video capture cancellation requested: elapsed={}",
+                    capture_duration(worker.started.elapsed())
+                );
+            }
             self.status = "Cancelling capture…".to_owned();
         }
+    }
+
+    fn show_progress(&self, ui: &mut egui::Ui) {
+        let worker = self.worker.as_ref().unwrap();
+        let cancelling = worker.cancelled.load(Ordering::Relaxed);
+        let colors = palette(ui);
+        if cancelling {
+            ui.label("Cancelling capture…");
+        } else if let Some(progress) = self.progress {
+            ui.label(format!(
+                "Step {} of 5 · {}",
+                progress.stage.step(),
+                progress.stage.label()
+            ));
+            ui.add(
+                egui::ProgressBar::new(progress.fraction().unwrap_or(0.0))
+                    .desired_width(ui.available_width())
+                    .text(capture_progress_detail(progress)),
+            );
+        } else {
+            ui.label(&self.status);
+        }
+        let remaining = if cancelling {
+            "Waiting for capture to stop".to_owned()
+        } else {
+            self.progress
+                .and_then(CaptureProgress::estimated_remaining)
+                .map(|remaining| format!("About {} left in this step", capture_duration(remaining)))
+                .unwrap_or_else(|| "Estimating time left in this step…".to_owned())
+        };
+        ui.label(
+            RichText::new(format!(
+                "{} elapsed · {remaining}",
+                capture_duration(worker.started.elapsed())
+            ))
+            .color(colors.secondary_text),
+        );
+        ui.ctx().request_repaint_after(Duration::from_millis(250));
     }
 
     pub(super) fn show(&mut self, context: &egui::Context) -> Option<Rect> {
@@ -214,6 +306,7 @@ impl RoomCaptureState {
         let width = (viewport.width() - 64.0).clamp(120.0, 560.0);
         let mut close = false;
         let response = egui::Modal::new(egui::Id::new("room_video_capture"))
+            .frame(Frame::window(&context.style_of(context.theme())).inner_margin(Margin::same(16)))
             .show(context, |ui| {
                 ui.set_width(width);
                 let colors = palette(ui);
@@ -222,6 +315,13 @@ impl RoomCaptureState {
                 egui::ScrollArea::vertical()
                     .max_height((viewport.height() - 140.0).max(80.0))
                     .show(ui, |ui| {
+                        if self.dataset.is_some() {
+                            self.show_review(ui);
+                            if ui.add_sized([140.0, 44.0], egui::Button::new("Start another capture")).clicked() {
+                                self.clear_review();
+                            }
+                            return;
+                        }
                         ui.label("Extract sharp frames for camera recovery and room reconstruction.");
                         ui.add_space(8.0);
                         let busy = self.worker.is_some();
@@ -236,25 +336,21 @@ impl RoomCaptureState {
                             options.max_frames, options.max_dimension)).color(colors.secondary_text));
                         ui.add_space(8.0);
                         if busy {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spinner();
-                                ui.label(&self.status);
-                            });
-                            if ui.add_sized([100.0, 44.0], egui::Button::new("Cancel capture")).clicked() {
+                            self.show_progress(ui);
+                            let cancelling = self.worker.as_ref().unwrap().cancelled.load(Ordering::Relaxed);
+                            if ui.add_enabled(!cancelling, egui::Button::new("Cancel capture")
+                                .min_size(egui::vec2(100.0, 44.0))).clicked() {
                                 self.cancel();
                             }
                         } else if ui.add_enabled(
                             self.source.is_some() && self.parent.is_some(),
-                            egui::Button::new(if self.dataset.is_some() { "Extract again" } else { "Extract frames" })
+                            egui::Button::new("Extract frames")
                                 .min_size(egui::vec2(120.0, 44.0)),
                         ).clicked() {
                             self.start();
                         }
                         if let Some(error) = &self.error {
                             ui.label(RichText::new(error).color(colors.axis_x));
-                        }
-                        if self.dataset.is_some() {
-                            self.show_review(ui);
                         }
                     });
                 ui.add_space(8.0);
@@ -274,7 +370,8 @@ impl RoomCaptureState {
         ui.add_space(8.0);
         ui.label(RichText::new(&self.status).strong());
         ui.label(format!(
-            "{} × {} · {:.1} seconds · {}",
+            "{} · {} × {} · {:.1} seconds · {}",
+            dataset.source.filename,
             dataset.source.video.width,
             dataset.source.video.height,
             dataset.source.video.duration_seconds,
@@ -313,7 +410,7 @@ impl RoomCaptureState {
                 if frame.evaluation {
                     "Evaluation"
                 } else {
-                    "Training"
+                    "Reconstruction"
                 },
                 frame.sharpness
             ));
@@ -368,13 +465,59 @@ impl RoomCaptureState {
     }
 }
 
+fn capture_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 3600 {
+        format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+    } else if seconds >= 60 {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn capture_progress_detail(progress: CaptureProgress) -> String {
+    let Some(total) = progress.total else {
+        return "Reading video metadata…".to_owned();
+    };
+    let completed = progress.completed.min(total);
+    let percent = progress.fraction().unwrap_or(0.0) * 100.0;
+    match progress.stage {
+        CaptureStage::Hashing => format!(
+            "{:.1} / {:.1} MB hashed · {percent:.0}%",
+            completed as f64 / 1_000_000.0,
+            total as f64 / 1_000_000.0
+        ),
+        CaptureStage::Decoding => format!(
+            "{} / {} of video decoded · {percent:.0}%",
+            capture_duration(Duration::from_millis(completed)),
+            capture_duration(Duration::from_millis(total))
+        ),
+        CaptureStage::Selecting => format!("{completed} / {total} frames checked · {percent:.0}%"),
+        CaptureStage::Saving => format!(
+            "{} / {} frames saved · {percent:.0}%",
+            completed.min(total.saturating_sub(1)),
+            total.saturating_sub(1)
+        ),
+        CaptureStage::Complete => "Capture complete · 100%".to_owned(),
+        CaptureStage::Inspecting => "Reading video metadata…".to_owned(),
+    }
+}
+
 fn capture_path_row(ui: &mut egui::Ui, label: &str, path: Option<&Path>, requested: &mut bool) {
     ui.label(RichText::new(label).strong());
     ui.horizontal(|ui| {
-        if ui
+        let choose = ui
             .add_sized([84.0, 44.0], egui::Button::new("Choose…"))
-            .clicked()
-        {
+            .on_hover_text(format!("Choose {label}"));
+        choose.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                ui.is_enabled(),
+                format!("Choose {label}"),
+            )
+        });
+        if choose.clicked() {
             *requested = true;
         }
         let text = path
@@ -414,12 +557,12 @@ fn new_capture_path(source: &Path, parent: &Path) -> Result<PathBuf, String> {
     if !parent.is_dir() {
         return Err("Choose a folder for the capture source.".to_owned());
     }
-    if parent
-        .components()
-        .any(|part| part.as_os_str().eq_ignore_ascii_case("runtime"))
-    {
+    if parent.components().any(|part| {
+        part.as_os_str().eq_ignore_ascii_case("runtime")
+            || part.as_os_str().eq_ignore_ascii_case("assets")
+    }) {
         return Err(
-            "Capture data is authoring source. Choose a folder outside runtime assets.".to_owned(),
+            "Capture data is authoring source. Choose a folder outside runtime and assets directories.".to_owned(),
         );
     }
     let stem = source.file_stem().unwrap_or_default().to_string_lossy();
@@ -456,6 +599,7 @@ mod tests {
             worker: Some(CaptureWorker {
                 messages,
                 cancelled: cancelled.clone(),
+                started: Instant::now(),
             }),
             ..Default::default()
         };
@@ -473,6 +617,7 @@ mod tests {
             worker: Some(CaptureWorker {
                 messages,
                 cancelled: Arc::new(AtomicBool::new(false)),
+                started: Instant::now(),
             }),
             ..Default::default()
         };
@@ -483,7 +628,41 @@ mod tests {
     }
 
     #[test]
-    fn capture_output_is_unique_and_never_inside_runtime() {
+    fn queued_progress_does_not_hide_cancellation_and_retry_clears_it() {
+        let (send, messages) = mpsc::channel();
+        let mut state = RoomCaptureState {
+            worker: Some(CaptureWorker {
+                messages,
+                cancelled: Arc::new(AtomicBool::new(false)),
+                started: Instant::now(),
+            }),
+            ..Default::default()
+        };
+        state.cancel();
+        send.send(CaptureMessage::Progress(CaptureProgress {
+            stage: CaptureStage::Selecting,
+            completed: 120,
+            total: Some(540),
+            elapsed: Duration::from_secs(60),
+            stage_elapsed: Duration::from_secs(20),
+        }))
+        .unwrap();
+        state.poll();
+        assert_eq!(state.status, "Cancelling capture…");
+        assert_eq!(state.progress.unwrap().completed, 120);
+        send.send(CaptureMessage::Finished(Err(
+            "Capture cancelled.".to_owned()
+        )))
+        .unwrap();
+        state.poll();
+        assert!(state.worker.is_none());
+        assert!(state.error.as_deref().unwrap().contains("cancelled"));
+        state.clear_review();
+        assert!(state.progress.is_none());
+    }
+
+    #[test]
+    fn capture_output_is_unique_and_outside_published_asset_trees() {
         let parent = std::env::temp_dir();
         let first = new_capture_path(Path::new("a room.mov"), &parent).unwrap();
         let second = new_capture_path(Path::new("a room.mov"), &parent).unwrap();
@@ -497,12 +676,13 @@ mod tests {
                 .starts_with("a-room-capture-")
         );
         assert!(!first.exists());
-        let runtime = parent
-            .join(format!("studio-capture-test-{}", std::process::id()))
-            .join("runtime");
-        fs::create_dir_all(&runtime).unwrap();
-        assert!(new_capture_path(Path::new("room.mov"), &runtime).is_err());
-        fs::remove_dir_all(runtime.parent().unwrap()).unwrap();
+        let root = parent.join(format!("studio-capture-test-{}", std::process::id()));
+        for name in ["runtime", "assets"] {
+            let folder = root.join(name);
+            fs::create_dir_all(&folder).unwrap();
+            assert!(new_capture_path(Path::new("room.mov"), &folder).is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -526,7 +706,16 @@ mod tests {
             [1280.0, 800.0],
             [1440.0, 900.0],
         ] {
-            for review in [false, true] {
+            for mode in [
+                "ready",
+                "review",
+                "inspecting",
+                "hashing",
+                "decoding",
+                "selecting",
+                "saving",
+                "cancelling",
+            ] {
                 let context = egui::Context::default();
                 configure_context(&context);
                 let mut state = RoomCaptureState {
@@ -536,7 +725,34 @@ mod tests {
                     error: Some("A useful error that may wrap on narrow screens. Choose a valid video and try extraction again.".to_owned()),
                     ..Default::default()
                 };
-                if review {
+                let (_send, messages) = mpsc::channel();
+                if !matches!(mode, "ready" | "review") {
+                    let stage = match mode {
+                        "inspecting" => CaptureStage::Inspecting,
+                        "hashing" => CaptureStage::Hashing,
+                        "decoding" => CaptureStage::Decoding,
+                        "saving" => CaptureStage::Saving,
+                        _ => CaptureStage::Selecting,
+                    };
+                    state.worker = Some(CaptureWorker {
+                        messages,
+                        cancelled: Arc::new(AtomicBool::new(mode == "cancelling")),
+                        started: Instant::now() - Duration::from_secs(70),
+                    });
+                    state.progress = Some(CaptureProgress {
+                        stage,
+                        completed: 123,
+                        total: if mode == "inspecting" {
+                            None
+                        } else {
+                            Some(540)
+                        },
+                        elapsed: Duration::from_secs(70),
+                        stage_elapsed: Duration::from_secs(20),
+                    });
+                    state.error = None;
+                }
+                if mode == "review" {
                     state.dataset = Some(serde_json::from_value(serde_json::json!({
                         "formatVersion": 1,
                         "source": {"filename": "room.mov", "sha256": "00", "bytes": 100,
@@ -567,7 +783,7 @@ mod tests {
                 }
                 assert!(
                     screen.contains_rect(modal),
-                    "{size:?}, review={review}: {modal:?}"
+                    "{size:?}, mode={mode}: {modal:?}"
                 );
                 assert!(modal.width() <= 600.0);
             }
