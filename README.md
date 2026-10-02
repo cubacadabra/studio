@@ -83,8 +83,17 @@ Controls:
   reconstruction/evaluation roles. This also works from the project chooser.
   Install `ffmpeg` and `ffprobe` for video decoding; selection and capture
   metadata use the shared Rust `cubacadabra-room-capture` crate in `../tools`.
-  Capture folders are creator source; camera recovery and metric alignment
-  are the next stage before creating a playable world.
+  Use `Open capture…` to resume from `capture.json`, then `Recover cameras`
+  with optional local COLMAP installed on `PATH`. `Open reconstruction…`
+  reopens saved sparse evidence independently of its capture folder. Review
+  recovered camera positions, point observations in source images, failed
+  frames, calibration, and parallax diagnostics. Drag/scroll or use the view
+  sliders to orbit and zoom. Under `Scale and floor alignment`, pick measured
+  distance endpoints and three floor points, preview, check the upward Y arrow,
+  then save the reviewed alignment. These are creator-source results; dense
+  geometry, collision, and playable-world conversion remain later stages.
+  Creator object dimensions saved through `measure-capture` appear in the
+  alignment controls as length/depth/height choices for the measured distance.
 - `ChatGPT · <plan>`: open the in-window Codex chat for the current project
 - `Play` / `Stop`: save and rebuild stale source, enter the gameplay preview,
   or return to the preserved Build-mode camera
@@ -146,6 +155,10 @@ CUBA_STUDIO_PROBE_DIR=/tmp/room-video-review \
 CUBA_STUDIO_PROBE_DIR=/tmp/room-video-progress \
   CUBA_STUDIO_PROBE_CAPTURE_VIDEO=/absolute/path/to/room.mov \
   cargo run
+
+CUBA_STUDIO_PROBE_DIR=/tmp/room-camera-review \
+  CUBA_STUDIO_PROBE_RECONSTRUCTION=/absolute/path/to/reconstruction.json \
+  cargo run
 ```
 
 The video-progress probe runs the real capture worker, saves its dataset under
@@ -153,6 +166,10 @@ the probe directory, captures selection progress when measurable and the final
 frame review, then exits after completion. Capture progress is logged at info
 level on step changes and every five seconds; `RUST_LOG=info` enables it if a
 custom logging filter is in use.
+
+The reconstruction probe loads real sparse evidence, checks that the source
+photograph decodes, captures the production modal, and exits. Run
+`cargo test --bin studio room_` for capture/recovery worker and layout checks.
 
 The multiplayer probe captures the nine-player overlay before and after
 repeatedly clicking players into the full view. It checks that control follows

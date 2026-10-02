@@ -7,6 +7,9 @@ use std::sync::{
     mpsc::{self, Receiver, TryRecvError},
 };
 
+#[path = "studio_room_reconstruction.rs"]
+mod camera_review;
+
 enum CaptureMessage {
     Progress(CaptureProgress),
     Finished(Result<CaptureDataset, String>),
@@ -33,6 +36,9 @@ pub(super) struct RoomCaptureState {
     parent: Option<PathBuf>,
     choose_source: bool,
     choose_parent: bool,
+    choose_capture: bool,
+    choose_reconstruction: bool,
+    cameras: camera_review::CameraReviewState,
     worker: Option<CaptureWorker>,
     status: String,
     progress: Option<CaptureProgress>,
@@ -98,7 +104,53 @@ impl StudioShell {
         }
     }
 
+    #[cfg(debug_assertions)]
+    pub(crate) fn probe_room_camera_review(&mut self, manifest: &Path) {
+        self.room_capture.cameras.load(manifest);
+        assert!(
+            self.room_capture.cameras.has_result(),
+            "camera reconstruction must load"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn probe_room_camera_visible(&self) {
+        self.room_capture.cameras.assert_review_visible();
+    }
+
     pub(crate) fn handle_room_capture_dialogs(&mut self, window: Option<&Window>) {
+        if std::mem::take(&mut self.room_capture.choose_capture) {
+            let mut dialog = rfd::FileDialog::new()
+                .set_title("Open room capture.json")
+                .add_filter("Capture dataset", &["json"]);
+            if let Some(window) = window {
+                dialog = dialog.set_parent(window);
+            }
+            if let Some(path) = dialog.pick_file() {
+                match cubacadabra_room_capture::reconstruction::read_capture(&path) {
+                    Ok(dataset) => {
+                        self.room_capture.clear_review();
+                        self.room_capture.status =
+                            format!("Captured {} selected frames", dataset.frames.len());
+                        self.room_capture.dataset = Some(dataset);
+                        self.room_capture.output = path.parent().map(Path::to_owned);
+                        self.room_capture.error = None;
+                    }
+                    Err(error) => self.room_capture.error = Some(error),
+                }
+            }
+        }
+        if std::mem::take(&mut self.room_capture.choose_reconstruction) {
+            let mut dialog = rfd::FileDialog::new()
+                .set_title("Open reconstruction.json")
+                .add_filter("Camera reconstruction", &["json"]);
+            if let Some(window) = window {
+                dialog = dialog.set_parent(window);
+            }
+            if let Some(path) = dialog.pick_file() {
+                self.room_capture.cameras.load(&path);
+            }
+        }
         if std::mem::take(&mut self.room_capture.choose_source) {
             let mut dialog = rfd::FileDialog::new()
                 .set_title("Choose a room video")
@@ -132,6 +184,7 @@ impl StudioShell {
 
 impl RoomCaptureState {
     fn clear_review(&mut self) {
+        self.cameras = camera_review::CameraReviewState::default();
         self.dataset = None;
         self.output = None;
         self.preview = None;
@@ -248,6 +301,7 @@ impl RoomCaptureState {
     }
 
     fn cancel(&mut self) {
+        self.cameras.cancel();
         if let Some(worker) = &self.worker {
             if !worker.cancelled.swap(true, Ordering::Relaxed) {
                 log::info!(
@@ -299,6 +353,7 @@ impl RoomCaptureState {
 
     pub(super) fn show(&mut self, context: &egui::Context) -> Option<Rect> {
         self.poll();
+        self.cameras.poll();
         if !self.open {
             return None;
         }
@@ -315,14 +370,38 @@ impl RoomCaptureState {
                 egui::ScrollArea::vertical()
                     .max_height((viewport.height() - 140.0).max(80.0))
                     .show(ui, |ui| {
+                        if self.cameras.active {
+                            self.cameras.show(ui);
+                            if !self.cameras.is_busy() {
+                                if self.dataset.is_some() && ui.add_sized([140.0, 44.0], egui::Button::new("Back to frames")).clicked() {
+                                    self.cameras.active = false;
+                                }
+                                if ui.add_sized([140.0, 44.0], egui::Button::new("Start another capture")).clicked() { self.clear_review(); }
+                            }
+                            return;
+                        }
                         if self.dataset.is_some() {
                             self.show_review(ui);
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.add_sized([140.0, 44.0], egui::Button::new("Recover cameras")).clicked() {
+                                    if let Some(output) = &self.output { self.cameras.start(&output.join("capture.json")); }
+                                }
+                                if self.cameras.has_result() && ui.add_sized([140.0, 44.0], egui::Button::new("Review cameras")).clicked() { self.cameras.active = true; }
+                                if ui.add_sized([140.0, 44.0], egui::Button::new("Open reconstruction…")).clicked() { self.choose_reconstruction = true; }
+                            });
+                            if let Some(error) = &self.error { ui.label(RichText::new(error).color(colors.axis_x)); }
                             if ui.add_sized([140.0, 44.0], egui::Button::new("Start another capture")).clicked() {
                                 self.clear_review();
                             }
                             return;
                         }
                         ui.label("Extract sharp frames for camera recovery and room reconstruction.");
+                        ui.add_enabled_ui(self.worker.is_none(), |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.add_sized([140.0, 44.0], egui::Button::new("Open capture…")).clicked() { self.choose_capture = true; }
+                                if ui.add_sized([140.0, 44.0], egui::Button::new("Open reconstruction…")).clicked() { self.choose_reconstruction = true; }
+                            });
+                        });
                         ui.add_space(8.0);
                         let busy = self.worker.is_some();
                         ui.add_enabled_ui(!busy, |ui| {
@@ -715,6 +794,10 @@ mod tests {
                 "selecting",
                 "saving",
                 "cancelling",
+                "camera-review",
+                "camera-alignment",
+                "camera-empty",
+                "camera-error",
             ] {
                 let context = egui::Context::default();
                 configure_context(&context);
@@ -726,7 +809,7 @@ mod tests {
                     ..Default::default()
                 };
                 let (_send, messages) = mpsc::channel();
-                if !matches!(mode, "ready" | "review") {
+                if !matches!(mode, "ready" | "review") && !mode.starts_with("camera-") {
                     let stage = match mode {
                         "inspecting" => CaptureStage::Inspecting,
                         "hashing" => CaptureStage::Hashing,
@@ -766,6 +849,9 @@ mod tests {
                         "diagnostics": ["Metric scale needs a measured distance."]
                     })).unwrap());
                     state.output = state.parent.clone();
+                }
+                if mode.starts_with("camera-") {
+                    state.cameras = camera_review::test_review(mode);
                 }
                 let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(size[0], size[1]));
                 let mut modal = Rect::NOTHING;

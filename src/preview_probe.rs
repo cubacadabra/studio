@@ -14,6 +14,7 @@ pub(crate) struct PreviewProbe {
     appearance: bool,
     room_capture: bool,
     capture_dataset: Option<PathBuf>,
+    camera_reconstruction: Option<PathBuf>,
     capture_video: Option<PathBuf>,
     capture_progress_frame: Option<u32>,
     capture_complete_frame: Option<u32>,
@@ -47,9 +48,12 @@ impl PreviewProbe {
             add_palette: env::var_os("CUBA_STUDIO_PROBE_ADD").is_some(),
             appearance: env::var_os("CUBA_STUDIO_PROBE_APPEARANCE").is_some(),
             room_capture: env::var_os("CUBA_STUDIO_PROBE_ROOM_CAPTURE").is_some()
+                || env::var_os("CUBA_STUDIO_PROBE_RECONSTRUCTION").is_some()
                 || env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").is_some()
                 || env::var_os("CUBA_STUDIO_PROBE_CAPTURE_VIDEO").is_some(),
             capture_dataset: env::var_os("CUBA_STUDIO_PROBE_CAPTURE_DATASET").map(PathBuf::from),
+            camera_reconstruction: env::var_os("CUBA_STUDIO_PROBE_RECONSTRUCTION")
+                .map(PathBuf::from),
             capture_video: env::var_os("CUBA_STUDIO_PROBE_CAPTURE_VIDEO").map(PathBuf::from),
             capture_progress_frame: None,
             capture_complete_frame: None,
@@ -88,6 +92,14 @@ impl PreviewProbe {
                 .unwrap()
                 .probe_room_capture_review(dataset);
         }
+        if self.frame == 3
+            && let Some(manifest) = &self.camera_reconstruction
+        {
+            app.shell
+                .as_mut()
+                .unwrap()
+                .probe_room_camera_review(manifest);
+        }
         if let Some(video) = &self.capture_video {
             if self.frame == 3 {
                 app.shell
@@ -115,6 +127,9 @@ impl PreviewProbe {
             }
         }
         if self.frame == 80 && self.room_capture {
+            if self.camera_reconstruction.is_some() {
+                app.shell.as_ref().unwrap().probe_room_camera_visible();
+            }
             app.shell
                 .as_ref()
                 .unwrap()
