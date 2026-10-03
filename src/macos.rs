@@ -374,7 +374,7 @@ fn install_file_menu(main_menu: &NSMenu, main_thread: MainThreadMarker, target: 
     import_menu.addItem(&studio_menu_item(
         main_thread,
         target,
-        ns_string!("Room Video…"),
+        ns_string!("Room Video (experimental)…"),
         ns_string!(""),
         IMPORT_ROOM_VIDEO_TAG,
         None,
@@ -603,7 +603,7 @@ pub(crate) fn probe_room_capture_menu() {
     let room = import
         .itemWithTag(IMPORT_ROOM_VIDEO_TAG)
         .expect("Room Video menu item");
-    assert_eq!(room.title().to_string(), "Room Video…");
+    assert_eq!(room.title().to_string(), "Room Video (experimental)…");
     assert!(room.isEnabled());
     MENU_TARGET.with(|target| {
         target

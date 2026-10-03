@@ -79,8 +79,6 @@ mod studio_source_ui;
 mod studio_start_ui;
 #[path = "shell/studio_state.rs"]
 mod studio_state;
-#[path = "shell/studio_test_ui.rs"]
-mod studio_test_ui;
 #[path = "shell/studio_viewport_ui.rs"]
 mod studio_viewport_ui;
 #[path = "shell/studio_world.rs"]
@@ -178,10 +176,7 @@ pub(crate) enum StudioCommand {
     Copy,
     ShowWorld,
     ShowScripts,
-    ShowAssets,
-    ShowMaterials,
     ShowMorphs,
-    ShowTest,
 }
 
 pub(crate) struct PreparedShell {
@@ -379,9 +374,6 @@ pub(crate) struct StudioShell {
     scene_viewport_edit_requested: Option<SceneViewportEditRequest>,
     scene_tool: SceneTool,
     selected_world_asset: String,
-    selected_asset: &'static str,
-    test_tool: &'static str,
-    asset_filter: &'static str,
     playing: bool,
     project_editable: bool,
     project_dirty: bool,
@@ -395,7 +387,6 @@ pub(crate) struct StudioShell {
     rebuild_and_play_requested: bool,
     restart_requested: bool,
     notice: String,
-    search_query: String,
     scene_search_query: String,
     scene_search_matches_query: String,
     scene_search_matches: BTreeSet<String>,
@@ -511,7 +502,6 @@ pub(crate) struct StudioShell {
     pending_project_action: Option<PendingProjectAction>,
     exit_requested: bool,
     imported_asset_paths: Vec<PathBuf>,
-    roughness: f32,
     pending_textures_delta: egui::TexturesDelta,
     performance_open: bool,
     performance_shadows_enabled: bool,

@@ -88,9 +88,6 @@ impl StudioShell {
             scene_viewport_edit_requested: None,
             scene_tool: SceneTool::default(),
             selected_world_asset,
-            selected_asset: "forest-grass",
-            test_tool: "Sessions",
-            asset_filter: "All",
             // The standalone bootstrap changes this to the start screen in
             // `set_start_screen` before the first frame. Opening any project
             // then replaces this shell through the shared project-load path.
@@ -107,7 +104,6 @@ impl StudioShell {
             rebuild_and_play_requested: false,
             restart_requested: false,
             notice: "Ready".to_owned(),
-            search_query: String::new(),
             scene_search_query: String::new(),
             scene_search_matches_query: String::new(),
             scene_search_matches: BTreeSet::new(),
@@ -227,7 +223,6 @@ impl StudioShell {
             pending_project_action: None,
             exit_requested: false,
             imported_asset_paths: Vec::new(),
-            roughness: 0.72,
             pending_textures_delta: egui::TexturesDelta::default(),
             performance_open: false,
             performance_shadows_enabled: true,

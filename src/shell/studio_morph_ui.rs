@@ -187,7 +187,7 @@ impl StudioShell {
                                 let add_to_game = ui
                                     .add_enabled(
                                         self.project_asset_available,
-                                        egui::Button::new("Add to this game"),
+                                        egui::Button::new("Add to local library"),
                                     )
                                     .on_disabled_hover_text(
                                         "Open a game project before adding an asset.",
@@ -202,6 +202,11 @@ impl StudioShell {
                                         self.morph_project_add_requested = true;
                                     }
                                 }
+                                ui.label(
+                                    RichText::new("Local preview only. Package asset wiring is unfinished.")
+                                        .size(TYPE.meta)
+                                        .color(colors.muted),
+                                );
                                 if ui.button("Export .morphpack").clicked() {
                                     self.validate_morph_draft();
                                     if self

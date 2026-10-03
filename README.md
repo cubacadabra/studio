@@ -7,14 +7,29 @@ clients, then forwards desktop input to it.
 The first visual-workbench shell places the live game renderer inside a native
 desktop workspace. Raw source projects expose a focused scene-authoring loop:
 select a platform, adjust its position or size, duplicate or delete it, save,
-and rebuild the preview without losing the Studio session. Luau is authored
-through the embedded Codex integration rather than a Studio code editor.
+and rebuild the preview without losing the Studio session. Luau can be edited in Files or through the optional embedded Codex integration.
 Local package loading, keyboard movement, mouse camera control, wheel zoom, and
 package image assets continue to use the shared engine.
 
+This is a pre-launch creator preview. World, Files, and Morphs are the available
+workspaces. Morphs previews a local library; wiring new assets into a game package
+is unfinished. Room Video is an experimental evidence-review workflow, not
+video-to-playable-world conversion. Read the [current scope](https://github.com/cubacadabra/docs/blob/main/products/studio/overview.md)
+and start with [Cuboom](https://github.com/cubacadabra/examples/blob/main/cuboom/README.md).
+
 ## Run a game
 
-cargo run --release -vv -- --path /Users/aa/cubacadabra/examples/survival-101
+Build from sibling `studio`, `rust`, and `tools` checkouts with a current stable
+Rust toolchain and a native C/C++ compiler. macOS needs the Xcode Command Line
+Tools; Windows needs the MSVC C++ build tools. Linux needs a C/C++ toolchain,
+`pkg-config`, OpenSSL development headers, and a working graphics driver plus
+an X11 or Wayland session. Linux source-browser audio preview is unavailable.
+Optional Room Video tools and Codex are described below; they are not needed
+to open Cuboom.
+
+```sh
+cargo run --release -- --path ../examples/cuboom
+```
 
 Studio accepts either a built package or a raw game project.
 
@@ -60,25 +75,25 @@ temporary Studio-owned directory and removed when Studio exits. The native
 From this repository, run:
 
 ```sh
-cargo run --release -- --path /Users/aa/test-for-studio
+cargo run --release -- --path /tmp/cuboom-package
 ```
 
 The raw source project works the same way:
 
 ```sh
-cargo run --release -- --path /Users/aa/cubacadabra/examples/the-wild-west
+cargo run --release -- --path ../examples/the-wild-west
 ```
 
 The resulting binary can be invoked as:
 
 ```sh
-./target/release/studio --path /Users/aa/test-for-studio
+./target/release/studio --path /tmp/cuboom-package
 ```
 
 Controls:
 
 - `World`, `Files`, and `Morphs`: switch the available workspaces
-- `File` → `Import From` → `Room Video…`: select a local video and an output
+- `File` → `Import From` → `Room Video (experimental)…`: select a local video and an output
   parent folder, extract selected frames, then review their timestamps and
   reconstruction/evaluation roles. This also works from the project chooser.
   Install `ffmpeg` and `ffprobe` for video decoding; selection and capture
@@ -228,7 +243,7 @@ Development builds fall back to `codex` on `PATH`. Set
 
 ```sh
 CUBACADABRA_CODEX_PATH=/absolute/path/to/codex \
-  cargo run --release -- --path /Users/aa/test-for-studio
+  cargo run --release -- --path /tmp/cuboom-package
 ```
 
 Studio currently expects the sibling engine repository at `../rust` and the
@@ -244,7 +259,7 @@ The backend defaults to the local Worker at `http://127.0.0.1:8787`; set
 
 ```sh
 CUBACADABRA_BACKEND_URL=https://api.cubacadabra.com \
-  cargo run --release -- --path /Users/aa/cubacadabra/examples/survival-101
+  cargo run --release -- --path ../examples/cuboom
 ```
 
 The configured HTTP or HTTPS URL is converted to `ws://` or `wss://` for the

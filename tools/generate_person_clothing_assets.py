@@ -838,7 +838,9 @@ def write_sidecar(glb_path, asset):
 
 
 def main():
-    output_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "/Users/aa/Downloads")
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: generate_person_clothing_assets.py OUTPUT_DIRECTORY")
+    output_dir = Path(sys.argv[1])
     output_dir.mkdir(parents=True, exist_ok=True)
     for key, asset in ASSETS.items():
         glb_path = output_dir / f"person_{key}.glb"

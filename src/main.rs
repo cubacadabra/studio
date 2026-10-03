@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn raw_game_projects_load_through_the_shared_builder() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/first-game");
         let sources = load_game_sources(Some(path)).expect("raw game project");
         let client = cubacadabra_client::ClientSession::load(
             &sources.manifest_source,
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn source_file_browser_lists_the_source_tree_and_assets() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/first-game");
         let files = load_source_files(&root);
         let assets = load_source_assets(&root);
         assert!(files.contains_key(Path::new("manifest.json")));
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn project_folders_require_a_manifest() {
-        let valid = Path::new(env!("CARGO_MANIFEST_DIR")).join("../first-game");
+        let valid = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/first-game");
         assert_eq!(
             project_manifest(&valid).unwrap(),
             valid.join("manifest.json")

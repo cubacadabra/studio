@@ -1,66 +1,4 @@
 use super::*;
-pub(crate) fn navigation_row(
-    ui: &mut egui::Ui,
-    icon: Icon,
-    label: &str,
-    selected: bool,
-    active: bool,
-) -> egui::Response {
-    let colors = palette(ui);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), UI.row), Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
-    });
-    if selected || response.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            UI.radius,
-            if selected {
-                colors.selection
-            } else {
-                colors.panel_raised
-            },
-        );
-    }
-    paint_icon(
-        ui.painter(),
-        Rect::from_center_size(
-            rect.left_center() + egui::vec2(11.0, 0.0),
-            Vec2::splat(UI.icon),
-        ),
-        icon,
-        if selected {
-            colors.accent
-        } else {
-            colors.muted
-        },
-    );
-    let label_font = if selected {
-        medium_font(TYPE.primary)
-    } else {
-        FontId::proportional(TYPE.primary)
-    };
-    ui.painter().text(
-        rect.left_center() + egui::vec2(24.0, 0.0),
-        Align2::LEFT_CENTER,
-        label,
-        label_font,
-        if selected { colors.text } else { colors.muted },
-    );
-    if active {
-        ui.painter().text(
-            rect.right_center() - egui::vec2(8.0, 0.0),
-            Align2::RIGHT_CENTER,
-            "ON",
-            FontId::new(TYPE.meta, FontFamily::Name(MEDIUM_FONT_FAMILY.into())),
-            colors.live,
-        );
-    }
-    paint_focus(ui, &response);
-    response
-}
-
 pub(crate) fn search_field(ui: &mut egui::Ui, query: &mut String, width: f32) {
     let _ = search_field_with_hint(ui, query, width, "Search assets…", "Search assets");
 }
@@ -313,6 +251,7 @@ pub(crate) fn toolbar_button_width(ui: &egui::Ui, label: &str) -> f32 {
     (label_width + 30.0).ceil().max(44.0)
 }
 
+#[cfg(test)]
 pub(crate) fn icon_button(
     ui: &mut egui::Ui,
     icon: Icon,
@@ -379,27 +318,6 @@ pub(crate) fn vertical_separator(ui: &mut egui::Ui, height: f32) {
         [response.rect.center_top(), response.rect.center_bottom()],
         Stroke::new(1.0, colors.border),
     );
-}
-
-pub(crate) fn tool_icon(tool: &str) -> Icon {
-    match tool {
-        "Sessions" => Icon::Test,
-        "State" => Icon::Sliders,
-        "Network" => Icon::Network,
-        "Logs" => Icon::Logs,
-        "Performance" => Icon::Gauge,
-        _ => Icon::Test,
-    }
-}
-
-pub(crate) fn asset_kind(name: &str) -> (Icon, &'static str) {
-    if name.contains("grass") || name.contains("wood") {
-        (Icon::Material, "MATERIAL")
-    } else if name == "campfire" || name == "tree" || name == "castle" {
-        (Icon::Object, "MODEL")
-    } else {
-        (Icon::Image, "IMAGE")
-    }
 }
 
 pub(crate) fn title_case(value: &str) -> String {

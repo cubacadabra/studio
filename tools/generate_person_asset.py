@@ -389,7 +389,9 @@ def main():
     if variant_name not in PERSON_VARIANTS:
         raise SystemExit(f"unknown person variant: {variant_name}")
     variant = PERSON_VARIANTS[variant_name]
-    target = Path(args[0] if args else "/Users/aa/Downloads/person_skinned.glb")
+    if len(args) != 1:
+        raise SystemExit("Usage: generate_person_asset.py OUTPUT.glb [--variant=person-01]")
+    target = Path(args[0])
     target.parent.mkdir(parents=True, exist_ok=True)
     make_glb(target, variant)
     lod_counts = {

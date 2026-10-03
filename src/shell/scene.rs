@@ -5,10 +5,7 @@ pub(crate) enum Workspace {
     #[default]
     World,
     Scripts,
-    Assets,
-    Materials,
     Morphs,
-    Test,
 }
 
 impl Workspace {
@@ -18,10 +15,7 @@ impl Workspace {
         match self {
             Self::World => "World",
             Self::Scripts => "Files",
-            Self::Assets => "Assets",
-            Self::Materials => "Materials",
             Self::Morphs => "Morphs",
-            Self::Test => "Test",
         }
     }
 
@@ -29,10 +23,7 @@ impl Workspace {
         match self {
             Self::World => StudioCommand::ShowWorld,
             Self::Scripts => StudioCommand::ShowScripts,
-            Self::Assets => StudioCommand::ShowAssets,
-            Self::Materials => StudioCommand::ShowMaterials,
             Self::Morphs => StudioCommand::ShowMorphs,
-            Self::Test => StudioCommand::ShowTest,
         }
     }
 }

@@ -365,7 +365,7 @@ impl RoomCaptureState {
             .show(context, |ui| {
                 ui.set_width(width);
                 let colors = palette(ui);
-                ui.label(RichText::new("Room Video").font(semibold_font(18.0)));
+                ui.label(RichText::new("Room Video (experimental)").font(semibold_font(18.0)));
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .max_height((viewport.height() - 140.0).max(80.0))
@@ -395,7 +395,7 @@ impl RoomCaptureState {
                             }
                             return;
                         }
-                        ui.label("Extract sharp frames for camera recovery and room reconstruction.");
+                        ui.label("Extract frames and review sparse camera evidence. Playable world conversion is unfinished.");
                         ui.add_enabled_ui(self.worker.is_none(), |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 if ui.add_sized([140.0, 44.0], egui::Button::new("Open capture…")).clicked() { self.choose_capture = true; }
